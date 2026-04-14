@@ -13,9 +13,9 @@ services:
           "-f",
           "http://127.0.0.1:1317/cosmos/base/tendermint/v1beta1/blocks/1",
         ]
-    image: juanenrisley/neutrond:4.2.4
+    image: juanenrisley/xiond:4.2.4
     volumes:
-      - data:/root/.neutrond
+      - data:/root/.xiond
     ports:
       - 1317:1317
       - 9090:9090
@@ -35,6 +35,6 @@ services:
       node:
         condition: service_healthy
     volumes:
-      - data:/root/.neutrond
+      - data:/root/.xiond
     ports:
       - 11090:11090

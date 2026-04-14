@@ -38,7 +38,7 @@ impl Handler for HandshakeRequest {
 
 async fn handshake(args: HandshakeRequest, config: Config) -> Result<String> {
     let tmrpc_client = HttpClient::new(config.node_url.as_str())?;
-    let cw_client = CliClient::neutrond(config.node_url.clone());
+    let cw_client = CliClient::xiond(config.node_url.clone());
 
     let (trusted_height, trusted_hash) = read_cached_hash_height(&config).await?;
 
@@ -58,7 +58,7 @@ async fn handshake(args: HandshakeRequest, config: Config) -> Result<String> {
                 2000000,
                 &config.tx_sender,
                 iter::once(json!(res)),
-                "0untrn"
+                "0uxion"
             )
             .await
             .map_err(|err| eyre!(Box::new(err)))?// TODO: change
@@ -108,7 +108,7 @@ async fn handshake(args: HandshakeRequest, config: Config) -> Result<String> {
                 2000000,
                 &config.tx_sender,
                 iter::once(json!(res)),
-                "0untrn"
+                "0uxion"
             )
             .await
             .map_err(|err| eyre!(Box::new(err)))? // todo change

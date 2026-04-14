@@ -10,14 +10,14 @@ use crate::CwClient;
 #[derive(Clone, Debug)]
 pub enum CliClientType {
     Wasmd,
-    Neutrond,
+    Xiond,
 }
 
 impl CliClientType {
     fn bin(&self) -> String {
         match self {
             CliClientType::Wasmd => "wasmd",
-            CliClientType::Neutrond => "neutrond",
+            CliClientType::Xiond => "xiond",
         }
         .to_string()
     }
@@ -47,11 +47,11 @@ impl CliClient {
         }
     }
 
-    pub fn neutrond(url: Url) -> Self {
+    pub fn xiond(url: Url) -> Self {
         Self {
-            kind: CliClientType::Neutrond,
+            kind: CliClientType::Xiond,
             url,
-            gas_price: "0.0053untrn".to_string(),
+            gas_price: "0.0053uxion".to_string(),
         }
     }
 
@@ -172,7 +172,7 @@ impl CwClient for CliClient {
             .args(["--amount", pay_amount])
             .args(["--gas", gas_amount])
             .args(["--gas-adjustment", "1.3"])
-            .args(["--gas-prices", "0.025untrn"])
+            .args(["--gas-prices", "0.025uxion"])
             .args(["--from", sender])
             .args(["--output", "json"])
             .arg("-y");
@@ -214,7 +214,7 @@ impl CwClient for CliClient {
             .args(["--amount", pay_amount])
             .args(["--gas", gas_amount])
             .args(["--gas-adjustment", "1.3"])
-            .args(["--gas-prices", "0.025untrn"])
+            .args(["--gas-prices", "0.025uxion"])
             .args(["--from", sender])
             .args(["--output", "json"])
             .arg("--dry-run")
@@ -312,7 +312,7 @@ impl CwClient for CliClient {
 
         let sync_info = match self.kind {
             CliClientType::Wasmd => "SyncInfo",
-            CliClientType::Neutrond => "sync_info",
+            CliClientType::Xiond => "sync_info",
         };
         let trusted_height = query_result[sync_info]["latest_block_height"]
             .as_str()

@@ -29,10 +29,10 @@ RUN ARCH=$(uname -m) && \
     tar -C /usr/local -xzf go1.22.0.linux-${GO_ARCH}.tar.gz && \
     rm go1.22.0.linux-${GO_ARCH}.tar.gz
 
-# Install Neutrond (original amd64 version)
-RUN wget https://github.com/neutron-org/neutron/releases/download/v4.2.4/neutrond-linux-amd64 && \
-    chmod +x neutrond-linux-amd64 && \
-    cp neutrond-linux-amd64 /usr/local/bin/neutrond
+# Install xiond
+RUN wget https://github.com/burnt-labs/xion/releases/download/v17.0.0/xiond-linux-amd64 && \
+    chmod +x xiond-linux-amd64 && \
+    cp xiond-linux-amd64 /usr/local/bin/xiond
 
 ENV PATH="/usr/local/go/bin:${PATH}"
 
@@ -52,4 +52,4 @@ RUN apt-get remove -y wget && \
 # Create a directory for the app
 RUN mkdir -p /opt/examples/transfers
 
-ENTRYPOINT ["quartz", "--mock-sgx", "--app-dir", "/opt/examples/transfers", "dev", "--unsafe-trust-latest", "--contract-manifest", "/opt/examples/transfers/contracts/Cargo.toml", "--init-msg", "{\"denom\":\"untrn\"}"]
+ENTRYPOINT ["quartz", "--mock-sgx", "--app-dir", "/opt/examples/transfers", "dev", "--unsafe-trust-latest", "--contract-manifest", "/opt/examples/transfers/contracts/Cargo.toml", "--init-msg", "{\"denom\":\"uxion\"}"]

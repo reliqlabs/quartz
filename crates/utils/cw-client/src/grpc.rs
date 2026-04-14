@@ -106,7 +106,7 @@ impl CwClient for GrpcClient {
     ) -> Result<String, Self::Error> {
         let tm_pubkey = self.sk.public_key();
         let sender = tm_pubkey
-            .account_id("neutron")
+            .account_id("xion")
             .map_err(|e| anyhow!("failed to create AccountId from pubkey: {}", e))?;
 
         let msgs = msgs
@@ -159,7 +159,7 @@ impl CwClient for GrpcClient {
     ) -> Result<GasInfo, Self::Error> {
         let tm_pubkey = self.sk.public_key();
         let sender = tm_pubkey
-            .account_id("neutron")
+            .account_id("xion")
             .map_err(|e| anyhow!("failed to create AccountId from pubkey: {}", e))?;
 
         let msgs = msgs
@@ -304,9 +304,9 @@ mod tests {
 
     #[test]
     fn parse_valid_basic() {
-        let coin = parse_coin("11000untrn").unwrap();
+        let coin = parse_coin("11000uxion").unwrap();
         assert_eq!(coin.amount, 11_000);
-        assert_eq!(coin.denom, Denom::from_str("untrn").unwrap());
+        assert_eq!(coin.denom, Denom::from_str("uxion").unwrap());
     }
 
     #[test]
@@ -359,6 +359,6 @@ mod tests {
     #[test]
     fn error_negative_amount() {
         // '-' is non-digit at pos 0 → empty amount → parse error
-        assert!(parse_coin("-100untrn").is_err());
+        assert!(parse_coin("-100uxion").is_err());
     }
 }

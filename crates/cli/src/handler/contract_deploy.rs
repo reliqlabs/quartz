@@ -67,7 +67,7 @@ async fn deploy(
     config: &Config,
 ) -> Result<(u64, String), Report> {
     let tmrpc_client = HttpClient::new(config.node_url.as_str())?;
-    let cw_client = CliClient::neutrond(config.node_url.clone());
+    let cw_client = CliClient::xiond(config.node_url.clone());
 
     info!("🚀 Deploying {} Contract", args.label);
     let code_id = if config.contract_has_changed(wasm_bin_path).await? {
