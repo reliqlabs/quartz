@@ -68,7 +68,8 @@ where
         let update_contents = QueryRequestMessage {
             state,
             address: Addr::unchecked(sender), // sender comes from TX event, therefore is checked
-            ephemeral_pubkey: HexBinary::from_hex(&ephemeral_pubkey)?,
+            ephemeral_pubkey: HexBinary::from_hex(&ephemeral_pubkey)
+                .map_err(|e| anyhow!(e.to_string()))?,
         };
 
         // Send QueryRequestMessage to enclave over tonic gRPC client

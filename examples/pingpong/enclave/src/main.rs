@@ -68,13 +68,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.trusting_period,
         args.max_clock_drift,
         args.max_block_lag,
-    )?;
+    )
+    .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
     #[cfg(not(feature = "mock-sgx"))]
-    let attestor = attestor::DcapAttestor {
-        fmspc: args.fmspc.expect("FMSPC is required for DCAP"),
-        pccs_url: args.pccs_url.expect("PCCS URL is required for DCAP"),
-    };
+    let attestor = attestor::DstackAttestor::new();
 
     #[cfg(feature = "mock-sgx")]
     let attestor = attestor::MockAttestor::default();

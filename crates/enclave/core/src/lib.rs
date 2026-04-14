@@ -38,7 +38,7 @@ The **enclave** (trusted) code is responsible for:
 
 Through this layered approach:
 - **Host** code (generally) runs outside the TEE, bridging the blockchain and the enclave.
-- **Enclave** code runs inside a Gramine-based TEE, protecting private data and cryptographic
+- **Enclave** code runs inside a TEE (dstack TDX CVM), protecting private data and cryptographic
   operations.
 
 ---
@@ -102,6 +102,7 @@ use crate::{
 pub mod attestor;
 pub mod backup_restore;
 pub mod chain_client;
+pub mod encryption;
 pub mod event;
 pub mod grpc;
 pub mod handler;

@@ -21,6 +21,7 @@ mock-sgx = ["quartz-contract-core/mock-sgx"]
 # external
 anyhow.workspace = true
 async-trait.workspace = true
+ecies.workspace = true
 displaydoc.workspace = true
 futures-util.workspace = true
 hex.workspace = true

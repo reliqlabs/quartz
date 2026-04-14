@@ -35,7 +35,7 @@ async fn main() {
     });
 
     // Send transaction to chain
-    let cw_client = CliClient::neutrond(Url::from_str("http://127.0.0.1:26657").unwrap());
+    let cw_client = CliClient::wasmd(Url::from_str("http://127.0.0.1:26657").unwrap());
 
     let chain_id = &ChainId::from_str("test-1").unwrap();
     let output = cw_client

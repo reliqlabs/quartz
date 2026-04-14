@@ -116,7 +116,8 @@ pub mod execute {
 
     pub fn deposit(deps: DepsMut, _env: Env, info: MessageInfo) -> Result<Response, ContractError> {
         let denom: String = DENOM.load(deps.storage)?;
-        let quantity = must_pay(&info, &denom)?;
+        let quantity = cosmwasm_std::Uint128::try_from(must_pay(&info, &denom)?)
+            .map_err(|e| cosmwasm_std::StdError::msg(e.to_string()))?;
 
         let mut requests = REQUESTS.load(deps.storage)?;
 
