@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use cosmrs::{tendermint::chain::Id as ChainId, AccountId};
 use figment::{providers::Serialized, Figment};
-use quartz_common::enclave::types::Fmspc;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
@@ -79,9 +78,6 @@ pub enum Command {
 
     /// Build, deploy, perform handshake, and run quartz app while listening for changes
     Dev(DevArgs),
-
-    /// Print the FMSPC of the current platform (SGX only)
-    PrintFmspc(PrintFmspcArgs),
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -243,33 +239,12 @@ pub struct EnclaveStartArgs {
     #[arg(long, default_value_t = false)]
     pub unsafe_trust_latest: bool,
 
-    /// FMSPC (Family-Model-Stepping-Platform-Custom SKU); required if `MOCK_SGX` is not set
-    #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fmspc: Option<Fmspc>,
-
-    /// PCCS URL; required if `MOCK_SGX` is not set
-    #[arg(long)]
-    #[serde_as(as = "Option<DisplayFromStr>")]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pccs_url: Option<Url>,
-
-    /// Address of the TcbInfo contract
-    #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tcbinfo_contract: Option<AccountId>,
-
-    /// Address of the DCAP verifier contract
-    #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub dcap_verifier_contract: Option<AccountId>,
-
     /// Whether to target release or dev
     #[arg(long)]
     #[serde(skip_serializing_if = "is_false")]
     pub release: bool,
 
-    /// Path to the enclave executable (only used in mock-sgx mode)
+    /// Path to the enclave executable
     #[arg(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bin_path: Option<PathBuf>,
@@ -296,27 +271,7 @@ pub struct DevArgs {
     #[command(flatten)]
     pub enclave_build: EnclaveBuildArgs,
 
-    /// FMSPC (Family-Model-Stepping-Platform-Custom SKU); required if `MOCK_SGX` is not set
-    #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fmspc: Option<Fmspc>,
-
-    /// Address of the TcbInfo contract
-    #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tcbinfo_contract: Option<AccountId>,
-
-    /// Address of the DCAP verifier contract
-    #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub dcap_verifier_contract: Option<AccountId>,
-
-    /// PCCS URL
-    #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pccs_url: Option<Url>,
-
-    /// Path to the enclave executable (only used in mock-sgx mode)
+    /// Path to the enclave executable
     #[arg(long)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bin_path: Option<PathBuf>,
@@ -325,16 +280,6 @@ pub struct DevArgs {
     #[arg(long, default_value_t = false)]
     #[serde(skip_serializing_if = "is_false")]
     pub no_backup: bool,
-}
-
-#[serde_as]
-#[derive(Debug, Parser, Clone, Serialize, Deserialize)]
-pub struct PrintFmspcArgs {
-    /// PCCS URL
-    #[arg(long)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde_as(as = "Option<DisplayFromStr>")]
-    pub pccs_url: Option<Url>,
 }
 
 pub trait ToFigment {
@@ -357,7 +302,6 @@ impl ToFigment for Command {
             Command::Dev(args) => Figment::from(Serialized::defaults(args))
                 .merge(Serialized::defaults(&args.contract_deploy))
                 .merge(Serialized::defaults(&args.enclave_build)),
-            Command::PrintFmspc(args) => Figment::from(Serialized::defaults(args)),
         }
     }
 }

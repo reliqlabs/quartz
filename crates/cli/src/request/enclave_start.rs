@@ -1,9 +1,6 @@
 use std::path::PathBuf;
 
 use color_eyre::Result;
-use cosmrs::AccountId;
-use quartz_common::enclave::types::Fmspc;
-use reqwest::Url;
 use tendermint::{block::Height, Hash};
 use tracing::debug;
 
@@ -13,10 +10,6 @@ use crate::{config::Config, handler::utils::helpers::query_latest_height_hash, r
 pub struct EnclaveStartRequest {
     pub unsafe_trust_latest: bool,
     pub bin_path: Option<PathBuf>,
-    pub fmspc: Option<Fmspc>,
-    pub pccs_url: Option<Url>,
-    pub tcbinfo_contract: Option<AccountId>,
-    pub dcap_verifier_contract: Option<AccountId>,
     pub no_backup: bool,
 }
 

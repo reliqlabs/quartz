@@ -24,16 +24,11 @@ A CLI tool to streamline development and deployment of Quartz applications. Quar
 name = "quartz"
 path = "src/main.rs"
 
-[[bin]]
-name = "gen-quote"
-path = "src/bin/gen-quote.rs"
-
 [dependencies]
 async-trait.workspace = true
 cargo-generate.workspace = true
 clap = { workspace = true, features = ["env"] }
 color-eyre.workspace = true
-dirs = "5.0.1"
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
@@ -47,7 +42,6 @@ reqwest = { workspace = true, default-features = false, features = [
 ] }
 subtle-encoding.workspace = true
 futures-util = "0.3.30"
-target-lexicon = "0.12.16"
 regex = "1.10.5"
 watchexec = "4.1.0"
 watchexec-signals = "3.0.0"
@@ -55,7 +49,6 @@ xxhash-rust = { version = "0.8.12", features = ["xxh3"] }
 figment = { version = "0.10.19", features = ["env", "toml"] }
 cargo_metadata = "0.18.1"
 serde_with = "3.10.0"
-dcap-qvl = "0.1.0"
 
 
 # cosmos
@@ -68,7 +61,6 @@ tendermint-rpc = { workspace = true, features = [
 quartz-tm-prover = { workspace = true }
 quartz-common = { workspace = true, features = ["full"] }
 cw-client.workspace = true
-tempfile.workspace = true
 
 # Pinning (temporarily) transitive deps to versions compatible with rustc 1.81.0.
 backtrace = "=0.3.74"

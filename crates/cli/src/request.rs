@@ -5,7 +5,7 @@ use crate::{
     request::{
         contract_build::ContractBuildRequest, contract_deploy::ContractDeployRequest,
         dev::DevRequest, enclave_build::EnclaveBuildRequest, enclave_start::EnclaveStartRequest,
-        handshake::HandshakeRequest, init::InitRequest, print_fmspc::PrintFmspcRequest,
+        handshake::HandshakeRequest, init::InitRequest,
     },
 };
 
@@ -17,8 +17,6 @@ pub mod enclave_start;
 pub mod handshake;
 pub mod init;
 
-pub mod print_fmspc;
-
 #[derive(Clone, Debug)]
 pub enum Request {
     Init(InitRequest),
@@ -28,7 +26,6 @@ pub enum Request {
     EnclaveBuild(EnclaveBuildRequest),
     EnclaveStart(EnclaveStartRequest),
     Dev(DevRequest),
-    PrintFmspc(PrintFmspcRequest),
 }
 
 impl TryFrom<Command> for Request {
@@ -61,19 +58,12 @@ impl TryFrom<Command> for Request {
                     admin: args.contract_deploy.admin,
                     no_admin: args.contract_deploy.no_admin,
                     release: args.enclave_build.release,
-                    fmspc: args.fmspc,
-                    tcbinfo_contract: args.tcbinfo_contract,
-                    dcap_verifier_contract: args.dcap_verifier_contract,
-                    pccs_url: args.pccs_url,
                     wasm_bin_path: args.contract_deploy.wasm_bin_path,
                     bin_path: args.bin_path,
                     no_backup: args.no_backup,
                 }
                 .into())
             }
-            Command::PrintFmspc(args) => Ok(Request::PrintFmspc(PrintFmspcRequest {
-                pccs_url: args.pccs_url,
-            })),
         }
     }
 }
@@ -127,10 +117,6 @@ impl TryFrom<EnclaveCommand> for Request {
             EnclaveCommand::Start(args) => Ok(EnclaveStartRequest {
                 unsafe_trust_latest: args.unsafe_trust_latest,
                 bin_path: args.bin_path,
-                fmspc: args.fmspc,
-                pccs_url: args.pccs_url,
-                tcbinfo_contract: args.tcbinfo_contract,
-                dcap_verifier_contract: args.dcap_verifier_contract,
                 no_backup: args.no_backup,
             }
             .into()),

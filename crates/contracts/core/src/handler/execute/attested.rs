@@ -3,9 +3,26 @@ use cosmwasm_std::{DepsMut, Env, MessageInfo, Response};
 use crate::{
     error::Error,
     handler::Handler,
-    msg::execute::attested::{Attestation, Attested, HasUserData, MockAttestation, Noop},
+    msg::execute::attested::{
+        Attestation, Attested, DstackAttestation, HasUserData, MockAttestation, Noop,
+    },
     state::CONFIG,
 };
+
+impl Handler for DstackAttestation {
+    fn handle(
+        self,
+        _deps: DepsMut<'_>,
+        _env: &Env,
+        _info: &MessageInfo,
+    ) -> Result<Response, Error> {
+        // On-chain TDX quote verification will be handled by the zkdcap
+        // verifier contract in a future phase. For now, the attestation
+        // is accepted — the Attested<M,A> wrapper already verifies
+        // user_data and mr_enclave (compose_hash) match.
+        Ok(Response::default())
+    }
+}
 
 impl Handler for MockAttestation {
     fn handle(

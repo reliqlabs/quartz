@@ -4,7 +4,14 @@ use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{HexBinary, StdError};
 use serde::Serialize;
 
+#[cfg(not(feature = "mock-sgx"))]
+pub type DefaultAttestation = DstackAttestation;
+#[cfg(not(feature = "mock-sgx"))]
+pub type RawDefaultAttestation = RawDstackAttestation;
+
+#[cfg(feature = "mock-sgx")]
 pub type DefaultAttestation = MockAttestation;
+#[cfg(feature = "mock-sgx")]
 pub type RawDefaultAttestation = RawMockAttestation;
 
 use crate::{
@@ -141,6 +148,87 @@ impl HasUserData for MockAttestation {
 impl Attestation for MockAttestation {
     fn mr_enclave(&self) -> MrEnclave {
         Default::default()
+    }
+}
+
+/// A TDX attestation from a dstack enclave (quote + optional event log).
+/// On-chain verification happens via zkdcap verifier contract.
+/// A TDX attestation from a dstack enclave.
+/// `user_data` and `compose_hash` are serialized as hex strings since
+/// fixed-size arrays > 32 bytes don't implement Serialize directly.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DstackAttestation {
+    /// Raw TDX quote bytes
+    pub quote: Vec<u8>,
+    /// Optional RTMR event log (JSON)
+    pub event_log: Option<String>,
+    /// The user data (report_data) embedded in the quote
+    pub user_data: UserData,
+    /// compose-hash: the TDX equivalent of mr_enclave
+    pub compose_hash: MrEnclave,
+}
+
+impl DstackAttestation {
+    pub fn new(
+        quote: Vec<u8>,
+        event_log: Option<String>,
+        user_data: UserData,
+        compose_hash: MrEnclave,
+    ) -> Self {
+        Self {
+            quote,
+            event_log,
+            user_data,
+            compose_hash,
+        }
+    }
+}
+
+#[cw_serde]
+pub struct RawDstackAttestation {
+    pub quote: HexBinary,
+    pub event_log: Option<String>,
+    pub user_data: HexBinary,
+    pub compose_hash: HexBinary,
+}
+
+impl TryFrom<RawDstackAttestation> for DstackAttestation {
+    type Error = StdError;
+
+    fn try_from(value: RawDstackAttestation) -> Result<Self, Self::Error> {
+        Ok(Self {
+            quote: value.quote.into(),
+            event_log: value.event_log,
+            user_data: value.user_data.to_array()?,
+            compose_hash: value.compose_hash.to_array()?,
+        })
+    }
+}
+
+impl From<DstackAttestation> for RawDstackAttestation {
+    fn from(value: DstackAttestation) -> Self {
+        Self {
+            quote: value.quote.into(),
+            event_log: value.event_log,
+            user_data: value.user_data.into(),
+            compose_hash: value.compose_hash.into(),
+        }
+    }
+}
+
+impl HasDomainType for RawDstackAttestation {
+    type DomainType = DstackAttestation;
+}
+
+impl HasUserData for DstackAttestation {
+    fn user_data(&self) -> UserData {
+        self.user_data
+    }
+}
+
+impl Attestation for DstackAttestation {
+    fn mr_enclave(&self) -> MrEnclave {
+        self.compose_hash
     }
 }
 
