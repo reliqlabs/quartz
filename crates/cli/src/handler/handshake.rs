@@ -9,7 +9,10 @@ use serde_json::json;
 use tendermint_rpc::{query::EventType, HttpClient, SubscriptionClient, WebSocketClient};
 use tracing::{debug, info};
 
-use super::utils::{helpers::block_tx_commit, types::WasmdTxResponse};
+use super::{
+    utils::{helpers::block_tx_commit, types::WasmdTxResponse},
+    zkdcap::inject_zkdcap_proof,
+};
 use crate::{
     config::Config,
     handler::{
@@ -49,6 +52,9 @@ async fn handshake(args: HandshakeRequest, config: Config) -> Result<String> {
     }
     .run_relay(config.enclave_rpc())
     .await?;
+
+    // Inject zkdcap proof into the attested SessionCreate message
+    let res = inject_zkdcap_proof(res, config.mock_sgx)?;
 
     let output: WasmdTxResponse = serde_json::from_str(
         cw_client
@@ -98,6 +104,9 @@ async fn handshake(args: HandshakeRequest, config: Config) -> Result<String> {
     }
     .run_relay(config.enclave_rpc())
     .await?;
+
+    // Inject zkdcap proof into the attested SessionSetPubKey message
+    let res = inject_zkdcap_proof(res, config.mock_sgx)?;
 
     // Submit SessionSetPubKey to contract
     let output: WasmdTxResponse = serde_json::from_str(

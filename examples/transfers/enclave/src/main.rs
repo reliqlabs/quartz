@@ -84,8 +84,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::new(
         attestor.mr_enclave()?,
         light_client_opts,
-        args.tcbinfo_contract.map(|c| c.to_string()),
-        args.dcap_verifier_contract.map(|c| c.to_string()),
+        args.zkdcap_verifier.map(|c| c.to_string()),
     );
     let chain_client = DefaultChainClient::new(
         args.chain_id,

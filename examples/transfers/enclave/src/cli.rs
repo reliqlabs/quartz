@@ -37,13 +37,9 @@ pub struct Cli {
     #[clap(long)]
     pub pccs_url: Option<Url>,
 
-    /// TcbInfo contract address
+    /// zkdcap verifier contract address
     #[clap(long)]
-    pub tcbinfo_contract: Option<AccountId>,
-
-    /// DCAP verifier contract address
-    #[clap(long)]
-    pub dcap_verifier_contract: Option<AccountId>,
+    pub zkdcap_verifier: Option<AccountId>,
 
     /// Height of the trusted header (AKA root-of-trust)
     #[clap(long)]

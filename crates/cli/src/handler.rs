@@ -12,6 +12,7 @@ pub mod enclave_build;
 pub mod enclave_start;
 pub mod handshake;
 pub mod init;
+pub mod zkdcap;
 
 #[async_trait]
 pub trait Handler {

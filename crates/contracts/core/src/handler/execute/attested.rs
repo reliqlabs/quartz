@@ -1,4 +1,6 @@
-use cosmwasm_std::{to_json_binary, CosmosMsg, DepsMut, Env, MessageInfo, Response, WasmMsg};
+use cosmwasm_std::{DepsMut, Env, MessageInfo, Response};
+#[cfg(not(feature = "mock-sgx"))]
+use cosmwasm_std::{to_json_binary, CosmosMsg, WasmMsg};
 
 use crate::{
     error::Error,
@@ -10,6 +12,7 @@ use crate::{
 };
 
 /// zkdcap verifier ExecuteMsg (subset — only what we need to call)
+#[cfg(not(feature = "mock-sgx"))]
 #[cosmwasm_schema::cw_serde]
 enum ZkdcapExecuteMsg {
     VerifyAttestation {
@@ -19,6 +22,7 @@ enum ZkdcapExecuteMsg {
     },
 }
 
+#[cfg(not(feature = "mock-sgx"))]
 impl Handler for DstackAttestation {
     fn handle(
         self,
@@ -27,13 +31,14 @@ impl Handler for DstackAttestation {
         _info: &MessageInfo,
     ) -> Result<Response, Error> {
         let config = CONFIG.load(deps.storage).map_err(Error::Std)?;
-        let verifier_addr = config
-            .zkdcap_verifier()
-            .ok_or(Error::ZkdcapVerifierNotConfigured)?
-            .to_string();
 
-        // Build the cross-contract call to the zkdcap verifier.
-        // If verification fails, the submessage reverts the entire tx.
+        // If no zkdcap verifier is configured, skip on-chain verification.
+        // This allows development/testing without deploying the verifier contract.
+        let Some(verifier_addr) = config.zkdcap_verifier() else {
+            return Ok(Response::new()
+                .add_attribute("action", "zkdcap_verify_skipped"));
+        };
+
         let verify_msg = ZkdcapExecuteMsg::VerifyAttestation {
             proof: self.zkdcap_proof.into(),
             public_inputs: self.zkdcap_public_inputs,
@@ -41,7 +46,7 @@ impl Handler for DstackAttestation {
         };
 
         let msg = CosmosMsg::Wasm(WasmMsg::Execute {
-            contract_addr: verifier_addr,
+            contract_addr: verifier_addr.to_string(),
             msg: to_json_binary(&verify_msg).map_err(Error::Std)?,
             funds: vec![],
         });
@@ -49,6 +54,18 @@ impl Handler for DstackAttestation {
         Ok(Response::new()
             .add_message(msg)
             .add_attribute("action", "zkdcap_verify"))
+    }
+}
+
+#[cfg(feature = "mock-sgx")]
+impl Handler for DstackAttestation {
+    fn handle(
+        self,
+        _deps: DepsMut<'_>,
+        _env: &Env,
+        _info: &MessageInfo,
+    ) -> Result<Response, Error> {
+        Ok(Response::default())
     }
 }
 
