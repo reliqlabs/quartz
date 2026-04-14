@@ -95,7 +95,7 @@ use tokio::{
 use crate::{
     attestor::{Attestor, DefaultAttestor},
     backup_restore::{Backup, Export, Import},
-    key_manager::{default::DefaultKeyManager, shared::SharedKeyManager, KeyManager},
+    key_manager::{dstack::DstackKeyManager, shared::SharedKeyManager, KeyManager},
     store::{default::DefaultStore, Store},
 };
 
@@ -117,7 +117,7 @@ pub mod types;
 /// `DefaultSharedEnclave` is a specialization of [`DefaultEnclave`] that uses the default
 /// attestation and storage components, along with a shared key-manager and store to allow safe
 /// concurrent access.
-pub type DefaultSharedEnclave<C, K = DefaultKeyManager> =
+pub type DefaultSharedEnclave<C, K = DstackKeyManager> =
     DefaultEnclave<C, DefaultAttestor, SharedKeyManager<K>, DefaultStore>;
 
 /// Represents the core functionality running inside a TEE.
@@ -166,7 +166,7 @@ pub enum Notification {
 /// The default generic implementation of the [`Enclave`] trait for convenience.
 /// Includes a generic context for additional application-specific data or configuration.
 #[derive(Clone, Debug)]
-pub struct DefaultEnclave<C, A = DefaultAttestor, K = DefaultKeyManager, S = DefaultStore> {
+pub struct DefaultEnclave<C, A = DefaultAttestor, K = DstackKeyManager, S = DefaultStore> {
     pub attestor: A,
     pub key_manager: K,
     pub store: S,
@@ -180,12 +180,15 @@ impl<C: Send + Sync + 'static> DefaultSharedEnclave<C> {
         config: Config,
         ctx: C,
     ) -> (DefaultSharedEnclave<C>, mpsc::Receiver<Notification>) {
-        let (notifier_tx, notifier_rx) = mpsc::channel(10); // ← NEW
+        let (notifier_tx, notifier_rx) = mpsc::channel(10);
+
+        let key_manager = DstackKeyManager::new("quartz/session")
+            .expect("failed to initialize key manager");
 
         (
             DefaultSharedEnclave {
                 attestor,
-                key_manager: SharedKeyManager::wrapping(DefaultKeyManager::default()),
+                key_manager: SharedKeyManager::wrapping(key_manager),
                 store: DefaultStore::new(config),
                 ctx,
                 notifier_tx,
