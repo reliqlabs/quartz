@@ -3,10 +3,12 @@ resolver = "2"
 members = [
     "crates/cli",
     "crates/common",
-    "crates/contracts/*",
+    "crates/contracts/core",
     "crates/contracts/core/derive",
     "crates/enclave/*",
-    "crates/utils/*",
+    "crates/utils/cw-client",
+    "crates/utils/cw-prover",
+    "crates/utils/tm-prover",
 ]
 exclude = ["examples/transfers/contracts", "examples/transfers/enclave"]
 
@@ -49,7 +51,7 @@ reqwest = { version = "0.12.2", default-features = false, features = [
     "json",
     "rustls-tls",
 ] }
-schemars = { version = "0.8.16", default-features = false }
+schemars = { version = "1", default-features = false }
 serde = { version = "1.0.203", default-features = false, features = ["derive"] }
 serde_json = { version = "1.0.94", default-features = false, features = [
     "alloc",
@@ -63,7 +65,7 @@ subtle-encoding = { version = "0.5.1", default-features = false, features = [
     "bech32-preview",
 ] }
 tempfile = { version = "3", default-features = false }
-thiserror = { version = "1.0.49", default-features = false }
+thiserror = { version = "2", default-features = false }
 tokio = { version = "1.39.2", default-features = false, features = [
     "macros",
     "rt",
@@ -92,13 +94,12 @@ x509-parser = { version = "0.16.0", default-features = false, features = [
 # cosmos
 cosmos-sdk-proto = { version = "0.27.0", default-features = false }
 cosmrs = { version = "0.22.0", default-features = false }
-cosmwasm-schema = { version = "2.1.1", default-features = false }
-cosmwasm-std = { version = "2.1.1", default-features = false, features = [
+cosmwasm-schema = { version = "3", default-features = false }
+cosmwasm-std = { version = "3", default-features = false, features = [
     "std",
-    "abort",
 ] }
-cw-storage-plus = { version = "2.0.0", default-features = false }
-cw2 = { version = "2.0.0", default-features = false }
+cw-storage-plus = { version = "3", default-features = false }
+cw2 = { version = "3", default-features = false }
 ics23 = { version = "0.12.0", default-features = false, features = [
     "host-functions",
 ] }
@@ -111,25 +112,13 @@ tendermint-rpc = { version = "=0.40.4", default-features = false, features = [
     "http-client",
 ] }
 
-# mobilecoin
-mc-sgx-core-types = { version = "=0.11.0", default-features = false }
-mc-sgx-dcap-types = { version = "=0.11.0", default-features = false }
-mc-sgx-dcap-sys-types = { version = "=0.11.0", default-features = false }
-mc-attestation-verifier = { version = "=0.4.3", default-features = false }
-
 # quartz
 quartz-cw-proof = { version = "0.5.1", path = "crates/enclave/cw-proof", default-features = false }
 quartz-common = { version = "0.5.1", path = "crates/common", default-features = false }
 quartz-contract-core = { version = "0.5.1", path = "crates/contracts/core", default-features = false }
 quartz-contract-core-derive = { version = "0.5.1", path = "crates/contracts/core/derive", default-features = false }
-quartz-dcap-verifier-msgs = { version = "0.5.1", path = "crates/contracts/dcap-verifier/msgs", default-features = false }
 quartz-enclave-core = { version = "0.5.1", path = "crates/enclave/core", default-features = false }
 quartz-proto = { version = "0.5.1", path = "crates/enclave/proto", default-features = false }
-quartz-tee-ra = { version = "0.5.1", path = "crates/contracts/tee-ra", default-features = false }
-quartz-tcbinfo = { version = "0.5.1", path = "crates/contracts/tcbinfo", default-features = false, features = [
-    "library",
-] }
-quartz-tcbinfo-msgs = { version = "0.5.1", path = "crates/contracts/tcbinfo/msgs", default-features = false }
 quartz-tm-prover = { version = "0.5.1", path = "crates/utils/tm-prover", default-features = false }
 quartz-tm-stateless-verifier = { version = "0.5.1", path = "crates/enclave/tm-stateless-verifier", default-features = false }
 cw-client = { version = "0.5.1", path = "crates/utils/cw-client", default-features = false }

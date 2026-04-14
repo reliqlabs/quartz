@@ -1,42 +1,16 @@
-use std::{
-    error::Error,
-    fs::{read, File},
-    io::{Error as IoError, Write},
-};
-
-use log::{debug, error, trace};
-use mc_sgx_dcap_sys_types::sgx_ql_qve_collateral_t;
+use log::debug;
 use quartz_contract_core::{
     msg::{
-        execute::attested::{
-            Attestation, DcapAttestation, HasUserData, MockAttestation, RawDcapAttestation,
-            RawMockAttestation,
-        },
+        execute::attested::{Attestation, HasUserData, MockAttestation, RawMockAttestation},
         HasDomainType,
     },
-    state::{MrEnclave, UserData},
+    state::MrEnclave,
 };
-use quartz_tee_ra::intel_sgx::dcap::{Collateral, Quote3Error};
-use reqwest::{blocking::Client, Url};
-use serde::{Deserialize, Serialize};
-use serde_json::Error as SerdeError;
-use serde_with::{serde_as, DisplayFromStr};
+use serde::Serialize;
 
-use crate::{
-    backup_restore::{Export, Import},
-    types::Fmspc,
-};
+use crate::backup_restore::{Export, Import};
 
-#[cfg(not(feature = "mock-sgx"))]
-pub type DefaultAttestor = DcapAttestor;
-
-#[cfg(feature = "mock-sgx")]
 pub type DefaultAttestor = MockAttestor;
-
-const QE_IDENTITY_JSON: &str = include_str!("../data/qe_identity.json");
-const ROOT_CA: &str = include_str!("../data/root_ca.pem");
-const ROOT_CRL: &[u8] = include_bytes!("../data/root_crl.der");
-const TCB_SIGNER: &str = include_str!("../data/tcb_signer.pem");
 
 /// The trait defines the interface for generating attestations from within an enclave.
 pub trait Attestor: Send + Sync + 'static {
@@ -49,150 +23,6 @@ pub trait Attestor: Send + Sync + 'static {
     fn mr_enclave(&self) -> Result<MrEnclave, Self::Error>;
 
     fn attestation(&self, user_data: impl HasUserData) -> Result<Self::Attestation, Self::Error>;
-}
-
-/// An `Attestor` for generating DCAP attestations for Gramine based enclaves.
-#[serde_as]
-#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
-pub struct DcapAttestor {
-    pub fmspc: Fmspc,
-    #[serde_as(as = "DisplayFromStr")]
-    pub pccs_url: Url,
-}
-
-impl Attestor for DcapAttestor {
-    type Error = IoError;
-    type Attestation = DcapAttestation;
-    type RawAttestation = RawDcapAttestation;
-
-    fn quote(&self, user_data: impl HasUserData) -> Result<Vec<u8>, Self::Error> {
-        debug!("Generating DCAP quote");
-        let user_data = user_data.user_data();
-        let mut user_report_data = File::create("/dev/attestation/user_report_data")?;
-        user_report_data.write_all(user_data.as_slice())?;
-        user_report_data.flush()?;
-        read("/dev/attestation/quote")
-    }
-
-    fn mr_enclave(&self) -> Result<MrEnclave, Self::Error> {
-        debug!("Retrieving MRENCLAVE");
-        let quote = self.quote(NullUserData)?;
-        Ok(quote[112..(112 + 32)]
-            .try_into()
-            .expect("hardcoded array size"))
-    }
-
-    fn attestation(&self, user_data: impl HasUserData) -> Result<Self::Attestation, Self::Error> {
-        debug!("Generating DCAP attestation");
-
-        fn pccs_query_pck(pccs_url: Url) -> Result<(Vec<u8>, String), Box<dyn Error>> {
-            let mut pccs_url = pccs_url.join("pckcrl/").expect("hardcoded URL");
-            pccs_url.set_query(Some("ca=processor"));
-            trace!("Querying PCCS for PCK certificate: {pccs_url}");
-
-            let client = Client::builder()
-                .danger_accept_invalid_certs(true) // FIXME(hu55a1n1): required?
-                .build()?;
-            let response = client.get(pccs_url.as_str()).send()?;
-
-            // Parse relevant headers
-            let pck_crl_issuer_chain = response
-                .headers()
-                .get("SGX-PCK-CRL-Issuer-Chain")
-                .ok_or("Missing PCK-Issuer-Chain header")?
-                .to_str()?
-                .to_string();
-
-            let pck_crl = response.bytes()?;
-
-            Ok((pck_crl.to_vec(), pck_crl_issuer_chain))
-        }
-
-        fn collateral(
-            tcb_info: &str,
-            pck_crl: Vec<u8>,
-            pck_crl_issuer_chain: String,
-        ) -> Collateral {
-            let mut sgx_collateral = sgx_ql_qve_collateral_t::default();
-
-            // SAFETY: Version is a union which is inherently unsafe
-            #[allow(unsafe_code)]
-            let version = unsafe { sgx_collateral.__bindgen_anon_1.__bindgen_anon_1.as_mut() };
-            version.major_version = 3;
-            version.minor_version = 1;
-
-            let mut root_crl = ROOT_CRL.to_vec();
-            root_crl.push(0);
-            sgx_collateral.root_ca_crl = root_crl.as_ptr() as _;
-            sgx_collateral.root_ca_crl_size = root_crl.len() as u32;
-
-            let mut pck_crl = hex::decode(pck_crl).unwrap();
-            pck_crl.push(0);
-            sgx_collateral.pck_crl = pck_crl.as_ptr() as _;
-            sgx_collateral.pck_crl_size = pck_crl.len() as u32;
-
-            let pck_crl_issuer_chain = urlencoding::decode(&pck_crl_issuer_chain).unwrap();
-            // pck_crl_issuer_chain.push(0);
-            sgx_collateral.pck_crl_issuer_chain = pck_crl_issuer_chain.as_ptr() as _;
-            sgx_collateral.pck_crl_issuer_chain_size = pck_crl_issuer_chain.len() as u32;
-
-            let mut tcb_chain = [TCB_SIGNER, ROOT_CA].join("\n").as_bytes().to_vec();
-            tcb_chain.push(0);
-            sgx_collateral.tcb_info_issuer_chain = tcb_chain.as_ptr() as _;
-            sgx_collateral.tcb_info_issuer_chain_size = tcb_chain.len() as u32;
-
-            sgx_collateral.tcb_info = tcb_info.as_ptr() as _;
-            sgx_collateral.tcb_info_size = tcb_info.len() as u32;
-
-            // For live data the QE identity uses the same chain as the TCB info
-            sgx_collateral.qe_identity_issuer_chain = tcb_chain.as_ptr() as _;
-            sgx_collateral.qe_identity_issuer_chain_size = tcb_chain.len() as u32;
-
-            sgx_collateral.qe_identity = QE_IDENTITY_JSON.as_ptr() as _;
-            sgx_collateral.qe_identity_size = QE_IDENTITY_JSON.len() as u32;
-
-            Collateral::try_from(&sgx_collateral).expect("Failed to parse collateral")
-        }
-
-        let quote = self.quote(user_data)?;
-
-        let collateral = {
-            let (pck_crl, pck_crl_issuer_chain) =
-                pccs_query_pck(self.pccs_url.clone()).map_err(|e| {
-                    error!("Failed to query PCCS: {}", e);
-                    IoError::other(e.to_string())
-                })?;
-            collateral(&self.fmspc.to_string(), pck_crl, pck_crl_issuer_chain)
-        };
-
-        debug!("Successfully generated DCAP attestation");
-        Ok(DcapAttestation::new(
-            quote.try_into().map_err(|e: Quote3Error| {
-                error!("Failed to convert quote: {}", e);
-                IoError::other(e.to_string())
-            })?,
-            collateral,
-        ))
-    }
-}
-
-#[async_trait::async_trait]
-impl Import for DcapAttestor {
-    type Error = SerdeError;
-
-    async fn import(&mut self, data: Vec<u8>) -> Result<(), Self::Error> {
-        *self = serde_json::from_slice(&data)?;
-        Ok(())
-    }
-}
-
-#[async_trait::async_trait]
-impl Export for DcapAttestor {
-    type Error = SerdeError;
-
-    async fn export(&self) -> Result<Vec<u8>, Self::Error> {
-        serde_json::to_vec(self)
-    }
 }
 
 /// A mock `Attestor` that creates a quote consisting of just the user report data. (only meant for
@@ -240,10 +70,3 @@ impl Export for MockAttestor {
     }
 }
 
-struct NullUserData;
-
-impl HasUserData for NullUserData {
-    fn user_data(&self) -> UserData {
-        [0u8; 64]
-    }
-}

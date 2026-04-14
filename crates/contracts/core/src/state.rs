@@ -83,7 +83,7 @@ impl TryFrom<RawConfig> for Config {
             light_client_opts: value
                 .light_client_opts
                 .try_into()
-                .map_err(|e| StdError::parse_err("light_client_opts", e))?,
+                .map_err(|e| StdError::msg(format!("light_client_opts: {e}")))?,
             tcbinfo_contract: value.tcbinfo_contract,
             dcap_verifier_contract: value.dcap_verifier_contract,
         })
@@ -125,18 +125,18 @@ impl LightClientOpts {
     ) -> Result<Self, StdError> {
         let (numerator, denominator) = (trust_threshold.0, trust_threshold.1);
         if numerator > denominator {
-            return Err(StdError::generic_err("trust_threshold_too_large"));
+            return Err(StdError::msg("trust_threshold_too_large"));
         }
         if denominator == 0 {
-            return Err(StdError::generic_err("undefined_trust_threshold"));
+            return Err(StdError::msg("undefined_trust_threshold"));
         }
         if 3 * numerator < denominator {
-            return Err(StdError::generic_err("trust_threshold_too_small"));
+            return Err(StdError::msg("trust_threshold_too_small"));
         }
 
         let _trusted_height: i64 = trusted_height
             .try_into()
-            .map_err(|_| StdError::generic_err("trusted_height too large"))?;
+            .map_err(|_| StdError::msg("trusted_height too large"))?;
 
         Ok(Self {
             chain_id,

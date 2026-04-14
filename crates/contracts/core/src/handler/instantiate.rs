@@ -1,5 +1,4 @@
 use cosmwasm_std::{DepsMut, Env, MessageInfo, Response};
-use quartz_tee_ra::Error as RaVerificationError;
 
 use crate::{
     error::Error,
@@ -17,7 +16,7 @@ where
 {
     fn handle(self, deps: DepsMut<'_>, env: &Env, info: &MessageInfo) -> Result<Response, Error> {
         if self.0.msg().config().mr_enclave() != self.0.attestation().mr_enclave() {
-            return Err(RaVerificationError::MrEnclaveMismatch.into());
+            return Err(Error::MrEnclaveMismatch);
         }
         self.0.handle(deps, env, info)
     }

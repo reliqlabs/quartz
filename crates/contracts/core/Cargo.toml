@@ -22,7 +22,6 @@ library = []
 
 [dependencies]
 # external
-ciborium.workspace = true
 hex.workspace = true
 k256.workspace = true
 serde.workspace = true
@@ -34,11 +33,6 @@ thiserror.workspace = true
 cw-storage-plus.workspace = true
 cosmwasm-schema.workspace = true
 cosmwasm-std.workspace = true
-
-# quartz
-quartz-dcap-verifier-msgs.workspace = true
-quartz-tee-ra.workspace = true
-quartz-tcbinfo-msgs.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
