@@ -8,10 +8,10 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 categories = ["cryptography::cryptocurrencies", "wasm"]
-keywords = ["cosmos", "cosmwasm", "cycles", "quartz", "sgx"]
+keywords = ["cosmos", "cosmwasm", "quartz", "tee", "dstack"]
 readme = "README.md"
 description = """
-A CosmWasm framework for securely interacting with Intel SGX enclaves.
+A CosmWasm framework for securely interacting with TEE enclaves (dstack/TDX).
 """
 
 [features]

@@ -8,7 +8,7 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 categories = ["cryptography::cryptocurrencies", "wasm"]
-keywords = ["cosmos", "cosmwasm", "cycles", "quartz", "sgx"]
+keywords = ["cosmos", "cosmwasm", "quartz", "tee", "dstack"]
 readme = "README.md"
 description = """
 Stateless verification of a tendermint light client proof.

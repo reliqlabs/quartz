@@ -8,8 +8,8 @@ use serde_with::{serde_as, DisplayFromStr};
 #[serde_as]
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
-    /// Enable mock SGX mode for testing purposes.
-    /// This flag disables the use of an Intel SGX processor and allows the system to run without remote attestations.
+    /// Enable mock mode for testing purposes.
+    /// Disables TEE attestation and allows the system to run without a dstack/TDX environment.
     #[serde(default)]
     pub mock_sgx: bool,
 

@@ -34,8 +34,8 @@ pub struct Cli {
     #[command(flatten)]
     pub verbose: Verbosity,
 
-    /// Enable mock SGX mode for testing purposes.
-    /// This flag disables the use of an Intel SGX processor and allows the system to run without remote attestations.
+    /// Enable mock mode for testing purposes.
+    /// Disables TEE attestation and allows the system to run without a dstack/TDX environment.
     #[arg(long)]
     #[serde(skip_serializing_if = "is_false")]
     pub mock_sgx: bool,

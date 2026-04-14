@@ -8,10 +8,10 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 categories = ["cryptography::cryptocurrencies", "hardware-support", "wasm"]
-keywords = ["cosmos", "cosmwasm", "cycles", "quartz", "sgx"]
+keywords = ["cosmos", "cosmwasm", "quartz", "tee", "dstack"]
 readme = "README.md"
 description = """
-A Rust framework for building Intel SGX enclaves managed by a CosmWasm contract.
+A Rust framework for building TEE enclaves (dstack/TDX) managed by a CosmWasm contract.
 """
 
 [features]
