@@ -10,7 +10,7 @@ members = [
     "crates/utils/cw-prover",
     "crates/utils/tm-prover",
 ]
-exclude = ["examples/transfers/contracts", "examples/transfers/enclave"]
+exclude = ["examples/transfers/contracts", "examples/transfers/enclave", "tests/integration"]
 
 [workspace.package]
 version = "0.5.1"
