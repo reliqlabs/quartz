@@ -1,42 +1,38 @@
 //! zkdcap proof injection for attested messages.
 //!
 //! After the enclave produces an attested message with a TDX quote,
-//! the host generates a zkdcap Groth16 proof and injects it into the
-//! attestation before submitting to the contract.
+//! the host generates a zkdcap Groth16 proof via the gnark prover
+//! server and injects it into the attestation before submitting to
+//! the contract.
 //!
-//! Proof generation is delegated to an external binary (set via
-//! ZKDCAP_PROVER env var) to avoid pulling the SP1 SDK into the CLI.
+//! The gnark server communicates over a Unix socket (GNARK_SOCKET env var).
+//! At ~5s CPU / <1s GPU, proof generation runs inline during the handshake.
 //!
 //! In mock-sgx mode, this is a no-op.
 
 use color_eyre::{eyre::eyre, Result};
 use serde_json::Value;
-use std::process::Command;
+use std::io::{Read, Write};
 use tracing::{debug, info, warn};
 
-/// If ZKDCAP_PROVER is set and the attestation contains a quote,
-/// generate a zkdcap proof and inject it into the response JSON.
-///
-/// The prover binary is called as:
-///   $ZKDCAP_PROVER <quote_hex>
-/// and must output JSON on stdout:
-///   { "proof": "<hex>", "public_inputs": ["..."], "journal": "<hex>" }
+/// If GNARK_SOCKET is set and the attestation contains a quote,
+/// generate a zkdcap proof via the gnark server and inject it into
+/// the response JSON.
 pub fn inject_zkdcap_proof(mut response: Value, mock_sgx: bool) -> Result<Value> {
     if mock_sgx {
         debug!("mock-sgx mode: skipping zkdcap proof generation");
         return Ok(response);
     }
 
-    let prover_bin = match std::env::var("ZKDCAP_PROVER") {
-        Ok(bin) => bin,
+    let socket_path = match std::env::var("GNARK_SOCKET") {
+        Ok(path) => path,
         Err(_) => {
-            warn!("ZKDCAP_PROVER not set, skipping proof generation");
+            warn!("GNARK_SOCKET not set, skipping zkdcap proof generation");
             return Ok(response);
         }
     };
 
     // Navigate to the attestation field in the response JSON.
-    // The structure is: { "msg": {...}, "attestation": { "quote": "...", ... } }
     let attestation = match response.get_mut("attestation") {
         Some(a) => a,
         None => {
@@ -58,24 +54,9 @@ pub fn inject_zkdcap_proof(mut response: Value, mock_sgx: bool) -> Result<Value>
         return Ok(response);
     }
 
-    info!("Generating zkdcap proof (this may take several minutes)...");
+    info!("Generating zkdcap proof via gnark server...");
 
-    let output = Command::new(&prover_bin)
-        .arg(&quote_hex)
-        .output()
-        .map_err(|e| eyre!("Failed to run zkdcap prover '{}': {}", prover_bin, e))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(eyre!(
-            "zkdcap prover failed (exit {}): {}",
-            output.status,
-            stderr
-        ));
-    }
-
-    let proof_result: Value = serde_json::from_slice(&output.stdout)
-        .map_err(|e| eyre!("Failed to parse zkdcap prover output: {}", e))?;
+    let proof_result = call_gnark_prover(&socket_path, &quote_hex)?;
 
     // Inject proof fields into the attestation
     if let Some(proof) = proof_result.get("proof") {
@@ -89,6 +70,69 @@ pub fn inject_zkdcap_proof(mut response: Value, mock_sgx: bool) -> Result<Value>
     }
 
     info!("zkdcap proof generated and injected");
-
     Ok(response)
+}
+
+/// Call the gnark prover server over Unix socket.
+///
+/// The gnark server expects HTTP POST /prove with:
+///   { "quote_hex": "...", "pre_verified_json": {...}, "timestamp": ... }
+///
+/// For the initial handshake integration, we send the quote_hex and let
+/// the gnark server handle collateral fetching and pre-verification
+/// internally. This matches the gnark server's /prove-full endpoint.
+fn call_gnark_prover(socket_path: &str, quote_hex: &str) -> Result<Value> {
+    use serde_json::json;
+
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| eyre!("system time error: {e}"))?
+        .as_secs();
+
+    let request_body = json!({
+        "quote_hex": quote_hex,
+        "timestamp": now_secs,
+    });
+    let body_bytes =
+        serde_json::to_vec(&request_body).map_err(|e| eyre!("serialize request: {e}"))?;
+
+    let mut stream = std::os::unix::net::UnixStream::connect(socket_path)
+        .map_err(|e| eyre!("failed to connect to gnark server at {}: {}", socket_path, e))?;
+
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(60)))
+        .ok();
+
+    let request = format!(
+        "POST /prove HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body_bytes.len()
+    );
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|e| eyre!("write request: {e}"))?;
+    stream
+        .write_all(&body_bytes)
+        .map_err(|e| eyre!("write body: {e}"))?;
+    stream.flush().map_err(|e| eyre!("flush: {e}"))?;
+
+    let mut response = Vec::new();
+    stream
+        .read_to_end(&mut response)
+        .map_err(|e| eyre!("read response: {e}"))?;
+
+    let response_str = String::from_utf8_lossy(&response);
+    let body_start = response_str.find("\r\n\r\n").map(|i| i + 4).unwrap_or(0);
+    let status_line = response_str.lines().next().unwrap_or("");
+
+    if !status_line.contains("200") {
+        let body = &response_str[body_start..];
+        return Err(eyre!(
+            "gnark server returned {}: {}",
+            status_line,
+            body.trim()
+        ));
+    }
+
+    let body = &response[body_start..];
+    serde_json::from_slice(body).map_err(|e| eyre!("parse gnark response: {e}"))
 }
