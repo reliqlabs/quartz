@@ -32,7 +32,7 @@ impl KeyManager for DefaultKeyManager {
 }
 
 #[derive(Clone, Debug)]
-pub struct PubKey(VerifyingKey);
+pub struct PubKey(pub VerifyingKey);
 
 impl From<PubKey> for Vec<u8> {
     fn from(value: PubKey) -> Self {

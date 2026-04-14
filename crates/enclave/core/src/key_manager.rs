@@ -1,4 +1,5 @@
 pub mod default;
+pub mod dstack;
 pub mod shared;
 
 /// A trait defining the public key management functionality within the enclave.
