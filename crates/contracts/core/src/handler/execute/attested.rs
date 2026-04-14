@@ -1,4 +1,4 @@
-use cosmwasm_std::{DepsMut, Env, MessageInfo, Response};
+use cosmwasm_std::{to_json_binary, CosmosMsg, DepsMut, Env, MessageInfo, Response, WasmMsg};
 
 use crate::{
     error::Error,
@@ -9,18 +9,46 @@ use crate::{
     state::CONFIG,
 };
 
+/// zkdcap verifier ExecuteMsg (subset — only what we need to call)
+#[cosmwasm_schema::cw_serde]
+enum ZkdcapExecuteMsg {
+    VerifyAttestation {
+        proof: cosmwasm_std::Binary,
+        public_inputs: Vec<String>,
+        journal: cosmwasm_std::Binary,
+    },
+}
+
 impl Handler for DstackAttestation {
     fn handle(
         self,
-        _deps: DepsMut<'_>,
+        deps: DepsMut<'_>,
         _env: &Env,
         _info: &MessageInfo,
     ) -> Result<Response, Error> {
-        // On-chain TDX quote verification will be handled by the zkdcap
-        // verifier contract in a future phase. For now, the attestation
-        // is accepted — the Attested<M,A> wrapper already verifies
-        // user_data and mr_enclave (compose_hash) match.
-        Ok(Response::default())
+        let config = CONFIG.load(deps.storage).map_err(Error::Std)?;
+        let verifier_addr = config
+            .zkdcap_verifier()
+            .ok_or(Error::ZkdcapVerifierNotConfigured)?
+            .to_string();
+
+        // Build the cross-contract call to the zkdcap verifier.
+        // If verification fails, the submessage reverts the entire tx.
+        let verify_msg = ZkdcapExecuteMsg::VerifyAttestation {
+            proof: self.zkdcap_proof.into(),
+            public_inputs: self.zkdcap_public_inputs,
+            journal: self.zkdcap_journal.into(),
+        };
+
+        let msg = CosmosMsg::Wasm(WasmMsg::Execute {
+            contract_addr: verifier_addr,
+            msg: to_json_binary(&verify_msg).map_err(Error::Std)?,
+            funds: vec![],
+        });
+
+        Ok(Response::new()
+            .add_message(msg)
+            .add_attribute("action", "zkdcap_verify"))
     }
 }
 

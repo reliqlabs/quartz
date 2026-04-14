@@ -18,6 +18,10 @@ pub enum Error {
     BadSessionTransition,
     #[error("contract address mismatch")]
     ContractAddrMismatch,
+    #[error("zkdcap verifier not configured")]
+    ZkdcapVerifierNotConfigured,
+    #[error("zkdcap verification failed: {0}")]
+    ZkdcapVerificationFailed(String),
 }
 
 impl From<K256Error> for Error {

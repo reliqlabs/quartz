@@ -21,22 +21,20 @@ pub const SEQUENCE_NUM: Item<Uint64> = Item::new(SEQUENCE_NUM_KEY);
 pub struct Config {
     mr_enclave: MrEnclave,
     light_client_opts: LightClientOpts,
-    tcbinfo_contract: Option<String>,
-    dcap_verifier_contract: Option<String>,
+    /// Address of the zkdcap verifier contract for on-chain TDX attestation verification
+    zkdcap_verifier: Option<String>,
 }
 
 impl Config {
     pub fn new(
         mr_enclave: MrEnclave,
         light_client_opts: LightClientOpts,
-        tcbinfo_contract: Option<String>,
-        dcap_verifier_contract: Option<String>,
+        zkdcap_verifier: Option<String>,
     ) -> Self {
         Self {
             mr_enclave,
             light_client_opts,
-            tcbinfo_contract,
-            dcap_verifier_contract,
+            zkdcap_verifier,
         }
     }
 
@@ -48,8 +46,8 @@ impl Config {
         self.mr_enclave
     }
 
-    pub fn tcbinfo_contract(&self) -> Option<&str> {
-        self.tcbinfo_contract.as_deref()
+    pub fn zkdcap_verifier(&self) -> Option<&str> {
+        self.zkdcap_verifier.as_deref()
     }
 }
 
@@ -57,20 +55,16 @@ impl Config {
 pub struct RawConfig {
     mr_enclave: HexBinary,
     light_client_opts: RawLightClientOpts,
-    tcbinfo_contract: Option<String>,
-    dcap_verifier_contract: Option<String>,
+    zkdcap_verifier: Option<String>,
 }
 
 impl RawConfig {
     pub fn mr_enclave(&self) -> &[u8] {
         self.mr_enclave.as_slice()
     }
-    pub fn tcbinfo_contract(&self) -> Option<&str> {
-        self.tcbinfo_contract.as_deref()
-    }
 
-    pub fn dcap_verifier_contract(&self) -> Option<&str> {
-        self.dcap_verifier_contract.as_deref()
+    pub fn zkdcap_verifier(&self) -> Option<&str> {
+        self.zkdcap_verifier.as_deref()
     }
 }
 
@@ -84,8 +78,7 @@ impl TryFrom<RawConfig> for Config {
                 .light_client_opts
                 .try_into()
                 .map_err(|e| StdError::msg(format!("light_client_opts: {e}")))?,
-            tcbinfo_contract: value.tcbinfo_contract,
-            dcap_verifier_contract: value.dcap_verifier_contract,
+            zkdcap_verifier: value.zkdcap_verifier,
         })
     }
 }
@@ -95,8 +88,7 @@ impl From<Config> for RawConfig {
         Self {
             mr_enclave: value.mr_enclave.into(),
             light_client_opts: value.light_client_opts.into(),
-            tcbinfo_contract: value.tcbinfo_contract,
-            dcap_verifier_contract: value.dcap_verifier_contract,
+            zkdcap_verifier: value.zkdcap_verifier,
         }
     }
 }
