@@ -30,7 +30,7 @@ RUN ARCH=$(uname -m) && \
     rm go1.22.0.linux-${GO_ARCH}.tar.gz
 
 # Install xiond
-RUN wget https://github.com/burnt-labs/xion/releases/download/v17.0.0/xiond-linux-amd64 && \
+RUN wget https://github.com/burnt-labs/xion/releases/download/v28.1.0/xiond-linux-amd64 && \
     chmod +x xiond-linux-amd64 && \
     cp xiond-linux-amd64 /usr/local/bin/xiond
 
