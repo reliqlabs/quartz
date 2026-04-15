@@ -21,20 +21,21 @@ pub const SEQUENCE_NUM: Item<Uint64> = Item::new(SEQUENCE_NUM_KEY);
 pub struct Config {
     mr_enclave: MrEnclave,
     light_client_opts: LightClientOpts,
-    /// Address of the zkdcap verifier contract for on-chain TDX attestation verification
-    zkdcap_verifier: Option<String>,
+    /// Verification key name registered in Xion's ZK module for zkdcap proof verification.
+    /// When set, DstackAttestation handler queries the ZK module directly.
+    zkdcap_vkey: Option<String>,
 }
 
 impl Config {
     pub fn new(
         mr_enclave: MrEnclave,
         light_client_opts: LightClientOpts,
-        zkdcap_verifier: Option<String>,
+        zkdcap_vkey: Option<String>,
     ) -> Self {
         Self {
             mr_enclave,
             light_client_opts,
-            zkdcap_verifier,
+            zkdcap_vkey,
         }
     }
 
@@ -46,8 +47,8 @@ impl Config {
         self.mr_enclave
     }
 
-    pub fn zkdcap_verifier(&self) -> Option<&str> {
-        self.zkdcap_verifier.as_deref()
+    pub fn zkdcap_vkey(&self) -> Option<&str> {
+        self.zkdcap_vkey.as_deref()
     }
 }
 
@@ -55,7 +56,7 @@ impl Config {
 pub struct RawConfig {
     mr_enclave: HexBinary,
     light_client_opts: RawLightClientOpts,
-    zkdcap_verifier: Option<String>,
+    zkdcap_vkey: Option<String>,
 }
 
 impl RawConfig {
@@ -63,8 +64,8 @@ impl RawConfig {
         self.mr_enclave.as_slice()
     }
 
-    pub fn zkdcap_verifier(&self) -> Option<&str> {
-        self.zkdcap_verifier.as_deref()
+    pub fn zkdcap_vkey(&self) -> Option<&str> {
+        self.zkdcap_vkey.as_deref()
     }
 }
 
@@ -78,7 +79,7 @@ impl TryFrom<RawConfig> for Config {
                 .light_client_opts
                 .try_into()
                 .map_err(|e| StdError::msg(format!("light_client_opts: {e}")))?,
-            zkdcap_verifier: value.zkdcap_verifier,
+            zkdcap_vkey: value.zkdcap_vkey,
         })
     }
 }
@@ -88,7 +89,7 @@ impl From<Config> for RawConfig {
         Self {
             mr_enclave: value.mr_enclave.into(),
             light_client_opts: value.light_client_opts.into(),
-            zkdcap_verifier: value.zkdcap_verifier,
+            zkdcap_vkey: value.zkdcap_vkey,
         }
     }
 }

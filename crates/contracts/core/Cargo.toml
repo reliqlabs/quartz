@@ -17,13 +17,14 @@ A CosmWasm framework for securely interacting with TEE enclaves (dstack/TDX).
 [features]
 default = []
 mock-sgx = []
-std = ["k256/std", "serde/std", "serde_json/std", "sha2/std", "cosmwasm-std/std"]
+std = ["k256/std", "serde/std", "serde_json/std", "sha2/std", "cosmwasm-std/std", "cosmwasm-std/stargate"]
 library = []
 
 [dependencies]
 # external
 hex.workspace = true
 k256.workspace = true
+prost = { workspace = true, features = ["derive"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -32,7 +33,7 @@ thiserror.workspace = true
 # cosmos
 cw-storage-plus.workspace = true
 cosmwasm-schema.workspace = true
-cosmwasm-std.workspace = true
+cosmwasm-std = { workspace = true, features = ["stargate", "cosmwasm_2_0"] }
 
 [dev-dependencies]
 serde_json.workspace = true

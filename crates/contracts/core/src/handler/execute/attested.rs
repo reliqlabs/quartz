@@ -1,6 +1,4 @@
 use cosmwasm_std::{DepsMut, Env, MessageInfo, Response};
-#[cfg(not(feature = "mock-sgx"))]
-use cosmwasm_std::{to_json_binary, CosmosMsg, WasmMsg};
 
 use crate::{
     error::Error,
@@ -11,15 +9,26 @@ use crate::{
     state::CONFIG,
 };
 
-/// zkdcap verifier ExecuteMsg (subset — only what we need to call)
+/// Protobuf: xion.zk.v1.QueryVerifyRequest
 #[cfg(not(feature = "mock-sgx"))]
-#[cosmwasm_schema::cw_serde]
-enum ZkdcapExecuteMsg {
-    VerifyAttestation {
-        proof: cosmwasm_std::Binary,
-        public_inputs: Vec<String>,
-        journal: cosmwasm_std::Binary,
-    },
+#[derive(Clone, prost::Message)]
+struct QueryVerifyRequest {
+    #[prost(bytes = "vec", tag = "1")]
+    proof: Vec<u8>,
+    #[prost(string, repeated, tag = "2")]
+    public_inputs: Vec<String>,
+    #[prost(string, tag = "3")]
+    vkey_name: String,
+    #[prost(uint64, tag = "4")]
+    vkey_id: u64,
+}
+
+/// Protobuf: xion.zk.v1.ProofVerifyResponse
+#[cfg(not(feature = "mock-sgx"))]
+#[derive(Clone, prost::Message)]
+struct ProofVerifyResponse {
+    #[prost(bool, tag = "1")]
+    verified: bool,
 }
 
 #[cfg(not(feature = "mock-sgx"))]
@@ -32,28 +41,44 @@ impl Handler for DstackAttestation {
     ) -> Result<Response, Error> {
         let config = CONFIG.load(deps.storage).map_err(Error::Std)?;
 
-        // If no zkdcap verifier is configured, skip on-chain verification.
-        // This allows development/testing without deploying the verifier contract.
-        let Some(verifier_addr) = config.zkdcap_verifier() else {
+        // If no vkey is configured, skip on-chain verification.
+        let Some(vkey_name) = config.zkdcap_vkey() else {
             return Ok(Response::new()
                 .add_attribute("action", "zkdcap_verify_skipped"));
         };
 
-        let verify_msg = ZkdcapExecuteMsg::VerifyAttestation {
-            proof: self.zkdcap_proof.into(),
+        // Query Xion's ZK module directly
+        let verify_req = QueryVerifyRequest {
+            proof: self.zkdcap_proof,
             public_inputs: self.zkdcap_public_inputs,
-            journal: self.zkdcap_journal.into(),
+            vkey_name: vkey_name.to_string(),
+            vkey_id: 0,
         };
 
-        let msg = CosmosMsg::Wasm(WasmMsg::Execute {
-            contract_addr: verifier_addr.to_string(),
-            msg: to_json_binary(&verify_msg).map_err(Error::Std)?,
-            funds: vec![],
+        let mut req_bytes = Vec::new();
+        prost::Message::encode(&verify_req, &mut req_bytes)
+            .map_err(|e| Error::ZkdcapVerificationFailed(format!("encode request: {e}")))?;
+
+        let grpc_query = cosmwasm_std::QueryRequest::Grpc(cosmwasm_std::GrpcQuery {
+            path: "/xion.zk.v1.Query/ProofVerify".to_string(),
+            data: cosmwasm_std::Binary::from(req_bytes),
         });
 
-        Ok(Response::new()
-            .add_message(msg)
-            .add_attribute("action", "zkdcap_verify"))
+        let resp_bytes: cosmwasm_std::Binary = deps
+            .querier
+            .query(&grpc_query)
+            .map_err(|e| Error::ZkdcapVerificationFailed(format!("ZK module query: {e}")))?;
+
+        let verify_resp = <ProofVerifyResponse as prost::Message>::decode(resp_bytes.as_slice())
+            .map_err(|e| Error::ZkdcapVerificationFailed(format!("decode response: {e}")))?;
+
+        if !verify_resp.verified {
+            return Err(Error::ZkdcapVerificationFailed(
+                "proof verification returned false".to_string(),
+            ));
+        }
+
+        Ok(Response::new().add_attribute("action", "zkdcap_verified"))
     }
 }
 

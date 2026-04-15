@@ -39,7 +39,7 @@ pub struct Cli {
 
     /// zkdcap verifier contract address
     #[clap(long)]
-    pub zkdcap_verifier: Option<AccountId>,
+    pub zkdcap_vkey: Option<AccountId>,
 
     /// Height of the trusted header (AKA root-of-trust)
     #[clap(long)]

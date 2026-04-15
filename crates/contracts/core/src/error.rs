@@ -18,8 +18,6 @@ pub enum Error {
     BadSessionTransition,
     #[error("contract address mismatch")]
     ContractAddrMismatch,
-    #[error("zkdcap verifier not configured")]
-    ZkdcapVerifierNotConfigured,
     #[error("zkdcap verification failed: {0}")]
     ZkdcapVerificationFailed(String),
 }
