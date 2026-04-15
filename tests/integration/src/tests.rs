@@ -437,3 +437,109 @@ fn test_zkdcap_invalid_proof_rejected() {
     assert!(err.to_string().contains("zkdcap verification failed") || err.to_string().contains("not valid JSON"),
         "Expected ZK verification error, got: {}", err);
 }
+
+// ============================================================
+// Tests: gnark native ZK mock (ProofVerifyGnark endpoint)
+// ============================================================
+
+#[test]
+fn test_gnark_mock_accepts_valid_proof() {
+    use crate::zk_mock::{QueryVerifyGnarkRequest, ProofVerifyGnarkResponse};
+    use crate::fixtures::GnarkFixture;
+    use prost::Message;
+
+    let mock = crate::zk_mock::ZkMockStargate::validating();
+    let fixture = GnarkFixture::generate();
+
+    let req = QueryVerifyGnarkRequest {
+        proof: fixture.proof_bytes,
+        public_inputs: fixture.public_inputs_bytes,
+        vkey_name: "zkdcap-gnark".to_string(),
+        vkey_id: 0,
+    };
+    let mut req_bytes = Vec::new();
+    req.encode(&mut req_bytes).unwrap();
+
+    let resp_bytes = mock.dispatch(
+        "/xion.zk.v1.Query/ProofVerifyGnark",
+        &req_bytes,
+    ).unwrap();
+
+    let resp = ProofVerifyGnarkResponse::decode(resp_bytes.as_slice()).unwrap();
+    assert!(resp.verified, "valid gnark proof should verify");
+}
+
+#[test]
+fn test_gnark_mock_rejects_empty_proof() {
+    use crate::zk_mock::{QueryVerifyGnarkRequest, ProofVerifyGnarkResponse};
+    use prost::Message;
+
+    let mock = crate::zk_mock::ZkMockStargate::validating();
+
+    let req = QueryVerifyGnarkRequest {
+        proof: vec![],
+        public_inputs: vec![0u8; 64],
+        vkey_name: "zkdcap-gnark".to_string(),
+        vkey_id: 0,
+    };
+    let mut req_bytes = Vec::new();
+    req.encode(&mut req_bytes).unwrap();
+
+    let resp_bytes = mock.dispatch(
+        "/xion.zk.v1.Query/ProofVerifyGnark",
+        &req_bytes,
+    ).unwrap();
+
+    let resp = ProofVerifyGnarkResponse::decode(resp_bytes.as_slice()).unwrap();
+    assert!(!resp.verified, "empty proof should not verify");
+}
+
+#[test]
+fn test_gnark_mock_rejects_bad_public_inputs() {
+    use crate::zk_mock::{QueryVerifyGnarkRequest, ProofVerifyGnarkResponse};
+    use prost::Message;
+
+    let mock = crate::zk_mock::ZkMockStargate::validating();
+
+    let req = QueryVerifyGnarkRequest {
+        proof: vec![0x42; 384], // valid size
+        public_inputs: vec![0u8; 33], // not a multiple of 32
+        vkey_name: "zkdcap-gnark".to_string(),
+        vkey_id: 0,
+    };
+    let mut req_bytes = Vec::new();
+    req.encode(&mut req_bytes).unwrap();
+
+    let resp_bytes = mock.dispatch(
+        "/xion.zk.v1.Query/ProofVerifyGnark",
+        &req_bytes,
+    ).unwrap();
+
+    let resp = ProofVerifyGnarkResponse::decode(resp_bytes.as_slice()).unwrap();
+    assert!(!resp.verified, "misaligned public inputs should not verify");
+}
+
+#[test]
+fn test_gnark_mock_rejects_short_proof() {
+    use crate::zk_mock::{QueryVerifyGnarkRequest, ProofVerifyGnarkResponse};
+    use prost::Message;
+
+    let mock = crate::zk_mock::ZkMockStargate::validating();
+
+    let req = QueryVerifyGnarkRequest {
+        proof: vec![0x42; 50], // too short for BN254 Groth16
+        public_inputs: vec![0u8; 64],
+        vkey_name: "zkdcap-gnark".to_string(),
+        vkey_id: 0,
+    };
+    let mut req_bytes = Vec::new();
+    req.encode(&mut req_bytes).unwrap();
+
+    let resp_bytes = mock.dispatch(
+        "/xion.zk.v1.Query/ProofVerifyGnark",
+        &req_bytes,
+    ).unwrap();
+
+    let resp = ProofVerifyGnarkResponse::decode(resp_bytes.as_slice()).unwrap();
+    assert!(!resp.verified, "short proof should not verify");
+}

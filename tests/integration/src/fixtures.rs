@@ -123,6 +123,82 @@ impl ZkdcapFixture {
     }
 }
 
+/// gnark-native fixture data for ProofVerifyGnark endpoint.
+pub struct GnarkFixture {
+    /// gnark native proof bytes (serialized groth16.Proof)
+    /// BN254 Groth16: 3 curve points = Ar(G1) + Bs(G2) + Krs(G1)
+    /// G1 = 2x32 bytes, G2 = 2x2x32 bytes → total 384 bytes minimum
+    pub proof_bytes: Vec<u8>,
+    /// Public inputs as concatenated 32-byte big-endian fr.Element values
+    pub public_inputs_bytes: Vec<u8>,
+    /// Same journal and quote as SnarkJS fixture
+    pub journal_bytes: Vec<u8>,
+    pub compose_hash: [u8; 32],
+    pub quote_bytes: Vec<u8>,
+    pub user_data: [u8; 64],
+}
+
+impl GnarkFixture {
+    /// Generate a gnark-native fixture with binary proof and public inputs.
+    pub fn generate() -> Self {
+        // Reuse the same journal/quote/compose_hash as SnarkJS fixture
+        let quote_bytes: Vec<u8> =
+            [0xDE, 0xAD, 0xBE, 0xEF].iter().copied().cycle().take(256).collect();
+        let quote_hash: [u8; 32] = Sha256::digest(&quote_bytes).into();
+        let compose_hash = [0xAA; 32];
+        let mut user_data = [0u8; 64];
+        user_data[0..32].copy_from_slice(&[0xBB; 32]);
+
+        let journal = DcapJournal {
+            quote_hash,
+            quote_verified: true,
+            tcb_status: "UpToDate".to_string(),
+            advisory_ids: vec![],
+            mr_td: hex::encode([0x11; 48]),
+            rtmr0: hex::encode([0x22; 48]),
+            rtmr1: hex::encode([0x33; 48]),
+            rtmr2: hex::encode([0x44; 48]),
+            rtmr3: hex::encode(compose_hash),
+            report_data: hex::encode(user_data),
+            verification_timestamp: 1713052800,
+        };
+        let journal_bytes = serde_json::to_vec(&journal).unwrap();
+        let journal_hash: [u8; 32] = Sha256::digest(&journal_bytes).into();
+
+        // Synthetic gnark proof: 384 bytes (3 BN254 curve points)
+        // Ar (G1): 64 bytes, Bs (G2): 128 bytes, Krs (G1): 64 bytes
+        // Plus optional commitment data
+        let mut proof_bytes = vec![0u8; 384];
+        // Fill with non-zero data so it doesn't look empty
+        for (i, b) in proof_bytes.iter_mut().enumerate() {
+            *b = ((i * 7 + 13) % 256) as u8;
+        }
+
+        // Public inputs: concatenated 32-byte big-endian field elements
+        // Two inputs: vkey_hash and journal_hash (masked for BN254)
+        let mut public_inputs_bytes = Vec::with_capacity(64);
+
+        // Input 0: synthetic vkey hash (32 bytes)
+        let mut vkey_hash = [0u8; 32];
+        vkey_hash[0..8].copy_from_slice(&[0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF]);
+        public_inputs_bytes.extend_from_slice(&vkey_hash);
+
+        // Input 1: masked journal hash (32 bytes)
+        let mut masked_journal = journal_hash;
+        masked_journal[0] &= 0x1F; // mask top 3 bits for BN254 field
+        public_inputs_bytes.extend_from_slice(&masked_journal);
+
+        Self {
+            proof_bytes,
+            public_inputs_bytes,
+            journal_bytes,
+            compose_hash,
+            quote_bytes,
+            user_data,
+        }
+    }
+}
+
 /// Convert a 32-byte big-endian value to a decimal string.
 fn num_to_decimal(bytes: &[u8; 32]) -> String {
     let mut result = vec![0u8];

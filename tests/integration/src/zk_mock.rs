@@ -1,20 +1,20 @@
 //! Mock for Xion's native ZK module (`xion.zk.v1`).
 //!
-//! Intercepts gRPC queries to `/xion.zk.v1.Query/ProofVerify` and validates:
-//! 1. Proof bytes are valid SnarkJS-format Groth16 JSON
-//! 2. Proof has pi_a, pi_b, pi_c fields and protocol="groth16"
-//! 3. Public inputs are present
-//!
-//! Does NOT perform the actual BN254 pairing check — that requires
-//! ark-groth16 or the real Xion module. This mock validates the
-//! serialization pipeline is correct.
+//! Handles both proof verification endpoints:
+//! - `/xion.zk.v1.Query/ProofVerify` — circom/SnarkJS format (current)
+//! - `/xion.zk.v1.Query/ProofVerifyGnark` — gnark native binary format (v29+)
 
-use cosmwasm_std::{Addr, Api, Binary, BlockInfo, CustomMsg, CustomQuery, GrpcQuery, Querier, StdError, StdResult, Storage};
+use cosmwasm_std::{
+    Addr, Api, Binary, BlockInfo, CustomMsg, CustomQuery, GrpcQuery, Querier, StdError, StdResult,
+    Storage,
+};
 use cw_multi_test::{AppResponse, CosmosRouter, Stargate};
 use prost::Message;
 use serde::de::DeserializeOwned;
 
-/// Protobuf: xion.zk.v1.QueryVerifyRequest
+// ── Circom/SnarkJS endpoint (current zkdcap verifier) ──────────────
+
+/// xion.zk.v1.QueryVerifyRequest (circom format)
 #[derive(Clone, PartialEq, Message)]
 pub struct QueryVerifyRequest {
     #[prost(bytes = "vec", tag = "1")]
@@ -27,26 +27,51 @@ pub struct QueryVerifyRequest {
     pub vkey_id: u64,
 }
 
-/// Protobuf: xion.zk.v1.ProofVerifyResponse
+/// xion.zk.v1.ProofVerifyResponse
 #[derive(Clone, PartialEq, Message)]
 pub struct ProofVerifyResponse {
     #[prost(bool, tag = "1")]
     pub verified: bool,
 }
 
+// ── gnark native endpoint (v29+) ───────────────────────────────────
+
+/// xion.zk.v1.QueryVerifyGnarkRequest
+/// proof and public_inputs are gnark native binary format.
+/// public_inputs: concatenated 32-byte big-endian fr.Element values.
+#[derive(Clone, PartialEq, Message)]
+pub struct QueryVerifyGnarkRequest {
+    #[prost(bytes = "vec", tag = "1")]
+    pub proof: Vec<u8>,
+    #[prost(bytes = "vec", tag = "2")]
+    pub public_inputs: Vec<u8>,
+    #[prost(string, tag = "3")]
+    pub vkey_name: String,
+    #[prost(uint64, tag = "4")]
+    pub vkey_id: u64,
+}
+
+/// xion.zk.v1.ProofVerifyGnarkResponse
+#[derive(Clone, PartialEq, Message)]
+pub struct ProofVerifyGnarkResponse {
+    #[prost(bool, tag = "1")]
+    pub verified: bool,
+}
+
+// ── Mock handler ───────────────────────────────────────────────────
+
 const ZK_VERIFY_PATH: &str = "/xion.zk.v1.Query/ProofVerify";
+const ZK_VERIFY_GNARK_PATH: &str = "/xion.zk.v1.Query/ProofVerifyGnark";
 
 /// Mock Stargate handler that intercepts Xion ZK module queries.
 #[derive(Clone)]
 pub struct ZkMockStargate {
-    /// If true, structurally valid proofs pass. If false, everything fails.
     pub always_verify: bool,
-    /// If true, validate proof JSON structure. If false, accept any non-empty proof.
     pub validate_structure: bool,
 }
 
 impl ZkMockStargate {
-    /// Accept any non-empty proof (for handshake tests that use MockAttestation)
+    /// Accept any non-empty proof
     pub fn accepting() -> Self {
         Self {
             always_verify: true,
@@ -54,7 +79,7 @@ impl ZkMockStargate {
         }
     }
 
-    /// Reject everything (for testing error paths)
+    /// Reject everything
     #[allow(dead_code)]
     pub fn rejecting() -> Self {
         Self {
@@ -63,7 +88,7 @@ impl ZkMockStargate {
         }
     }
 
-    /// Validate proof structure before accepting (for zkdcap integration tests)
+    /// Validate proof structure before accepting
     pub fn validating() -> Self {
         Self {
             always_verify: true,
@@ -71,6 +96,7 @@ impl ZkMockStargate {
         }
     }
 
+    /// Handle circom/SnarkJS ProofVerify
     fn handle_proof_verify(&self, data: &[u8]) -> StdResult<Binary> {
         let req = QueryVerifyRequest::decode(data)
             .map_err(|e| StdError::msg(format!("decode QueryVerifyRequest: {e}")))?;
@@ -84,40 +110,81 @@ impl ZkMockStargate {
         }
 
         if self.validate_structure {
-            // Parse proof as SnarkJS JSON and validate structure
             let proof_json: serde_json::Value = serde_json::from_slice(&req.proof)
                 .map_err(|e| StdError::msg(format!("proof is not valid JSON: {e}")))?;
 
-            let has_pi_a = proof_json.get("pi_a").is_some();
-            let has_pi_b = proof_json.get("pi_b").is_some();
-            let has_pi_c = proof_json.get("pi_c").is_some();
-            let has_protocol = proof_json
-                .get("protocol")
-                .and_then(|v| v.as_str())
-                .map(|s| s == "groth16")
-                .unwrap_or(false);
+            let valid = proof_json.get("pi_a").is_some()
+                && proof_json.get("pi_b").is_some()
+                && proof_json.get("pi_c").is_some()
+                && proof_json
+                    .get("protocol")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s == "groth16")
+                    .unwrap_or(false);
 
-            if !has_pi_a || !has_pi_b || !has_pi_c || !has_protocol {
+            if !valid {
                 return Ok(Binary::from(encode_response(false)));
             }
 
-            // Validate public inputs are present
-            if req.public_inputs.is_empty() {
-                return Ok(Binary::from(encode_response(false)));
-            }
-
-            // Validate vkey name is provided
-            if req.vkey_name.is_empty() && req.vkey_id == 0 {
+            if req.public_inputs.is_empty() || (req.vkey_name.is_empty() && req.vkey_id == 0) {
                 return Ok(Binary::from(encode_response(false)));
             }
         }
 
         Ok(Binary::from(encode_response(true)))
     }
+
+    /// Handle gnark native ProofVerifyGnark
+    fn handle_proof_verify_gnark(&self, data: &[u8]) -> StdResult<Binary> {
+        let req = QueryVerifyGnarkRequest::decode(data)
+            .map_err(|e| StdError::msg(format!("decode QueryVerifyGnarkRequest: {e}")))?;
+
+        if req.proof.is_empty() {
+            return Ok(Binary::from(encode_gnark_response(false)));
+        }
+
+        if !self.always_verify {
+            return Ok(Binary::from(encode_gnark_response(false)));
+        }
+
+        if self.validate_structure {
+            // gnark proof: must be non-empty binary (serialized groth16.Proof)
+            // Typical BN254 Groth16 proof is ~384 bytes (3 curve points)
+            if req.proof.len() < 96 {
+                return Ok(Binary::from(encode_gnark_response(false)));
+            }
+
+            // public_inputs: concatenated 32-byte field elements
+            if req.public_inputs.is_empty() || req.public_inputs.len() % 32 != 0 {
+                return Ok(Binary::from(encode_gnark_response(false)));
+            }
+
+            if req.vkey_name.is_empty() && req.vkey_id == 0 {
+                return Ok(Binary::from(encode_gnark_response(false)));
+            }
+        }
+
+        Ok(Binary::from(encode_gnark_response(true)))
+    }
+
+    pub fn dispatch(&self, path: &str, data: &[u8]) -> StdResult<Binary> {
+        match path {
+            ZK_VERIFY_PATH => self.handle_proof_verify(data),
+            ZK_VERIFY_GNARK_PATH => self.handle_proof_verify_gnark(data),
+            _ => Err(StdError::msg(format!("unexpected ZK query path: {path}"))),
+        }
+    }
 }
 
 fn encode_response(verified: bool) -> Vec<u8> {
     let resp = ProofVerifyResponse { verified };
+    let mut buf = Vec::new();
+    resp.encode(&mut buf).expect("prost encode");
+    buf
+}
+
+fn encode_gnark_response(verified: bool) -> Vec<u8> {
+    let resp = ProofVerifyGnarkResponse { verified };
     let mut buf = Vec::new();
     resp.encode(&mut buf).expect("prost encode");
     buf
@@ -150,10 +217,7 @@ impl Stargate for ZkMockStargate {
         path: String,
         data: Binary,
     ) -> StdResult<Binary> {
-        if path == ZK_VERIFY_PATH {
-            return self.handle_proof_verify(&data);
-        }
-        Err(StdError::msg(format!("unexpected stargate query: {path}")))
+        self.dispatch(&path, &data)
     }
 
     fn execute_any<ExecC, QueryC>(
@@ -180,9 +244,6 @@ impl Stargate for ZkMockStargate {
         _block: &BlockInfo,
         request: GrpcQuery,
     ) -> StdResult<Binary> {
-        if request.path == ZK_VERIFY_PATH {
-            return self.handle_proof_verify(&request.data);
-        }
-        Err(StdError::msg(format!("unexpected gRPC query: {}", request.path)))
+        self.dispatch(&request.path, &request.data)
     }
 }
