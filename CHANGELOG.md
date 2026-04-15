@@ -1,5 +1,38 @@
 # Changelog
 
+## Unreleased: dstack/TDX Modernization
+
+Fork of [informalsystems/cycles-quartz](https://github.com/informalsystems/cycles-quartz) by Reliq Labs.
+
+### Breaking Changes
+
+- **Intel SGX replaced with dstack TDX.** Enclaves now run as standard Docker containers on dstack confidential VMs (Intel TDX). Gramine, SGX signing, AESM, and all MobileCoin SGX libs removed.
+- **On-chain DCAP verification replaced with zkdcap.** Attestation verified via Groth16 zero-knowledge proofs through the Xion ZK module (direct gRPC query, ~1M gas). The `dcap-verifier` and `tcbinfo` contracts are no longer needed.
+- **Neutron replaced with Xion.** Chain binary is now `xiond`, denom is `uxion`.
+- **CosmWasm 2.1 upgraded to CosmWasm 3.**
+
+### Features
+
+- `DstackAttestor` -- TDX attestation via dstack guest agent socket API
+- `DstackKeyManager` -- Deterministic key derivation via dstack KMS
+- ECIES encryption promoted from examples to core framework module
+- gnark Groth16 prover integration (~5s CPU, <1s GPU) via Unix socket
+- `zkdcap_vkey` config for Groth16 verification key storage
+- `DstackAttestation` type with direct ZK module query verification
+- Quint formal spec for handshake protocol (`specs/handshake.qnt`)
+- Integration tests with ZK module mock via `cw_multi_test` (`tests/integration/`)
+
+### Removed
+
+- `quartz-dcap-verifier` contract
+- `quartz-tcbinfo` contract
+- `quartz-tee-ra` crate (MobileCoin SGX libs)
+- `print-fmspc` CLI command
+- Gramine enclave subcommands (configure, sign)
+- `--fmspc`, `--tcbinfo-contract`, `--dcap-verifier-contract` CLI flags
+
+---
+
 ## Release: v0.2.0
 
 This release features a complete redesign of the enclave API (AKA Host-enclave separation) that -

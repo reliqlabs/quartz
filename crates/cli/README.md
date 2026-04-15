@@ -1,51 +1,45 @@
 # quartz CLI
 
-A CLI tool to manage Quartz applications. The `quartz` CLI tool is designed to streamline the development and deployment
-process of Quartz applications.
+CLI tool for managing Quartz applications. Handles enclave lifecycle, contract deployment, and the handshake protocol.
 
-It provides helpful information about each command and its options. To get a list of all available subcommands and their
-descriptions, use the `--help` flag:
+## Installation
 
 ```shell
-$ quartz --help
+cargo install --path crates/cli
+```
 
-Quartz 0.1.0
-A CLI tool to manage Quartz applications
+## Commands
 
-USAGE:
-    quartz [SUBCOMMAND]
-
-OPTIONS:
-    -h, --help       Print help information
-    -V, --version    Print version information
+```
+quartz [SUBCOMMAND]
 
 SUBCOMMANDS:
     init        Create base Quartz app directory from template
     build       Build the contract and enclave binaries
-    enclave     Enclave subcommads to configure Gramine, build, sign, and start the enclave binary
-    contract    Contract subcommads to build, deploy the WASM binary to the blockchain and call instantiate
+    enclave     Build and start the enclave (Docker container on dstack CVM)
+    contract    Build and deploy the WASM binary to Xion
     handshake   Run the handshake between the contract and enclave
+    dev         Build, deploy, and handshake in one step
 ```
 
-## Installation
+## Key Changes from Upstream
 
-To install Quartz, ensure you have Rust and Cargo installed. Then run:
+- **Chain binary**: `neutrond` replaced with `xiond` (Xion chain, `uxion` denom).
+- **gnark prover**: Groth16 proof generation integrated via Unix socket (~5s CPU, <1s GPU).
+- **Removed**: `print-fmspc` command (SGX-specific, not needed for TDX).
+- **Removed**: Gramine enclave subcommands (`configure`, `sign`). Enclaves run as standard Docker containers.
+- **Removed**: `--fmspc`, `--tcbinfo-contract`, `--dcap-verifier-contract` flags.
 
-```shell
-cargo install quartz-rs
+## App Structure
+
 ```
-
-## Usage
-
-See the [getting started](/docs/getting_started.md).
-
-Run `quartz init` to copy the example app into a new directory. Quartz apps are
-organized like:
-
-```shell
 myapp/
 ├── contracts/
 ├── enclave/
 ├── frontend/
 └── README.md
 ```
+
+## Usage
+
+See [Getting Started](../../docs/getting_started.md).
