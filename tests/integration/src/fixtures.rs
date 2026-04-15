@@ -5,7 +5,6 @@
 //! they won't pass real cryptographic verification, but they exercise
 //! the full serialization pipeline and journal binding logic.
 
-use cosmwasm_std::HexBinary;
 use sha2::{Digest, Sha256};
 
 /// A synthetic DcapJournal matching the zkdcap-core format.

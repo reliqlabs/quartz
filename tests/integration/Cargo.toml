@@ -15,6 +15,9 @@ cw2 = "3"
 # quartz — without mock-sgx so DstackAttestation handler queries ZK module
 quartz-contract-core = { path = "../../crates/contracts/core" }
 
+# networking
+ureq = { version = "2", features = ["json"] }
+
 # encoding
 anyhow = "1"
 prost = "0.13"
@@ -22,3 +25,4 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 hex = { version = "0.4", features = ["serde"] }
 sha2 = "0.10"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

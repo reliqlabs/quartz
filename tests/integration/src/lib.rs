@@ -9,3 +9,6 @@ pub mod zk_mock;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod testnet;
