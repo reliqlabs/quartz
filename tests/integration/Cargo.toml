@@ -8,17 +8,17 @@ publish = false
 # cosmwasm
 cosmwasm-std = { version = "3", features = ["std", "staking", "stargate"] }
 cosmwasm-schema = "3"
-cw-multi-test = { version = "3", features = ["stargate"] }
+cw-multi-test = { version = "3", features = ["stargate", "cosmwasm_2_0"] }
 cw-storage-plus = "3"
 cw2 = "3"
 
-# quartz
-quartz-contract-core = { path = "../../crates/contracts/core", features = ["mock-sgx"] }
+# quartz — without mock-sgx so DstackAttestation handler queries ZK module
+quartz-contract-core = { path = "../../crates/contracts/core" }
 
 # encoding
 anyhow = "1"
 prost = "0.13"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-hex = "0.4"
+hex = { version = "0.4", features = ["serde"] }
 sha2 = "0.10"

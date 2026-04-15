@@ -59,14 +59,12 @@ impl Handler for DstackAttestation {
         prost::Message::encode(&verify_req, &mut req_bytes)
             .map_err(|e| Error::ZkdcapVerificationFailed(format!("encode request: {e}")))?;
 
-        let grpc_query = cosmwasm_std::QueryRequest::Grpc(cosmwasm_std::GrpcQuery {
-            path: "/xion.zk.v1.Query/ProofVerify".to_string(),
-            data: cosmwasm_std::Binary::from(req_bytes),
-        });
-
         let resp_bytes: cosmwasm_std::Binary = deps
             .querier
-            .query(&grpc_query)
+            .query_grpc(
+                "/xion.zk.v1.Query/ProofVerify".to_string(),
+                cosmwasm_std::Binary::from(req_bytes),
+            )
             .map_err(|e| Error::ZkdcapVerificationFailed(format!("ZK module query: {e}")))?;
 
         let verify_resp = <ProofVerifyResponse as prost::Message>::decode(resp_bytes.as_slice())

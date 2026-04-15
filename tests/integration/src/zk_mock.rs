@@ -1,10 +1,13 @@
 //! Mock for Xion's native ZK module (`xion.zk.v1`).
 //!
-//! Intercepts `QueryRequest::Grpc` calls to `/xion.zk.v1.Query/ProofVerify`
-//! in cw_multi_test, simulating the chain's Groth16 verification.
+//! Intercepts gRPC queries to `/xion.zk.v1.Query/ProofVerify` and validates:
+//! 1. Proof bytes are valid SnarkJS-format Groth16 JSON
+//! 2. Proof has pi_a, pi_b, pi_c fields and protocol="groth16"
+//! 3. Public inputs are present
 //!
-//! NOTE: Xion v29 also has `/xion.zk.v1.Query/ProofVerifyGnark` for gnark
-//! native binary format. The zkdcap verifier will migrate to that endpoint.
+//! Does NOT perform the actual BN254 pairing check — that requires
+//! ark-groth16 or the real Xion module. This mock validates the
+//! serialization pipeline is correct.
 
 use cosmwasm_std::{Addr, Api, Binary, BlockInfo, CustomMsg, CustomQuery, GrpcQuery, Querier, StdError, StdResult, Storage};
 use cw_multi_test::{AppResponse, CosmosRouter, Stargate};
@@ -36,17 +39,36 @@ const ZK_VERIFY_PATH: &str = "/xion.zk.v1.Query/ProofVerify";
 /// Mock Stargate handler that intercepts Xion ZK module queries.
 #[derive(Clone)]
 pub struct ZkMockStargate {
+    /// If true, structurally valid proofs pass. If false, everything fails.
     pub always_verify: bool,
+    /// If true, validate proof JSON structure. If false, accept any non-empty proof.
+    pub validate_structure: bool,
 }
 
 impl ZkMockStargate {
+    /// Accept any non-empty proof (for handshake tests that use MockAttestation)
     pub fn accepting() -> Self {
-        Self { always_verify: true }
+        Self {
+            always_verify: true,
+            validate_structure: false,
+        }
     }
 
+    /// Reject everything (for testing error paths)
     #[allow(dead_code)]
     pub fn rejecting() -> Self {
-        Self { always_verify: false }
+        Self {
+            always_verify: false,
+            validate_structure: false,
+        }
+    }
+
+    /// Validate proof structure before accepting (for zkdcap integration tests)
+    pub fn validating() -> Self {
+        Self {
+            always_verify: true,
+            validate_structure: true,
+        }
     }
 
     fn handle_proof_verify(&self, data: &[u8]) -> StdResult<Binary> {
@@ -57,7 +79,40 @@ impl ZkMockStargate {
             return Ok(Binary::from(encode_response(false)));
         }
 
-        Ok(Binary::from(encode_response(self.always_verify)))
+        if !self.always_verify {
+            return Ok(Binary::from(encode_response(false)));
+        }
+
+        if self.validate_structure {
+            // Parse proof as SnarkJS JSON and validate structure
+            let proof_json: serde_json::Value = serde_json::from_slice(&req.proof)
+                .map_err(|e| StdError::msg(format!("proof is not valid JSON: {e}")))?;
+
+            let has_pi_a = proof_json.get("pi_a").is_some();
+            let has_pi_b = proof_json.get("pi_b").is_some();
+            let has_pi_c = proof_json.get("pi_c").is_some();
+            let has_protocol = proof_json
+                .get("protocol")
+                .and_then(|v| v.as_str())
+                .map(|s| s == "groth16")
+                .unwrap_or(false);
+
+            if !has_pi_a || !has_pi_b || !has_pi_c || !has_protocol {
+                return Ok(Binary::from(encode_response(false)));
+            }
+
+            // Validate public inputs are present
+            if req.public_inputs.is_empty() {
+                return Ok(Binary::from(encode_response(false)));
+            }
+
+            // Validate vkey name is provided
+            if req.vkey_name.is_empty() && req.vkey_id == 0 {
+                return Ok(Binary::from(encode_response(false)));
+            }
+        }
+
+        Ok(Binary::from(encode_response(true)))
     }
 }
 

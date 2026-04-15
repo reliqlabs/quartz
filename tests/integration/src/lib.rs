@@ -4,6 +4,7 @@
 //! `/xion.zk.v1.Query/ProofVerify` gRPC queries and returns mock
 //! verification results.
 
+pub mod fixtures;
 pub mod zk_mock;
 
 #[cfg(test)]

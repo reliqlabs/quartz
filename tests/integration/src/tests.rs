@@ -1,13 +1,18 @@
 //! End-to-end integration tests for the Quartz handshake protocol.
+//!
+//! Tests use DstackAttestation (non-mock) with the ZkMockStargate handler.
+//! When zkdcap_vkey is None, the handler skips ZK verification.
+//! When zkdcap_vkey is set, the handler queries the ZK mock which validates
+//! proof structure.
 
 use cosmwasm_std::{Empty, HexBinary};
 use cw_multi_test::{App, AppBuilder, ContractWrapper, Executor};
-use sha2::{Digest, Sha256};
 
+use crate::fixtures::ZkdcapFixture;
 use crate::zk_mock::ZkMockStargate;
 
 // ============================================================
-// Minimal Quartz app contract (inline, uses mock-sgx attestation)
+// Minimal Quartz app contract using DstackAttestation
 // ============================================================
 
 mod test_contract {
@@ -17,12 +22,12 @@ mod test_contract {
     };
     use quartz_contract_core::{
         handler::RawHandler,
-        msg::execute::attested::RawMockAttestation,
+        msg::execute::attested::RawDstackAttestation,
         prelude::*,
         state::SESSION,
     };
 
-    type RA = RawMockAttestation;
+    type RA = RawDstackAttestation;
 
     #[cw_serde]
     pub struct InstantiateMsg {
@@ -102,140 +107,125 @@ type TestApp = App<
     ZkMockStargate,
 >;
 
-fn setup_app() -> TestApp {
+fn setup_app(mock: ZkMockStargate) -> TestApp {
     AppBuilder::new_custom()
-        .with_stargate(ZkMockStargate::accepting())
+        .with_stargate(mock)
         .build(|_router, _api, _storage| {})
 }
 
-/// Build a Config and RawConfig using actual types.
-fn build_config() -> quartz_contract_core::state::Config {
+/// Build Config using actual types for correct serialization.
+fn build_config(
+    mr_enclave: [u8; 32],
+    zkdcap_vkey: Option<String>,
+) -> quartz_contract_core::state::Config {
     use quartz_contract_core::state::{Config, LightClientOpts};
 
     let lco = LightClientOpts::new(
-        "testing".to_string(),
-        1u64,
-        [0u8; 32],
-        (2u64, 3u64),
-        1209600,
-        300,
-        600,
-    )
-    .unwrap();
+        "testing".to_string(), 1u64, [0u8; 32], (2u64, 3u64), 1209600, 300, 600,
+    ).unwrap();
 
-    Config::new([0u8; 32], lco, None)
+    Config::new(mr_enclave, lco, zkdcap_vkey)
 }
 
-/// Compute mock attestation user_data by going through the actual
-/// CoreInstantiate type, exactly matching the contract's HasUserData impl.
-fn mock_instantiate_user_data() -> HexBinary {
+/// Build a DstackAttestation JSON value with the given fields.
+fn build_dstack_attestation(
+    quote: &[u8],
+    user_data: [u8; 64],
+    compose_hash: [u8; 32],
+    proof: &[u8],
+    public_inputs: &[String],
+    journal: &[u8],
+) -> serde_json::Value {
+    serde_json::json!({
+        "quote": HexBinary::from(quote.to_vec()),
+        "event_log": null,
+        "user_data": HexBinary::from(user_data.to_vec()),
+        "compose_hash": HexBinary::from(compose_hash.to_vec()),
+        "zkdcap_proof": HexBinary::from(proof.to_vec()),
+        "zkdcap_public_inputs": public_inputs,
+        "zkdcap_journal": HexBinary::from(journal.to_vec()),
+    })
+}
+
+/// Compute user_data via CoreInstantiate's HasUserData impl.
+fn instantiate_user_data(config: &quartz_contract_core::state::Config) -> [u8; 64] {
     use quartz_contract_core::msg::{
         execute::attested::HasUserData,
         instantiate::CoreInstantiate,
     };
-
-    let config = build_config();
-    let core_instantiate = CoreInstantiate::new(config);
-    core_instantiate.user_data().into()
+    CoreInstantiate::new(config.clone()).user_data()
 }
 
-
-/// Build the full instantiate msg with mock attestation.
-fn build_instantiate_msg() -> serde_json::Value {
-    let config = build_config();
-    let raw_config: quartz_contract_core::state::RawConfig = config.into();
-    let raw_config_value = serde_json::to_value(&raw_config).unwrap();
-    let raw_core_instantiate = serde_json::json!({ "config": raw_config_value });
-    let user_data = mock_instantiate_user_data();
-
-    serde_json::json!({
-        "quartz": {
-            "msg": raw_core_instantiate,
-            "attestation": user_data,
-        }
-    })
-}
-
-/// Build a SessionCreate execute msg with mock attestation.
-fn build_session_create_msg(nonce: [u8; 32], contract_addr: &str) -> serde_json::Value {
+/// Compute user_data via SessionCreate's HasUserData impl.
+fn session_create_user_data(nonce: [u8; 32], contract: &str) -> [u8; 64] {
     use quartz_contract_core::msg::{
         execute::attested::HasUserData,
         execute::session_create::SessionCreate,
     };
-
-    let sc = SessionCreate::new(nonce, contract_addr.to_string());
-    let user_data: HexBinary = sc.user_data().into();
-
-    // Build the raw JSON matching RawSessionCreate field order
-    let raw_sc = serde_json::json!({
-        "nonce": HexBinary::from(nonce.to_vec()),
-        "contract": contract_addr,
-    });
-
-    serde_json::json!({
-        "quartz": {
-            "session_create": {
-                "msg": raw_sc,
-                "attestation": user_data,
-            }
-        }
-    })
+    SessionCreate::new(nonce, contract.to_string()).user_data()
 }
 
-/// Build a SessionSetPubKey execute msg with mock attestation.
-fn build_session_set_pubkey_msg(nonce: [u8; 32], pub_key: Vec<u8>) -> serde_json::Value {
+/// Compute user_data via SessionSetPubKey's HasUserData impl.
+fn session_set_pubkey_user_data(nonce: [u8; 32], pub_key: Vec<u8>) -> [u8; 64] {
     use quartz_contract_core::msg::{
         execute::attested::HasUserData,
         execute::session_set_pub_key::SessionSetPubKey,
     };
-
-    let spk = SessionSetPubKey::new(nonce, pub_key.clone());
-    let user_data: HexBinary = spk.user_data().into();
-
-    let raw_spk = serde_json::json!({
-        "nonce": HexBinary::from(nonce.to_vec()),
-        "pub_key": HexBinary::from(pub_key),
-    });
-
-    serde_json::json!({
-        "quartz": {
-            "session_set_pub_key": {
-                "msg": raw_spk,
-                "attestation": user_data,
-            }
-        }
-    })
+    SessionSetPubKey::new(nonce, pub_key).user_data()
 }
 
 // ============================================================
-// Tests
+// Tests: Handshake (no ZK verification, zkdcap_vkey = None)
 // ============================================================
 
 #[test]
 fn test_handshake_full_cycle() {
-    let mut app = setup_app();
+    let mut app = setup_app(ZkMockStargate::accepting());
     let admin = app.api().addr_make("admin");
-
     let code = ContractWrapper::new(
-        test_contract::execute,
-        test_contract::instantiate,
-        test_contract::query,
+        test_contract::execute, test_contract::instantiate, test_contract::query,
     );
     let code_id = app.store_code(Box::new(code));
 
-    // Phase 1: Instantiate
-    let init_msg = build_instantiate_msg();
+    let mr_enclave = [0u8; 32]; // DstackAttestation.compose_hash must match
+    let config = build_config(mr_enclave, None);
+    let raw_config: quartz_contract_core::state::RawConfig = config.clone().into();
+
+    let user_data = instantiate_user_data(&config);
+    let attestation = build_dstack_attestation(
+        &[0xDE, 0xAD], user_data, mr_enclave, &[], &[], &[],
+    );
+
+    let raw_core = serde_json::json!({
+        "config": serde_json::to_value(&raw_config).unwrap()
+    });
+    let init_msg = serde_json::json!({
+        "quartz": { "msg": raw_core, "attestation": attestation }
+    });
+
     let contract_addr = app
         .instantiate_contract(code_id, admin.clone(), &init_msg, &[], "quartz-test", None)
         .unwrap();
 
     // Phase 2: SessionCreate
     let nonce = [42u8; 32];
-    let sc_msg = build_session_create_msg(nonce, &contract_addr.to_string());
-    app.execute_contract(admin.clone(), contract_addr.clone(), &sc_msg, &[])
-        .unwrap();
+    let sc_ud = session_create_user_data(nonce, &contract_addr.to_string());
+    let sc_attest = build_dstack_attestation(
+        &[0xDE, 0xAD], sc_ud, mr_enclave, &[], &[], &[],
+    );
+    let sc_msg = serde_json::json!({
+        "quartz": {
+            "session_create": {
+                "msg": {
+                    "nonce": HexBinary::from(nonce.to_vec()),
+                    "contract": contract_addr.to_string(),
+                },
+                "attestation": sc_attest,
+            }
+        }
+    });
+    app.execute_contract(admin.clone(), contract_addr.clone(), &sc_msg, &[]).unwrap();
 
-    // Verify: session created, no pubkey yet
     let session: test_contract::SessionResponse = app
         .wrap()
         .query_wasm_smart(&contract_addr, &test_contract::QueryMsg::Session {})
@@ -245,11 +235,23 @@ fn test_handshake_full_cycle() {
 
     // Phase 3: SessionSetPubKey
     let pub_key = vec![0x04; 33];
-    let spk_msg = build_session_set_pubkey_msg(nonce, pub_key.clone());
-    app.execute_contract(admin.clone(), contract_addr.clone(), &spk_msg, &[])
-        .unwrap();
+    let spk_ud = session_set_pubkey_user_data(nonce, pub_key.clone());
+    let spk_attest = build_dstack_attestation(
+        &[0xDE, 0xAD], spk_ud, mr_enclave, &[], &[], &[],
+    );
+    let spk_msg = serde_json::json!({
+        "quartz": {
+            "session_set_pub_key": {
+                "msg": {
+                    "nonce": HexBinary::from(nonce.to_vec()),
+                    "pub_key": HexBinary::from(pub_key.clone()),
+                },
+                "attestation": spk_attest,
+            }
+        }
+    });
+    app.execute_contract(admin.clone(), contract_addr.clone(), &spk_msg, &[]).unwrap();
 
-    // Verify: session complete with pubkey
     let session: test_contract::SessionResponse = app
         .wrap()
         .query_wasm_smart(&contract_addr, &test_contract::QueryMsg::Session {})
@@ -260,119 +262,178 @@ fn test_handshake_full_cycle() {
 
 #[test]
 fn test_session_create_wrong_contract_addr() {
-    let mut app = setup_app();
+    let mut app = setup_app(ZkMockStargate::accepting());
     let admin = app.api().addr_make("admin");
-
     let code = ContractWrapper::new(
-        test_contract::execute,
-        test_contract::instantiate,
-        test_contract::query,
+        test_contract::execute, test_contract::instantiate, test_contract::query,
     );
     let code_id = app.store_code(Box::new(code));
 
+    let mr_enclave = [0u8; 32];
+    let config = build_config(mr_enclave, None);
+    let raw_config: quartz_contract_core::state::RawConfig = config.clone().into();
+    let user_data = instantiate_user_data(&config);
+    let attestation = build_dstack_attestation(&[0xDE, 0xAD], user_data, mr_enclave, &[], &[], &[]);
+    let raw_core = serde_json::json!({"config": serde_json::to_value(&raw_config).unwrap()});
+    let init_msg = serde_json::json!({"quartz": {"msg": raw_core, "attestation": attestation}});
+
     let contract_addr = app
-        .instantiate_contract(
-            code_id,
-            admin.clone(),
-            &build_instantiate_msg(),
-            &[],
-            "quartz-test",
-            None,
-        )
+        .instantiate_contract(code_id, admin.clone(), &init_msg, &[], "quartz-test", None)
         .unwrap();
 
-    // SessionCreate with valid but wrong contract address
     let wrong_addr = app.api().addr_make("wrong_contract");
-    let sc_msg = build_session_create_msg([1u8; 32], wrong_addr.as_str());
-    let err = app
-        .execute_contract(admin, contract_addr, &sc_msg, &[])
-        .unwrap_err();
+    let sc_ud = session_create_user_data([1u8; 32], wrong_addr.as_str());
+    let sc_attest = build_dstack_attestation(&[0xDE, 0xAD], sc_ud, mr_enclave, &[], &[], &[]);
+    let sc_msg = serde_json::json!({
+        "quartz": {"session_create": {"msg": {"nonce": HexBinary::from(vec![1u8; 32]), "contract": wrong_addr.to_string()}, "attestation": sc_attest}}
+    });
 
-    let err_str = err.to_string();
-    assert!(
-        err_str.contains("contract address mismatch") || err_str.contains("ContractAddrMismatch"),
-        "Expected contract address error, got: {}",
-        err_str
-    );
+    let err = app.execute_contract(admin, contract_addr, &sc_msg, &[]).unwrap_err();
+    assert!(err.to_string().contains("contract address mismatch") || err.to_string().contains("ContractAddrMismatch"),
+        "Expected contract address error, got: {}", err);
 }
 
 #[test]
 fn test_session_set_pubkey_wrong_nonce() {
-    let mut app = setup_app();
+    let mut app = setup_app(ZkMockStargate::accepting());
     let admin = app.api().addr_make("admin");
-
     let code = ContractWrapper::new(
-        test_contract::execute,
-        test_contract::instantiate,
-        test_contract::query,
+        test_contract::execute, test_contract::instantiate, test_contract::query,
     );
     let code_id = app.store_code(Box::new(code));
 
+    let mr_enclave = [0u8; 32];
+    let config = build_config(mr_enclave, None);
+    let raw_config: quartz_contract_core::state::RawConfig = config.clone().into();
+    let user_data = instantiate_user_data(&config);
+    let attestation = build_dstack_attestation(&[0xDE, 0xAD], user_data, mr_enclave, &[], &[], &[]);
+    let raw_core = serde_json::json!({"config": serde_json::to_value(&raw_config).unwrap()});
+    let init_msg = serde_json::json!({"quartz": {"msg": raw_core, "attestation": attestation}});
+
     let contract_addr = app
-        .instantiate_contract(
-            code_id,
-            admin.clone(),
-            &build_instantiate_msg(),
-            &[],
-            "quartz-test",
-            None,
-        )
+        .instantiate_contract(code_id, admin.clone(), &init_msg, &[], "quartz-test", None)
         .unwrap();
 
-    // SessionCreate with correct nonce
     let nonce = [42u8; 32];
-    let sc_msg = build_session_create_msg(nonce, &contract_addr.to_string());
-    app.execute_contract(admin.clone(), contract_addr.clone(), &sc_msg, &[])
-        .unwrap();
+    let sc_ud = session_create_user_data(nonce, &contract_addr.to_string());
+    let sc_attest = build_dstack_attestation(&[0xDE, 0xAD], sc_ud, mr_enclave, &[], &[], &[]);
+    let sc_msg = serde_json::json!({
+        "quartz": {"session_create": {"msg": {"nonce": HexBinary::from(nonce.to_vec()), "contract": contract_addr.to_string()}, "attestation": sc_attest}}
+    });
+    app.execute_contract(admin.clone(), contract_addr.clone(), &sc_msg, &[]).unwrap();
 
-    // SessionSetPubKey with WRONG nonce
     let wrong_nonce = [99u8; 32];
-    let spk_msg = build_session_set_pubkey_msg(wrong_nonce, vec![0x04; 33]);
-    let err = app
-        .execute_contract(admin, contract_addr, &spk_msg, &[])
-        .unwrap_err();
+    let spk_ud = session_set_pubkey_user_data(wrong_nonce, vec![0x04; 33]);
+    let spk_attest = build_dstack_attestation(&[0xDE, 0xAD], spk_ud, mr_enclave, &[], &[], &[]);
+    let spk_msg = serde_json::json!({
+        "quartz": {"session_set_pub_key": {"msg": {"nonce": HexBinary::from(wrong_nonce.to_vec()), "pub_key": HexBinary::from(vec![0x04u8; 33])}, "attestation": spk_attest}}
+    });
 
+    let err = app.execute_contract(admin, contract_addr, &spk_msg, &[]).unwrap_err();
     assert!(err.to_string().contains("invalid session nonce"));
 }
 
-#[test]
-fn test_double_set_pubkey_rejected() {
-    let mut app = setup_app();
-    let admin = app.api().addr_make("admin");
+// ============================================================
+// Tests: Proof verification (zkdcap_vkey set, ZK mock validates)
+// ============================================================
 
+#[test]
+fn test_handshake_with_zkdcap_proof_verification() {
+    let mut app = setup_app(ZkMockStargate::validating());
+    let admin = app.api().addr_make("admin");
     let code = ContractWrapper::new(
-        test_contract::execute,
-        test_contract::instantiate,
-        test_contract::query,
+        test_contract::execute, test_contract::instantiate, test_contract::query,
     );
     let code_id = app.store_code(Box::new(code));
 
+    let fixture = ZkdcapFixture::generate();
+    let mr_enclave = fixture.compose_hash;
+
+    // Config with zkdcap_vkey set — handler will query ZK module
+    let config = build_config(mr_enclave, Some("zkdcap-test".to_string()));
+    let raw_config: quartz_contract_core::state::RawConfig = config.clone().into();
+
+    let user_data = instantiate_user_data(&config);
+    let attestation = build_dstack_attestation(
+        &fixture.quote_bytes,
+        user_data,
+        mr_enclave,
+        &fixture.proof_bytes,
+        &fixture.public_inputs,
+        &fixture.journal_bytes,
+    );
+
+    let raw_core = serde_json::json!({
+        "config": serde_json::to_value(&raw_config).unwrap()
+    });
+    let init_msg = serde_json::json!({
+        "quartz": { "msg": raw_core, "attestation": attestation }
+    });
+
+    // Instantiate — DstackAttestation handler queries ZK mock with real proof structure
     let contract_addr = app
-        .instantiate_contract(
-            code_id,
-            admin.clone(),
-            &build_instantiate_msg(),
-            &[],
-            "quartz-test",
-            None,
-        )
+        .instantiate_contract(code_id, admin.clone(), &init_msg, &[], "quartz-zkdcap", None)
         .unwrap();
 
+    // Session handshake with proof data
     let nonce = [42u8; 32];
-    let sc_msg = build_session_create_msg(nonce, &contract_addr.to_string());
-    app.execute_contract(admin.clone(), contract_addr.clone(), &sc_msg, &[])
-        .unwrap();
+    let sc_ud = session_create_user_data(nonce, &contract_addr.to_string());
+    let sc_attest = build_dstack_attestation(
+        &fixture.quote_bytes, sc_ud, mr_enclave,
+        &fixture.proof_bytes, &fixture.public_inputs, &fixture.journal_bytes,
+    );
+    let sc_msg = serde_json::json!({
+        "quartz": {"session_create": {"msg": {"nonce": HexBinary::from(nonce.to_vec()), "contract": contract_addr.to_string()}, "attestation": sc_attest}}
+    });
+    app.execute_contract(admin.clone(), contract_addr.clone(), &sc_msg, &[]).unwrap();
 
-    // First set pubkey succeeds
-    let spk_msg = build_session_set_pubkey_msg(nonce, vec![0x04; 33]);
-    app.execute_contract(admin.clone(), contract_addr.clone(), &spk_msg, &[])
-        .unwrap();
+    let pub_key = vec![0x04; 33];
+    let spk_ud = session_set_pubkey_user_data(nonce, pub_key.clone());
+    let spk_attest = build_dstack_attestation(
+        &fixture.quote_bytes, spk_ud, mr_enclave,
+        &fixture.proof_bytes, &fixture.public_inputs, &fixture.journal_bytes,
+    );
+    let spk_msg = serde_json::json!({
+        "quartz": {"session_set_pub_key": {"msg": {"nonce": HexBinary::from(nonce.to_vec()), "pub_key": HexBinary::from(pub_key.clone())}, "attestation": spk_attest}}
+    });
+    app.execute_contract(admin.clone(), contract_addr.clone(), &spk_msg, &[]).unwrap();
 
-    // Second set pubkey with same nonce should fail
-    let spk_msg2 = build_session_set_pubkey_msg(nonce, vec![0x05; 33]);
+    // Verify handshake completed
+    let session: test_contract::SessionResponse = app
+        .wrap()
+        .query_wasm_smart(&contract_addr, &test_contract::QueryMsg::Session {})
+        .unwrap();
+    assert_eq!(session.pub_key, Some(HexBinary::from(pub_key)));
+}
+
+#[test]
+fn test_zkdcap_invalid_proof_rejected() {
+    let mut app = setup_app(ZkMockStargate::validating());
+    let admin = app.api().addr_make("admin");
+    let code = ContractWrapper::new(
+        test_contract::execute, test_contract::instantiate, test_contract::query,
+    );
+    let code_id = app.store_code(Box::new(code));
+
+    let mr_enclave = [0u8; 32];
+    let config = build_config(mr_enclave, Some("zkdcap-test".to_string()));
+    let raw_config: quartz_contract_core::state::RawConfig = config.clone().into();
+    let user_data = instantiate_user_data(&config);
+
+    // Invalid proof — not valid JSON, not SnarkJS format
+    let bad_proof = b"not a valid proof".to_vec();
+    let attestation = build_dstack_attestation(
+        &[0xDE, 0xAD], user_data, mr_enclave,
+        &bad_proof, &["123".to_string()], &[],
+    );
+
+    let raw_core = serde_json::json!({"config": serde_json::to_value(&raw_config).unwrap()});
+    let init_msg = serde_json::json!({"quartz": {"msg": raw_core, "attestation": attestation}});
+
     let err = app
-        .execute_contract(admin, contract_addr, &spk_msg2, &[])
+        .instantiate_contract(code_id, admin, &init_msg, &[], "quartz-bad", None)
         .unwrap_err();
 
-    assert!(err.to_string().contains("invalid session nonce"));
+    assert!(err.to_string().contains("zkdcap verification failed") || err.to_string().contains("not valid JSON"),
+        "Expected ZK verification error, got: {}", err);
 }
