@@ -1,15 +1,17 @@
 # Quartz CosmWasm Packages
 
-CosmWasm packages for building Quartz apps and verifying remote
-attestations from SGX.
+CosmWasm packages for building Quartz apps with TEE attestation support.
 
-The main interface for CosmWasm developers is package `core`.
+The main interface for CosmWasm developers is `quartz-contract-core`.
 
-## Packages
+## Active Packages
 
-1. `quartz-contract-core`. High-level framework for building attestation-aware smart contracts by wrapping CosmWasm messages in TEE attestations (e.g. DCAP).
-1. `quartz-dcap-verifier`: Standalone smart contract for verifying DCAP attestations that can be called by other contracts.
-1. `quartz-tee-ra`: Implements core types for SGX quotes and verification for
-   DCAP attestations
-1. `quartz-tcbinfo`: Standalone smart contract for verifying attestations come
-   from valid/secure Trusted Compute Base (TCB)
+- `quartz-contract-core` — Framework for building attestation-aware smart contracts. Wraps CosmWasm messages in `Attested<M>` with DstackAttestation (TDX quotes verified via Xion ZK module) or MockAttestation (testing).
+
+## Legacy Packages (excluded from workspace)
+
+The following packages were part of the original SGX architecture and are no longer compiled:
+
+- `quartz-dcap-verifier` — Replaced by direct Xion ZK module queries
+- `quartz-tee-ra` — SGX attestation types, replaced by DstackAttestation
+- `quartz-tcbinfo` — TCB registry, replaced by zkdcap circuit

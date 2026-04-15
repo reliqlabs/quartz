@@ -3,7 +3,7 @@
 > Fork of [informalsystems/cycles-quartz](https://github.com/informalsystems/cycles-quartz), modernized for dstack TDX and zkdcap.
 
 Quartz is a framework for privacy-preserving computation via Trusted Execution
-Environments (TEEs) organized and secured by smart contracts.
+Environments (TEEs) organized and secured by smart contracts on Xion.
 
 Encrypted data lives on-chain in CosmWasm contracts. Computation happens
 privately off-chain in a dstack CVM (TDX-based confidential VM). A light-client
@@ -20,18 +20,12 @@ WARNING: Quartz is under heavy development and not ready for production use.
 
 ## Architecture
 
-| Component | Old (SGX) | New (dstack/TDX) |
-|---|---|---|
-| TEE | Intel SGX enclave | dstack CVM (Intel TDX) |
-| Enclave wrapper | Gramine | Standard Docker container |
-| Attestation | DCAP on-chain (5M gas, 2 contracts) | zkdcap Groth16 via Xion ZK module (1M gas, gRPC query) |
-| Chain | Neutron (`neutrond`, `untrn`) | Xion (`xiond`, `uxion`) |
-| CosmWasm | 2.1 | 3 |
-| SGX libs | MobileCoin | Removed |
-| Attestor | `DcapAttestor` (Intel SGX DCAP) | `DstackAttestor` (dstack guest agent socket API) |
-| Key management | Random generation | `DstackKeyManager` (dstack KMS deterministic derivation) |
-| Encryption | Example-only ECIES | Core framework ECIES module |
-| Prover | N/A | gnark Groth16 (~5s CPU, <1s GPU) via Unix socket |
+- **TEE**: dstack CVM (Intel TDX). Enclaves run as standard Docker containers.
+- **Attestation**: TDX quotes verified on-chain via zkdcap Groth16 proofs through Xion's native ZK module.
+- **Chain**: Xion (`xiond`, `uxion`, CosmWasm 3).
+- **Prover**: gnark Groth16 (~5s CPU, <1s GPU) via Unix socket.
+- **Key management**: dstack KMS deterministic key derivation.
+- **Encryption**: ECIES (secp256k1) for user-to-enclave privacy.
 
 ## Crates
 

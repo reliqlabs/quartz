@@ -72,7 +72,8 @@ quartz handshake --contract $CONTRACT_ADDRESS
 
 ## Mock Mode
 
-For local development without TDX hardware:
+For local development without TDX hardware, use the `--mock-sgx` flag
+(named for historical reasons — it disables all TEE attestation):
 
 ```bash
 quartz --mock-sgx enclave build
