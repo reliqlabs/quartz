@@ -8,7 +8,7 @@
 //! The gnark server communicates over a Unix socket (GNARK_SOCKET env var).
 //! At ~5s CPU / <1s GPU, proof generation runs inline during the handshake.
 //!
-//! In mock-sgx mode, this is a no-op.
+//! In mock mode, this is a no-op.
 
 use color_eyre::{eyre::eyre, Result};
 use serde_json::Value;
@@ -18,9 +18,9 @@ use tracing::{debug, info, warn};
 /// If GNARK_SOCKET is set and the attestation contains a quote,
 /// generate a zkdcap proof via the gnark server and inject it into
 /// the response JSON.
-pub fn inject_zkdcap_proof(mut response: Value, mock_sgx: bool) -> Result<Value> {
-    if mock_sgx {
-        debug!("mock-sgx mode: skipping zkdcap proof generation");
+pub fn inject_zkdcap_proof(mut response: Value, mock: bool) -> Result<Value> {
+    if mock {
+        debug!("mock mode: skipping zkdcap proof generation");
         return Ok(response);
     }
 

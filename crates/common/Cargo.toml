@@ -19,8 +19,8 @@ full = ["contract", "enclave", "proto"]
 contract = ["dep:quartz-contract-core"]
 enclave = ["dep:quartz-enclave-core", "proto"]
 proto = ["dep:quartz-proto"]
-mock-sgx-cw = ["quartz-contract-core/mock-sgx"]
-mock-sgx-enclave = ["quartz-enclave-core/mock-sgx"]
+mock-cw = ["quartz-contract-core/mock"]
+mock-enclave = ["quartz-enclave-core/mock"]
 
 [dependencies]
 quartz-contract-core = { workspace = true, optional = true }

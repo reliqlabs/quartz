@@ -35,9 +35,9 @@ impl Handler for ContractBuildRequest {
             ])
             .env("RUSTFLAGS", "-C link-arg=-s");
 
-        if config.mock_sgx {
-            debug!("Building with mock-sgx enabled");
-            command.arg("--features=mock-sgx");
+        if config.mock {
+            debug!("Building with mock enabled");
+            command.arg("--features=mock");
         }
 
         info!("{}", "🚧 Building contract binary ...".green().bold());

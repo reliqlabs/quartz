@@ -10,7 +10,7 @@ use crate::{
 };
 
 /// Protobuf: xion.zk.v1.QueryVerifyRequest
-#[cfg(not(feature = "mock-sgx"))]
+#[cfg(not(feature = "mock"))]
 #[derive(Clone, prost::Message)]
 struct QueryVerifyRequest {
     #[prost(bytes = "vec", tag = "1")]
@@ -24,14 +24,14 @@ struct QueryVerifyRequest {
 }
 
 /// Protobuf: xion.zk.v1.ProofVerifyResponse
-#[cfg(not(feature = "mock-sgx"))]
+#[cfg(not(feature = "mock"))]
 #[derive(Clone, prost::Message)]
 struct ProofVerifyResponse {
     #[prost(bool, tag = "1")]
     verified: bool,
 }
 
-#[cfg(not(feature = "mock-sgx"))]
+#[cfg(not(feature = "mock"))]
 impl Handler for DstackAttestation {
     fn handle(
         self,
@@ -80,7 +80,7 @@ impl Handler for DstackAttestation {
     }
 }
 
-#[cfg(feature = "mock-sgx")]
+#[cfg(feature = "mock")]
 impl Handler for DstackAttestation {
     fn handle(
         self,

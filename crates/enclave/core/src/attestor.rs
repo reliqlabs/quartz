@@ -14,10 +14,10 @@ use sha2::{Digest, Sha256};
 
 use crate::backup_restore::{Export, Import};
 
-#[cfg(not(feature = "mock-sgx"))]
+#[cfg(not(feature = "mock"))]
 pub type DefaultAttestor = DstackAttestor;
 
-#[cfg(feature = "mock-sgx")]
+#[cfg(feature = "mock")]
 pub type DefaultAttestor = MockAttestor;
 
 /// The trait defines the interface for generating attestations from within an enclave.

@@ -15,7 +15,7 @@ A Rust framework for building TEE enclaves (dstack/TDX) managed by a CosmWasm co
 """
 
 [features]
-mock-sgx = ["quartz-contract-core/mock-sgx"]
+mock = ["quartz-contract-core/mock"]
 
 [dependencies]
 # external

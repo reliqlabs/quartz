@@ -19,7 +19,7 @@ name = "encrypt"
 path = "bin/encrypt.rs"
 
 [features]
-mock-sgx = ["quartz-common/mock-sgx-cw", "quartz-common/mock-sgx-enclave"]
+mock = ["quartz-common/mock-cw", "quartz-common/mock-enclave"]
 default = []
 
 [dependencies]

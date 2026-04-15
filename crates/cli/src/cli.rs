@@ -36,9 +36,9 @@ pub struct Cli {
 
     /// Enable mock mode for testing purposes.
     /// Disables TEE attestation and allows the system to run without a dstack/TDX environment.
-    #[arg(long)]
-    #[serde(skip_serializing_if = "is_false")]
-    pub mock_sgx: bool,
+    #[arg(long, alias = "mock-sgx")]
+    #[serde(skip_serializing_if = "is_false", alias = "mock_sgx")]
+    pub mock: bool,
 
     /// Path to Quartz app directory.
     /// Defaults to current working dir.

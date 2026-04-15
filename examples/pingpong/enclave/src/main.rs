@@ -71,10 +71,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
-    #[cfg(not(feature = "mock-sgx"))]
+    #[cfg(not(feature = "mock"))]
     let attestor = attestor::DstackAttestor::new();
 
-    #[cfg(feature = "mock-sgx")]
+    #[cfg(feature = "mock")]
     let attestor = attestor::MockAttestor::default();
 
     let config = Config::new(

@@ -1,4 +1,4 @@
-mock_sgx = false
+mock = false
 tx_sender = "val1"
 chain_id = "pion-1"
 node_url = "https://rpc-falcron.pion-1.ntrn.tech"

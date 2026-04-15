@@ -27,9 +27,9 @@ impl Handler for EnclaveBuildRequest {
             .args(["--manifest-path", &enclave_dir.join("Cargo.toml").display().to_string(),
         ]);
 
-        if config.mock_sgx {
-            debug!("Building with mock-sgx enabled");
-            command.arg("--features=mock-sgx");
+        if config.mock {
+            debug!("Building with mock enabled");
+            command.arg("--features=mock");
         }
 
         if config.release {

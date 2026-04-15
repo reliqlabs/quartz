@@ -4,14 +4,14 @@ use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{HexBinary, StdError};
 use serde::Serialize;
 
-#[cfg(not(feature = "mock-sgx"))]
+#[cfg(not(feature = "mock"))]
 pub type DefaultAttestation = DstackAttestation;
-#[cfg(not(feature = "mock-sgx"))]
+#[cfg(not(feature = "mock"))]
 pub type RawDefaultAttestation = RawDstackAttestation;
 
-#[cfg(feature = "mock-sgx")]
+#[cfg(feature = "mock")]
 pub type DefaultAttestation = MockAttestation;
-#[cfg(feature = "mock-sgx")]
+#[cfg(feature = "mock")]
 pub type RawDefaultAttestation = RawMockAttestation;
 
 use crate::{

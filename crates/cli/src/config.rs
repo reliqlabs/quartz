@@ -10,8 +10,8 @@ use serde_with::{serde_as, DisplayFromStr};
 pub struct Config {
     /// Enable mock mode for testing purposes.
     /// Disables TEE attestation and allows the system to run without a dstack/TDX environment.
-    #[serde(default)]
-    pub mock_sgx: bool,
+    #[serde(default, alias = "mock_sgx")]
+    pub mock: bool,
 
     /// Name or address of private key with which to sign
     #[serde(default = "default_tx_sender")]
@@ -103,7 +103,7 @@ fn default_app_dir() -> PathBuf {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            mock_sgx: false,
+            mock: false,
             tx_sender: default_tx_sender(),
             chain_id: default_chain_id(),
             node_url: default_node_url(),

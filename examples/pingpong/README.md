@@ -18,7 +18,7 @@ TEE-salon](https://www.youtube.com/watch?v=3Tv6k02zvBc&t=2517s).
 1) Run
 
 ```
-quartz --mock-sgx dev --unsafe-trust-latest --contract-manifest contracts/Cargo.toml
+quartz --mock dev --unsafe-trust-latest --contract-manifest contracts/Cargo.toml
 ```
 
 2. Copy the contract address from the output and paste it onto line 46 of the `send_message.rs` script. 

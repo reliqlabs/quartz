@@ -54,7 +54,7 @@ async fn handshake(args: HandshakeRequest, config: Config) -> Result<String> {
     .await?;
 
     // Inject zkdcap proof into the attested SessionCreate message
-    let res = inject_zkdcap_proof(res, config.mock_sgx)?;
+    let res = inject_zkdcap_proof(res, config.mock)?;
 
     let output: WasmdTxResponse = serde_json::from_str(
         cw_client
@@ -106,7 +106,7 @@ async fn handshake(args: HandshakeRequest, config: Config) -> Result<String> {
     .await?;
 
     // Inject zkdcap proof into the attested SessionSetPubKey message
-    let res = inject_zkdcap_proof(res, config.mock_sgx)?;
+    let res = inject_zkdcap_proof(res, config.mock)?;
 
     // Submit SessionSetPubKey to contract
     let output: WasmdTxResponse = serde_json::from_str(

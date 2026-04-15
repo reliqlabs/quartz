@@ -136,7 +136,7 @@ The `quartz-contract-core` package ensures the following properties:
 
 4. **DCAP Support**: The package supports DCAP attestation protocols.
 
-5. **Testability**: The mock-sgx feature allows for easy testing of contracts without a real SGX environment.
+5. **Testability**: The mock feature allows for easy testing of contracts without a real TEE environment.
 
 ## Assumptions
 

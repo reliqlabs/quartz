@@ -7,7 +7,7 @@ edition = "2021"
 authors = ["Informal Systems <hello@informal.systems>"]
 
 [features]
-mock-sgx = ["quartz-common/mock-sgx-cw", "quartz-common/mock-sgx-enclave"]
+mock = ["quartz-common/mock-cw", "quartz-common/mock-enclave"]
 default = []
 
 [dependencies]
