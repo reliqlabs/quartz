@@ -1,0 +1,40 @@
+[workspace]
+
+[package]
+name = "ranked-choice-contract"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[profile.release]
+opt-level = "z"
+debug = false
+lto = true
+codegen-units = 1
+panic = 'abort'
+incremental = false
+overflow-checks = true
+
+[features]
+mock = ["quartz-contract-core/mock"]
+library = []
+
+[dependencies]
+cosmwasm-std = { version = "3", default-features = false, features = ["std", "exports"] }
+cosmwasm-schema = "3"
+cw-storage-plus = "3"
+serde_json = { version = "1", default-features = false }
+thiserror = "2"
+
+quartz-contract-core = { path = "../../../crates/contracts/core" }
+quartz-contract-core-derive = { path = "../../../crates/contracts/core/derive" }
+
+getrandom = { version = "0.2", features = ["js"] }
+base64ct = "=1.7.3"
+ed25519-zebra = "=4.0.3"
+
+[dev-dependencies]
+cw-multi-test = "3"
+serde_json = "1"
