@@ -4,13 +4,14 @@ use crate::{
     cli::{Command, ContractCommand, EnclaveCommand},
     request::{
         contract_build::ContractBuildRequest, contract_deploy::ContractDeployRequest,
-        dev::DevRequest, enclave_build::EnclaveBuildRequest, enclave_start::EnclaveStartRequest,
-        handshake::HandshakeRequest, init::InitRequest,
+        deploy::DeployRequest, dev::DevRequest, enclave_build::EnclaveBuildRequest,
+        enclave_start::EnclaveStartRequest, handshake::HandshakeRequest, init::InitRequest,
     },
 };
 
 pub mod contract_build;
 pub mod contract_deploy;
+pub mod deploy;
 pub mod dev;
 pub mod enclave_build;
 pub mod enclave_start;
@@ -26,6 +27,7 @@ pub enum Request {
     EnclaveBuild(EnclaveBuildRequest),
     EnclaveStart(EnclaveStartRequest),
     Dev(DevRequest),
+    Deploy(DeployRequest),
 }
 
 impl TryFrom<Command> for Request {
@@ -61,6 +63,29 @@ impl TryFrom<Command> for Request {
                     wasm_bin_path: args.contract_deploy.wasm_bin_path,
                     bin_path: args.bin_path,
                     no_backup: args.no_backup,
+                }
+                .into())
+            }
+            Command::Deploy(args) => {
+                if !args.contract_deploy.contract_manifest.exists()
+                    && args.contract_address.is_none()
+                {
+                    return Err(eyre!(
+                        "The contract manifest file does not exist: {}",
+                        args.contract_deploy.contract_manifest.display()
+                    ));
+                }
+
+                Ok(DeployRequest {
+                    contract_manifest: args.contract_deploy.contract_manifest,
+                    init_msg: serde_json::from_str(&args.contract_deploy.init_msg)?,
+                    label: args.contract_deploy.label,
+                    admin: args.contract_deploy.admin,
+                    no_admin: args.contract_deploy.no_admin,
+                    unsafe_trust_latest: args.unsafe_trust_latest,
+                    wasm_bin_path: args.contract_deploy.wasm_bin_path,
+                    bin_path: args.bin_path,
+                    contract_address: args.contract_address,
                 }
                 .into())
             }

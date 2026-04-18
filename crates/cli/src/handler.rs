@@ -7,6 +7,7 @@ pub mod utils;
 // commands
 pub mod contract_build;
 pub mod contract_deploy;
+pub mod deploy;
 pub mod dev;
 pub mod enclave_build;
 pub mod enclave_start;
@@ -34,6 +35,7 @@ impl Handler for Request {
             Request::EnclaveBuild(request) => request.handle(config).await,
             Request::EnclaveStart(request) => request.handle(config).await,
             Request::Dev(request) => request.handle(config).await,
+            Request::Deploy(request) => request.handle(config).await,
         }
     }
 }

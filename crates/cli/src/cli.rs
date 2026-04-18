@@ -78,6 +78,9 @@ pub enum Command {
 
     /// Build, deploy, perform handshake, and run quartz app while listening for changes
     Dev(DevArgs),
+
+    /// Build, deploy, and handshake in one step (no watch)
+    Deploy(DeployArgs),
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -282,6 +285,26 @@ pub struct DevArgs {
     pub no_backup: bool,
 }
 
+#[derive(Debug, Parser, Clone, Serialize, Deserialize)]
+pub struct DeployArgs {
+    /// Fetch latest trusted hash and height from the chain
+    #[arg(long, default_value_t = true)]
+    pub unsafe_trust_latest: bool,
+
+    #[command(flatten)]
+    pub contract_deploy: ContractDeployArgs,
+
+    /// Path to pre-built enclave executable (skip enclave build)
+    #[arg(long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bin_path: Option<PathBuf>,
+
+    /// Use an existing contract address (skip deployment)
+    #[arg(long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contract_address: Option<String>,
+}
+
 pub trait ToFigment {
     fn to_figment(&self) -> Figment;
 }
@@ -302,6 +325,8 @@ impl ToFigment for Command {
             Command::Dev(args) => Figment::from(Serialized::defaults(args))
                 .merge(Serialized::defaults(&args.contract_deploy))
                 .merge(Serialized::defaults(&args.enclave_build)),
+            Command::Deploy(args) => Figment::from(Serialized::defaults(args))
+                .merge(Serialized::defaults(&args.contract_deploy)),
         }
     }
 }
