@@ -109,7 +109,6 @@ pub mod handler;
 pub mod host;
 pub mod key_manager;
 pub mod proof_of_publication;
-pub mod proxy_re_encrypt;
 pub mod store;
 pub mod types;
 
