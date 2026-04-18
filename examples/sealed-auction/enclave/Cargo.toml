@@ -1,0 +1,53 @@
+[workspace]
+
+[package]
+name = "sealed-auction-enclave"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+mock = ["quartz-common/mock-cw", "quartz-common/mock-enclave"]
+default = []
+
+[dependencies]
+async-trait = "0.1"
+anyhow = "1"
+clap = { version = "4", default-features = false, features = ["derive", "std"] }
+color-eyre = "0.6"
+ecies = { version = "0.2", default-features = false, features = ["pure"] }
+env_logger = "0.11"
+hex = "0.4"
+k256 = { version = "0.13", default-features = false, features = ["ecdsa", "alloc"] }
+serde = { version = "1", default-features = false, features = ["derive"] }
+serde_json = { version = "1", default-features = false, features = ["alloc"] }
+tokio = { version = "1", default-features = false, features = ["macros", "rt", "signal"] }
+tonic = { version = "0.13", default-features = false, features = [
+  "codegen", "prost", "transport",
+] }
+tracing = "0.1"
+
+cosmrs = { version = "0.22", default-features = false, features = ["getrandom"] }
+cosmwasm-std = { version = "3", default-features = false, features = ["std"] }
+tendermint = { version = "=0.40.4", default-features = false }
+tendermint-rpc = { version = "=0.40.4", default-features = false }
+tendermint-light-client = { version = "=0.40.4", default-features = false, features = [
+  "rust-crypto",
+] }
+
+sealed-auction-contract = { path = "../contracts", default-features = false }
+cw-client = { path = "../../../crates/utils/cw-client", default-features = false }
+quartz-common = { version = "0.5.1", features = ["full"] }
+
+getrandom = { version = "0.2", features = ["js"] }
+backtrace = "=0.3.74"
+url = "=2.5.0"
+base64ct = "=1.7.3"
+ed25519-zebra = "=4.0.3"
+
+[dev-dependencies]
+rand = "0.8"
+
+[patch.crates-io]
+cw-client = { path = "../../../crates/utils/cw-client" }
+quartz-common = { path = "../../../crates/common" }
+quartz-tm-prover = { path = "../../../crates/utils/tm-prover" }
