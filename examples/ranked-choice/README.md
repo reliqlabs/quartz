@@ -55,6 +55,26 @@ xiond tx wasm execute $CONTRACT_ADDRESS '{"open_voting":{}}' ...
 # 3. Submit: {"cast_ballot":{"ciphertext":"<hex>"}}
 ```
 
+## Frontend
+
+Next.js app using `@burnt-labs/abstraxion` for Xion wallet integration:
+
+```bash
+cd frontend
+cp .env.local.example .env.local
+# Edit .env.local with your contract address
+pnpm install
+pnpm dev
+```
+
+The frontend:
+- Connects via Xion abstract accounts (sessionless, gasless)
+- Queries the contract for election state and enclave session pubkey
+- Lets voters reorder candidates with up/down buttons
+- Encrypts the ballot with ECIES to the session pubkey (client-side)
+- Submits the encrypted ballot to the contract
+- Displays round-by-round results after the enclave tallies
+
 ## Enclave Tests
 
 ```bash

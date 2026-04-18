@@ -1,0 +1,26 @@
+{
+  "name": "ranked-choice-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "@burnt-labs/abstraxion": "^2",
+    "@burnt-labs/constants": "^0",
+    "@cosmjs/cosmwasm-stargate": "^0.33",
+    "@cosmjs/encoding": "^0.33",
+    "@noble/secp256k1": "^2",
+    "eciesjs": "^0.4",
+    "next": "^15",
+    "react": "^19",
+    "react-dom": "^19"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "@types/react": "^19",
+    "typescript": "^5"
+  }
+}
