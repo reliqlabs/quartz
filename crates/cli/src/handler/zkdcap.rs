@@ -1,11 +1,13 @@
-//! zkdcap proof injection for attested messages.
+//! zkdcap proof generation and attestation type transformation.
 //!
-//! After the enclave produces an attested message with a TDX quote,
-//! the host generates a zkdcap Groth16 proof via the gnark prover
-//! server and injects it into the attestation before submitting to
-//! the contract.
+//! The enclave produces a DstackAttestation (raw TDX quote). If a gnark
+//! prover is available (GNARK_SOCKET env var), this module generates a
+//! Groth16 proof and transforms the attestation into a DstackZkAttestation
+//! before submitting to the contract.
 //!
-//! The gnark server communicates over a Unix socket (GNARK_SOCKET env var).
+//! Without GNARK_SOCKET, the raw DstackAttestation is submitted as-is.
+//!
+//! The gnark server communicates over a Unix socket.
 //! At ~5s CPU / <1s GPU, proof generation runs inline during the handshake.
 //!
 //! In mock mode, this is a no-op.
@@ -16,8 +18,10 @@ use std::io::{Read, Write};
 use tracing::{debug, info, warn};
 
 /// If GNARK_SOCKET is set and the attestation contains a quote,
-/// generate a zkdcap proof via the gnark server and inject it into
-/// the response JSON.
+/// generate a zkdcap proof and transform the attestation from
+/// DstackAttestation (raw quote) to DstackZkAttestation (ZK proof).
+///
+/// If GNARK_SOCKET is not set, the raw DstackAttestation is left as-is.
 pub fn inject_zkdcap_proof(mut response: Value, mock: bool) -> Result<Value> {
     if mock {
         debug!("mock mode: skipping zkdcap proof generation");
@@ -27,7 +31,7 @@ pub fn inject_zkdcap_proof(mut response: Value, mock: bool) -> Result<Value> {
     let socket_path = match std::env::var("GNARK_SOCKET") {
         Ok(path) => path,
         Err(_) => {
-            warn!("GNARK_SOCKET not set, skipping zkdcap proof generation");
+            warn!("GNARK_SOCKET not set, submitting raw DstackAttestation");
             return Ok(response);
         }
     };
@@ -58,18 +62,28 @@ pub fn inject_zkdcap_proof(mut response: Value, mock: bool) -> Result<Value> {
 
     let proof_result = call_gnark_prover(&socket_path, &quote_hex)?;
 
-    // Inject proof fields into the attestation
-    if let Some(proof) = proof_result.get("proof") {
-        attestation["zkdcap_proof"] = proof.clone();
-    }
-    if let Some(inputs) = proof_result.get("public_inputs") {
-        attestation["zkdcap_public_inputs"] = inputs.clone();
-    }
-    if let Some(journal) = proof_result.get("journal") {
-        attestation["zkdcap_journal"] = journal.clone();
-    }
+    // Transform DstackAttestation → DstackZkAttestation:
+    // Keep user_data and compose_hash, replace quote/event_log with proof fields.
+    let user_data = attestation
+        .get("user_data")
+        .cloned()
+        .unwrap_or(Value::Null);
+    let compose_hash = attestation
+        .get("compose_hash")
+        .cloned()
+        .unwrap_or(Value::Null);
 
-    info!("zkdcap proof generated and injected");
+    let zk_attestation = serde_json::json!({
+        "user_data": user_data,
+        "compose_hash": compose_hash,
+        "zkdcap_proof": proof_result.get("proof").cloned().unwrap_or(Value::Null),
+        "zkdcap_public_inputs": proof_result.get("public_inputs").cloned().unwrap_or(Value::Array(vec![])),
+        "zkdcap_journal": proof_result.get("journal").cloned().unwrap_or(Value::Null),
+    });
+
+    *attestation = zk_attestation;
+
+    info!("zkdcap proof generated, attestation transformed to DstackZkAttestation");
     Ok(response)
 }
 
