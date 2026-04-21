@@ -4,8 +4,8 @@ use crate::{
     error::Error,
     handler::Handler,
     msg::execute::attested::{
-        Attestation, Attested, DstackAttestation, DstackZkAttestation, HasUserData,
-        MockAttestation, Noop,
+        Attestation, Attested, DstackAnyAttestation, DstackAttestation, DstackZkAttestation,
+        HasUserData, MockAttestation, Noop,
     },
     state::CONFIG,
 };
@@ -129,6 +129,22 @@ impl Handler for DstackZkAttestation {
         _info: &MessageInfo,
     ) -> Result<Response, Error> {
         Ok(Response::default())
+    }
+}
+
+// ── DstackAnyAttestation handler (delegates to inner variant) ──────
+
+impl Handler for DstackAnyAttestation {
+    fn handle(
+        self,
+        deps: DepsMut<'_>,
+        env: &Env,
+        info: &MessageInfo,
+    ) -> Result<Response, Error> {
+        match self {
+            Self::Quote(a) => a.handle(deps, env, info),
+            Self::Zk(a) => a.handle(deps, env, info),
+        }
     }
 }
 

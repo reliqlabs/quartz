@@ -1,13 +1,13 @@
 use std::{convert::Into, default::Default};
 
-use cosmwasm_schema::cw_serde;
+use cosmwasm_schema::{cw_serde, schemars};
 use cosmwasm_std::{HexBinary, StdError};
 use serde::Serialize;
 
 #[cfg(not(feature = "mock"))]
-pub type DefaultAttestation = DstackAttestation;
+pub type DefaultAttestation = DstackAnyAttestation;
 #[cfg(not(feature = "mock"))]
-pub type RawDefaultAttestation = RawDstackAttestation;
+pub type RawDefaultAttestation = RawDstackAnyAttestation;
 
 #[cfg(feature = "mock")]
 pub type DefaultAttestation = MockAttestation;
@@ -329,6 +329,74 @@ impl HasUserData for DstackZkAttestation {
 impl Attestation for DstackZkAttestation {
     fn mr_enclave(&self) -> MrEnclave {
         self.compose_hash
+    }
+}
+
+// ── DstackAnyAttestation (accepts either variant) ──────────────────
+
+/// Enum that accepts either a raw quote or a ZK proof attestation.
+///
+/// Used as `DefaultAttestation` so contracts can accept whichever the
+/// host submits — raw DstackAttestation when no gnark prover is
+/// available, or DstackZkAttestation when one is.
+#[derive(Clone, Debug, PartialEq)]
+pub enum DstackAnyAttestation {
+    Quote(DstackAttestation),
+    Zk(DstackZkAttestation),
+}
+
+/// Raw (serializable) enum for DstackAnyAttestation.
+///
+/// Uses `untagged` serde — the two variants have distinct field sets
+/// (quote vs zkdcap_proof) so deserialization is unambiguous.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(untagged)]
+pub enum RawDstackAnyAttestation {
+    /// Try ZK first — has zkdcap_proof field
+    Zk(RawDstackZkAttestation),
+    /// Fallback to raw quote — has quote field
+    Quote(RawDstackAttestation),
+}
+
+impl TryFrom<RawDstackAnyAttestation> for DstackAnyAttestation {
+    type Error = StdError;
+
+    fn try_from(value: RawDstackAnyAttestation) -> Result<Self, Self::Error> {
+        match value {
+            RawDstackAnyAttestation::Quote(raw) => Ok(Self::Quote(raw.try_into()?)),
+            RawDstackAnyAttestation::Zk(raw) => Ok(Self::Zk(raw.try_into()?)),
+        }
+    }
+}
+
+impl From<DstackAnyAttestation> for RawDstackAnyAttestation {
+    fn from(value: DstackAnyAttestation) -> Self {
+        match value {
+            DstackAnyAttestation::Quote(a) => Self::Quote(a.into()),
+            DstackAnyAttestation::Zk(a) => Self::Zk(a.into()),
+        }
+    }
+}
+
+impl HasDomainType for RawDstackAnyAttestation {
+    type DomainType = DstackAnyAttestation;
+}
+
+impl HasUserData for DstackAnyAttestation {
+    fn user_data(&self) -> UserData {
+        match self {
+            Self::Quote(a) => a.user_data(),
+            Self::Zk(a) => a.user_data(),
+        }
+    }
+}
+
+impl Attestation for DstackAnyAttestation {
+    fn mr_enclave(&self) -> MrEnclave {
+        match self {
+            Self::Quote(a) => a.mr_enclave(),
+            Self::Zk(a) => a.mr_enclave(),
+        }
     }
 }
 
