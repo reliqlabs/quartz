@@ -256,8 +256,8 @@ pub struct DstackZkAttestation {
     pub compose_hash: MrEnclave,
     /// zkdcap Groth16 proof bytes
     pub zkdcap_proof: Vec<u8>,
-    /// zkdcap public inputs
-    pub zkdcap_public_inputs: Vec<String>,
+    /// zkdcap public inputs (concatenated 32-byte big-endian field elements)
+    pub zkdcap_public_inputs: Vec<u8>,
     /// zkdcap journal (DcapJournal — contains tcb_status,
     /// measurements, report_data, timestamp)
     pub zkdcap_journal: Vec<u8>,
@@ -268,7 +268,7 @@ impl DstackZkAttestation {
         user_data: UserData,
         compose_hash: MrEnclave,
         zkdcap_proof: Vec<u8>,
-        zkdcap_public_inputs: Vec<String>,
+        zkdcap_public_inputs: Vec<u8>,
         zkdcap_journal: Vec<u8>,
     ) -> Self {
         Self {
@@ -286,7 +286,7 @@ pub struct RawDstackZkAttestation {
     pub user_data: HexBinary,
     pub compose_hash: HexBinary,
     pub zkdcap_proof: HexBinary,
-    pub zkdcap_public_inputs: Vec<String>,
+    pub zkdcap_public_inputs: HexBinary,
     pub zkdcap_journal: HexBinary,
 }
 
@@ -298,7 +298,7 @@ impl TryFrom<RawDstackZkAttestation> for DstackZkAttestation {
             user_data: value.user_data.to_array()?,
             compose_hash: value.compose_hash.to_array()?,
             zkdcap_proof: value.zkdcap_proof.into(),
-            zkdcap_public_inputs: value.zkdcap_public_inputs,
+            zkdcap_public_inputs: value.zkdcap_public_inputs.into(),
             zkdcap_journal: value.zkdcap_journal.into(),
         })
     }
@@ -310,7 +310,7 @@ impl From<DstackZkAttestation> for RawDstackZkAttestation {
             user_data: value.user_data.into(),
             compose_hash: value.compose_hash.into(),
             zkdcap_proof: value.zkdcap_proof.into(),
-            zkdcap_public_inputs: value.zkdcap_public_inputs,
+            zkdcap_public_inputs: value.zkdcap_public_inputs.into(),
             zkdcap_journal: value.zkdcap_journal.into(),
         }
     }

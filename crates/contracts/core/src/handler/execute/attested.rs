@@ -11,14 +11,17 @@ use crate::{
 };
 
 // ── ZK module protobuf types (for DstackZkAttestation) ─────────────
+// Uses the gnark-native ProofVerifyGnark endpoint (Xion v29+).
+// Same field tags as QueryVerifyRequest, but public_inputs is bytes
+// (concatenated 32-byte big-endian fr.Element) instead of repeated string.
 
 #[cfg(not(feature = "mock"))]
 #[derive(Clone, prost::Message)]
-struct QueryVerifyRequest {
+struct QueryVerifyGnarkRequest {
     #[prost(bytes = "vec", tag = "1")]
     proof: Vec<u8>,
-    #[prost(string, repeated, tag = "2")]
-    public_inputs: Vec<String>,
+    #[prost(bytes = "vec", tag = "2")]
+    public_inputs: Vec<u8>,
     #[prost(string, tag = "3")]
     vkey_name: String,
     #[prost(uint64, tag = "4")]
@@ -27,7 +30,7 @@ struct QueryVerifyRequest {
 
 #[cfg(not(feature = "mock"))]
 #[derive(Clone, prost::Message)]
-struct ProofVerifyResponse {
+struct ProofVerifyGnarkResponse {
     #[prost(bool, tag = "1")]
     verified: bool,
 }
@@ -72,7 +75,7 @@ impl Handler for DstackAttestation {
 
 /// ZK proof verification via the Xion ZK module.
 ///
-/// Queries /xion.zk.v1.Query/ProofVerify with the Groth16 proof.
+/// Queries /xion.zk.v1.Query/ProofVerifyGnark with the Groth16 proof.
 /// If no zkdcap_vkey is configured, verification is skipped.
 #[cfg(not(feature = "mock"))]
 impl Handler for DstackZkAttestation {
@@ -88,7 +91,7 @@ impl Handler for DstackZkAttestation {
             return Ok(Response::new().add_attribute("action", "zkdcap_verify_skipped"));
         };
 
-        let verify_req = QueryVerifyRequest {
+        let verify_req = QueryVerifyGnarkRequest {
             proof: self.zkdcap_proof,
             public_inputs: self.zkdcap_public_inputs,
             vkey_name: vkey_name.to_string(),
@@ -102,12 +105,12 @@ impl Handler for DstackZkAttestation {
         let resp_bytes: cosmwasm_std::Binary = deps
             .querier
             .query_grpc(
-                "/xion.zk.v1.Query/ProofVerify".to_string(),
+                "/xion.zk.v1.Query/ProofVerifyGnark".to_string(),
                 cosmwasm_std::Binary::from(req_bytes),
             )
             .map_err(|e| Error::ZkdcapVerificationFailed(format!("ZK module query: {e}")))?;
 
-        let verify_resp = <ProofVerifyResponse as prost::Message>::decode(resp_bytes.as_slice())
+        let verify_resp = <ProofVerifyGnarkResponse as prost::Message>::decode(resp_bytes.as_slice())
             .map_err(|e| Error::ZkdcapVerificationFailed(format!("decode response: {e}")))?;
 
         if !verify_resp.verified {
