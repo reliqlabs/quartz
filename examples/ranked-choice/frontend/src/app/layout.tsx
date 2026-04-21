@@ -1,11 +1,26 @@
 "use client";
 
+import "./globals.css";
 import { AbstraxionProvider } from "@burnt-labs/abstraxion";
 
-const CHAIN_ID = process.env.NEXT_PUBLIC_CHAIN_ID || "xion-testnet-2";
-const RPC_URL =
-  process.env.NEXT_PUBLIC_RPC_URL ||
-  "https://rpc.xion-testnet-2.burnt.com:443";
+const config = {
+  chainId: process.env.NEXT_PUBLIC_CHAIN_ID || "xion-testnet-2",
+  rpcUrl:
+    process.env.NEXT_PUBLIC_RPC_URL ||
+    "https://rpc.xion-testnet-2.burnt.com:443",
+  restUrl:
+    process.env.NEXT_PUBLIC_REST_URL ||
+    "https://api.xion-testnet-2.burnt.com",
+  treasury: process.env.NEXT_PUBLIC_TREASURY_ADDRESS,
+  gasPrice: process.env.NEXT_PUBLIC_GAS_PRICE,
+  authentication: {
+    type: "auto" as const,
+    authAppUrl: process.env.NEXT_PUBLIC_AUTH_APP_URL,
+  },
+  contracts: process.env.NEXT_PUBLIC_CONTRACT_ADDRESS
+    ? [process.env.NEXT_PUBLIC_CONTRACT_ADDRESS]
+    : undefined,
+};
 
 export default function RootLayout({
   children,
@@ -13,17 +28,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body style={{ fontFamily: "system-ui, sans-serif", maxWidth: 640, margin: "0 auto", padding: 20 }}>
-        <AbstraxionProvider
-          config={{
-            chainId: CHAIN_ID,
-            rpcUrl: RPC_URL,
-            authentication: { type: "auto" },
-          }}
-        >
-          {children}
-        </AbstraxionProvider>
+    <html lang="en" suppressHydrationWarning>
+      <body className="min-h-screen bg-[#0a0a12] text-slate-200 antialiased">
+        <AbstraxionProvider config={config}>{children}</AbstraxionProvider>
       </body>
     </html>
   );

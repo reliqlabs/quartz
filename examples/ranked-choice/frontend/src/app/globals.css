@@ -1,0 +1,16 @@
+@import "tailwindcss";
+
+@theme {
+  --color-xion: #8b5cf6;
+  --color-xion-light: #a78bfa;
+  --color-xion-dark: #6d28d9;
+  --color-surface: #111118;
+  --color-surface-2: #1a1a24;
+  --color-surface-3: #24243a;
+  --color-border: #2e2e44;
+}
+
+body {
+  color: #e2e8f0;
+  background: #0a0a12;
+}
