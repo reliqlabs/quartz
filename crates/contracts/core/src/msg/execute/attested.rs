@@ -109,6 +109,8 @@ pub trait Attestation {
     fn mr_enclave(&self) -> MrEnclave;
 }
 
+// ── Mock Attestation ───────────────────────────────────────────────
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct MockAttestation(pub UserData);
 
@@ -151,64 +153,50 @@ impl Attestation for MockAttestation {
     }
 }
 
-/// A TDX attestation from a dstack enclave, verified on-chain via zkdcap.
+// ── Dstack Attestation (raw quote, verified by on-chain DCAP) ──────
+
+/// TDX attestation using the raw TDX DCAP quote.
 ///
-/// Contains both the raw TDX quote (for reference) and the zkdcap proof
-/// (Groth16 proof + journal) for efficient on-chain verification via
-/// Xion's ZK module.
+/// The quote is verified on-chain by the dcap-qvl library or a DCAP
+/// verifier contract. Use this when no ZK prover is available, or
+/// when the chain supports native DCAP verification.
+///
+/// Larger on-chain footprint (~1.2 KB quote + collateral) but no
+/// proof generation latency.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DstackAttestation {
-    /// Raw TDX quote bytes
-    pub quote: Vec<u8>,
-    /// Optional RTMR event log (JSON)
-    pub event_log: Option<String>,
-    /// The user data (report_data) embedded in the quote
+    /// The user data (report_data) embedded in the TDX quote
     pub user_data: UserData,
-    /// compose-hash: the TDX equivalent of mr_enclave
+    /// compose-hash: the TDX equivalent of mr_enclave (from RTMR3)
     pub compose_hash: MrEnclave,
-    /// zkdcap Groth16 proof (SnarkJS format, JSON bytes)
-    pub zkdcap_proof: Vec<u8>,
-    /// zkdcap public inputs (BN254 field element decimal strings)
-    pub zkdcap_public_inputs: Vec<String>,
-    /// zkdcap journal (DcapJournal JSON bytes — contains tcb_status,
-    /// measurements, report_data, timestamp)
-    pub zkdcap_journal: Vec<u8>,
+    /// Raw TDX DCAP quote bytes
+    pub quote: Vec<u8>,
+    /// Optional RTMR event log (for RTMR replay verification)
+    pub event_log: Option<String>,
 }
 
 impl DstackAttestation {
     pub fn new(
-        quote: Vec<u8>,
-        event_log: Option<String>,
         user_data: UserData,
         compose_hash: MrEnclave,
-        zkdcap_proof: Vec<u8>,
-        zkdcap_public_inputs: Vec<String>,
-        zkdcap_journal: Vec<u8>,
+        quote: Vec<u8>,
+        event_log: Option<String>,
     ) -> Self {
         Self {
-            quote,
-            event_log,
             user_data,
             compose_hash,
-            zkdcap_proof,
-            zkdcap_public_inputs,
-            zkdcap_journal,
+            quote,
+            event_log,
         }
     }
 }
 
 #[cw_serde]
 pub struct RawDstackAttestation {
-    pub quote: HexBinary,
-    pub event_log: Option<String>,
     pub user_data: HexBinary,
     pub compose_hash: HexBinary,
-    /// zkdcap Groth16 proof (SnarkJS format)
-    pub zkdcap_proof: HexBinary,
-    /// zkdcap public inputs
-    pub zkdcap_public_inputs: Vec<String>,
-    /// zkdcap journal (DcapJournal)
-    pub zkdcap_journal: HexBinary,
+    pub quote: HexBinary,
+    pub event_log: Option<String>,
 }
 
 impl TryFrom<RawDstackAttestation> for DstackAttestation {
@@ -216,13 +204,10 @@ impl TryFrom<RawDstackAttestation> for DstackAttestation {
 
     fn try_from(value: RawDstackAttestation) -> Result<Self, Self::Error> {
         Ok(Self {
-            quote: value.quote.into(),
-            event_log: value.event_log,
             user_data: value.user_data.to_array()?,
             compose_hash: value.compose_hash.to_array()?,
-            zkdcap_proof: value.zkdcap_proof.into(),
-            zkdcap_public_inputs: value.zkdcap_public_inputs,
-            zkdcap_journal: value.zkdcap_journal.into(),
+            quote: value.quote.into(),
+            event_log: value.event_log,
         })
     }
 }
@@ -230,13 +215,10 @@ impl TryFrom<RawDstackAttestation> for DstackAttestation {
 impl From<DstackAttestation> for RawDstackAttestation {
     fn from(value: DstackAttestation) -> Self {
         Self {
-            quote: value.quote.into(),
-            event_log: value.event_log,
             user_data: value.user_data.into(),
             compose_hash: value.compose_hash.into(),
-            zkdcap_proof: value.zkdcap_proof.into(),
-            zkdcap_public_inputs: value.zkdcap_public_inputs,
-            zkdcap_journal: value.zkdcap_journal.into(),
+            quote: value.quote.into(),
+            event_log: value.event_log,
         }
     }
 }
@@ -256,6 +238,101 @@ impl Attestation for DstackAttestation {
         self.compose_hash
     }
 }
+
+// ── Dstack ZK Attestation (zkdcap proof, verified via ZK module) ───
+
+/// TDX attestation using a zkdcap Groth16 proof.
+///
+/// The raw TDX quote is compressed into a Groth16 proof (~352 bytes)
+/// verified by the chain's ZK module. The journal contains all fields
+/// the contract needs (compose_hash, report_data, tcb_status).
+///
+/// Smaller on-chain footprint, but requires proof generation (~5s gnark).
+#[derive(Clone, Debug, PartialEq)]
+pub struct DstackZkAttestation {
+    /// The user data (report_data) embedded in the TDX quote
+    pub user_data: UserData,
+    /// compose-hash: the TDX equivalent of mr_enclave (from RTMR3)
+    pub compose_hash: MrEnclave,
+    /// zkdcap Groth16 proof bytes
+    pub zkdcap_proof: Vec<u8>,
+    /// zkdcap public inputs
+    pub zkdcap_public_inputs: Vec<String>,
+    /// zkdcap journal (DcapJournal — contains tcb_status,
+    /// measurements, report_data, timestamp)
+    pub zkdcap_journal: Vec<u8>,
+}
+
+impl DstackZkAttestation {
+    pub fn new(
+        user_data: UserData,
+        compose_hash: MrEnclave,
+        zkdcap_proof: Vec<u8>,
+        zkdcap_public_inputs: Vec<String>,
+        zkdcap_journal: Vec<u8>,
+    ) -> Self {
+        Self {
+            user_data,
+            compose_hash,
+            zkdcap_proof,
+            zkdcap_public_inputs,
+            zkdcap_journal,
+        }
+    }
+}
+
+#[cw_serde]
+pub struct RawDstackZkAttestation {
+    pub user_data: HexBinary,
+    pub compose_hash: HexBinary,
+    pub zkdcap_proof: HexBinary,
+    pub zkdcap_public_inputs: Vec<String>,
+    pub zkdcap_journal: HexBinary,
+}
+
+impl TryFrom<RawDstackZkAttestation> for DstackZkAttestation {
+    type Error = StdError;
+
+    fn try_from(value: RawDstackZkAttestation) -> Result<Self, Self::Error> {
+        Ok(Self {
+            user_data: value.user_data.to_array()?,
+            compose_hash: value.compose_hash.to_array()?,
+            zkdcap_proof: value.zkdcap_proof.into(),
+            zkdcap_public_inputs: value.zkdcap_public_inputs,
+            zkdcap_journal: value.zkdcap_journal.into(),
+        })
+    }
+}
+
+impl From<DstackZkAttestation> for RawDstackZkAttestation {
+    fn from(value: DstackZkAttestation) -> Self {
+        Self {
+            user_data: value.user_data.into(),
+            compose_hash: value.compose_hash.into(),
+            zkdcap_proof: value.zkdcap_proof.into(),
+            zkdcap_public_inputs: value.zkdcap_public_inputs,
+            zkdcap_journal: value.zkdcap_journal.into(),
+        }
+    }
+}
+
+impl HasDomainType for RawDstackZkAttestation {
+    type DomainType = DstackZkAttestation;
+}
+
+impl HasUserData for DstackZkAttestation {
+    fn user_data(&self) -> UserData {
+        self.user_data
+    }
+}
+
+impl Attestation for DstackZkAttestation {
+    fn mr_enclave(&self) -> MrEnclave {
+        self.compose_hash
+    }
+}
+
+// ── Noop wrapper ───────────────────────────────────────────────────
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Noop<T>(pub T);

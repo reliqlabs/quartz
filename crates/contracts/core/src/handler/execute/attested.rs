@@ -4,12 +4,14 @@ use crate::{
     error::Error,
     handler::Handler,
     msg::execute::attested::{
-        Attestation, Attested, DstackAttestation, HasUserData, MockAttestation, Noop,
+        Attestation, Attested, DstackAttestation, DstackZkAttestation, HasUserData,
+        MockAttestation, Noop,
     },
     state::CONFIG,
 };
 
-/// Protobuf: xion.zk.v1.QueryVerifyRequest
+// ── ZK module protobuf types (for DstackZkAttestation) ─────────────
+
 #[cfg(not(feature = "mock"))]
 #[derive(Clone, prost::Message)]
 struct QueryVerifyRequest {
@@ -23,7 +25,6 @@ struct QueryVerifyRequest {
     vkey_id: u64,
 }
 
-/// Protobuf: xion.zk.v1.ProofVerifyResponse
 #[cfg(not(feature = "mock"))]
 #[derive(Clone, prost::Message)]
 struct ProofVerifyResponse {
@@ -31,8 +32,50 @@ struct ProofVerifyResponse {
     verified: bool,
 }
 
+// ── DstackAttestation handler (raw quote) ──────────────────────────
+
+/// Raw DCAP quote verification.
+///
+/// For chains that support native DCAP verification or have a DCAP
+/// verifier contract deployed. Currently a no-op placeholder — the
+/// Attested<M,A> wrapper already verifies user_data and compose_hash.
+/// Full on-chain DCAP verification would be added here.
 #[cfg(not(feature = "mock"))]
 impl Handler for DstackAttestation {
+    fn handle(
+        self,
+        _deps: DepsMut<'_>,
+        _env: &Env,
+        _info: &MessageInfo,
+    ) -> Result<Response, Error> {
+        // TODO: On-chain DCAP quote verification.
+        // For now, user_data and compose_hash checks in the Attested wrapper
+        // provide the core integrity guarantees. The raw quote is available
+        // for off-chain verification or future on-chain DCAP support.
+        Ok(Response::new().add_attribute("action", "dcap_quote_accepted"))
+    }
+}
+
+#[cfg(feature = "mock")]
+impl Handler for DstackAttestation {
+    fn handle(
+        self,
+        _deps: DepsMut<'_>,
+        _env: &Env,
+        _info: &MessageInfo,
+    ) -> Result<Response, Error> {
+        Ok(Response::default())
+    }
+}
+
+// ── DstackZkAttestation handler (zkdcap proof) ────────────────────
+
+/// ZK proof verification via the Xion ZK module.
+///
+/// Queries /xion.zk.v1.Query/ProofVerify with the Groth16 proof.
+/// If no zkdcap_vkey is configured, verification is skipped.
+#[cfg(not(feature = "mock"))]
+impl Handler for DstackZkAttestation {
     fn handle(
         self,
         deps: DepsMut<'_>,
@@ -41,13 +84,10 @@ impl Handler for DstackAttestation {
     ) -> Result<Response, Error> {
         let config = CONFIG.load(deps.storage).map_err(Error::Std)?;
 
-        // If no vkey is configured, skip on-chain verification.
         let Some(vkey_name) = config.zkdcap_vkey() else {
-            return Ok(Response::new()
-                .add_attribute("action", "zkdcap_verify_skipped"));
+            return Ok(Response::new().add_attribute("action", "zkdcap_verify_skipped"));
         };
 
-        // Query Xion's ZK module directly
         let verify_req = QueryVerifyRequest {
             proof: self.zkdcap_proof,
             public_inputs: self.zkdcap_public_inputs,
@@ -81,7 +121,7 @@ impl Handler for DstackAttestation {
 }
 
 #[cfg(feature = "mock")]
-impl Handler for DstackAttestation {
+impl Handler for DstackZkAttestation {
     fn handle(
         self,
         _deps: DepsMut<'_>,
@@ -91,6 +131,8 @@ impl Handler for DstackAttestation {
         Ok(Response::default())
     }
 }
+
+// ── Mock / Noop / Attested handlers ────────────────────────────────
 
 impl Handler for MockAttestation {
     fn handle(
@@ -120,18 +162,11 @@ where
         }
 
         if let Some(config) = CONFIG.may_load(deps.storage)? {
-            // if we weren't able to load then the context was from InstantiateMsg so we don't fail
-            // in such cases, the InstantiateMsg handler will verify that the mr_enclave matches
             if config.mr_enclave() != attestation.mr_enclave() {
                 return Err(Error::MrEnclaveMismatch);
             }
         }
 
-        // handle message first, this has 2 benefits -
-        // 1. we avoid (the more expensive) attestation verification if the message handler fails
-        // 2. we allow the message handler to make changes to the config so that the attestation
-        //    handler can use those changes, e.g. InstantiateMsg
-        // return response from msg handle to include pub_key attribute
         let res_msg = Handler::handle(msg, deps.branch(), env, info)?;
         let res_attest = Handler::handle(attestation, deps, env, info)?;
 

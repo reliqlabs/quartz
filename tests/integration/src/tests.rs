@@ -1,14 +1,11 @@
 //! End-to-end integration tests for the Quartz handshake protocol.
 //!
 //! Tests use DstackAttestation (non-mock) with the ZkMockStargate handler.
-//! When zkdcap_vkey is None, the handler skips ZK verification.
-//! When zkdcap_vkey is set, the handler queries the ZK mock which validates
-//! proof structure.
+//! DstackAttestation carries a raw TDX quote — no ZK proof verification.
 
 use cosmwasm_std::{Empty, HexBinary};
 use cw_multi_test::{App, AppBuilder, ContractWrapper, Executor};
 
-use crate::fixtures::ZkdcapFixture;
 use crate::zk_mock::ZkMockStargate;
 
 // ============================================================
@@ -129,21 +126,15 @@ fn build_config(
 
 /// Build a DstackAttestation JSON value with the given fields.
 fn build_dstack_attestation(
-    quote: &[u8],
     user_data: [u8; 64],
     compose_hash: [u8; 32],
-    proof: &[u8],
-    public_inputs: &[String],
-    journal: &[u8],
+    quote: &[u8],
 ) -> serde_json::Value {
     serde_json::json!({
-        "quote": HexBinary::from(quote.to_vec()),
-        "event_log": null,
         "user_data": HexBinary::from(user_data.to_vec()),
         "compose_hash": HexBinary::from(compose_hash.to_vec()),
-        "zkdcap_proof": HexBinary::from(proof.to_vec()),
-        "zkdcap_public_inputs": public_inputs,
-        "zkdcap_journal": HexBinary::from(journal.to_vec()),
+        "quote": HexBinary::from(quote.to_vec()),
+        "event_log": null,
     })
 }
 
@@ -192,9 +183,7 @@ fn test_handshake_full_cycle() {
     let raw_config: quartz_contract_core::state::RawConfig = config.clone().into();
 
     let user_data = instantiate_user_data(&config);
-    let attestation = build_dstack_attestation(
-        &[0xDE, 0xAD], user_data, mr_enclave, &[], &[], &[],
-    );
+    let attestation = build_dstack_attestation(user_data, mr_enclave, &[0xDE, 0xAD]);
 
     let raw_core = serde_json::json!({
         "config": serde_json::to_value(&raw_config).unwrap()
@@ -210,9 +199,7 @@ fn test_handshake_full_cycle() {
     // Phase 2: SessionCreate
     let nonce = [42u8; 32];
     let sc_ud = session_create_user_data(nonce, &contract_addr.to_string());
-    let sc_attest = build_dstack_attestation(
-        &[0xDE, 0xAD], sc_ud, mr_enclave, &[], &[], &[],
-    );
+    let sc_attest = build_dstack_attestation(sc_ud, mr_enclave, &[0xDE, 0xAD]);
     let sc_msg = serde_json::json!({
         "quartz": {
             "session_create": {
@@ -236,9 +223,7 @@ fn test_handshake_full_cycle() {
     // Phase 3: SessionSetPubKey
     let pub_key = vec![0x04; 33];
     let spk_ud = session_set_pubkey_user_data(nonce, pub_key.clone());
-    let spk_attest = build_dstack_attestation(
-        &[0xDE, 0xAD], spk_ud, mr_enclave, &[], &[], &[],
-    );
+    let spk_attest = build_dstack_attestation(spk_ud, mr_enclave, &[0xDE, 0xAD]);
     let spk_msg = serde_json::json!({
         "quartz": {
             "session_set_pub_key": {
@@ -273,7 +258,7 @@ fn test_session_create_wrong_contract_addr() {
     let config = build_config(mr_enclave, None);
     let raw_config: quartz_contract_core::state::RawConfig = config.clone().into();
     let user_data = instantiate_user_data(&config);
-    let attestation = build_dstack_attestation(&[0xDE, 0xAD], user_data, mr_enclave, &[], &[], &[]);
+    let attestation = build_dstack_attestation(user_data, mr_enclave, &[0xDE, 0xAD]);
     let raw_core = serde_json::json!({"config": serde_json::to_value(&raw_config).unwrap()});
     let init_msg = serde_json::json!({"quartz": {"msg": raw_core, "attestation": attestation}});
 
@@ -283,7 +268,7 @@ fn test_session_create_wrong_contract_addr() {
 
     let wrong_addr = app.api().addr_make("wrong_contract");
     let sc_ud = session_create_user_data([1u8; 32], wrong_addr.as_str());
-    let sc_attest = build_dstack_attestation(&[0xDE, 0xAD], sc_ud, mr_enclave, &[], &[], &[]);
+    let sc_attest = build_dstack_attestation(sc_ud, mr_enclave, &[0xDE, 0xAD]);
     let sc_msg = serde_json::json!({
         "quartz": {"session_create": {"msg": {"nonce": HexBinary::from(vec![1u8; 32]), "contract": wrong_addr.to_string()}, "attestation": sc_attest}}
     });
@@ -306,7 +291,7 @@ fn test_session_set_pubkey_wrong_nonce() {
     let config = build_config(mr_enclave, None);
     let raw_config: quartz_contract_core::state::RawConfig = config.clone().into();
     let user_data = instantiate_user_data(&config);
-    let attestation = build_dstack_attestation(&[0xDE, 0xAD], user_data, mr_enclave, &[], &[], &[]);
+    let attestation = build_dstack_attestation(user_data, mr_enclave, &[0xDE, 0xAD]);
     let raw_core = serde_json::json!({"config": serde_json::to_value(&raw_config).unwrap()});
     let init_msg = serde_json::json!({"quartz": {"msg": raw_core, "attestation": attestation}});
 
@@ -316,7 +301,7 @@ fn test_session_set_pubkey_wrong_nonce() {
 
     let nonce = [42u8; 32];
     let sc_ud = session_create_user_data(nonce, &contract_addr.to_string());
-    let sc_attest = build_dstack_attestation(&[0xDE, 0xAD], sc_ud, mr_enclave, &[], &[], &[]);
+    let sc_attest = build_dstack_attestation(sc_ud, mr_enclave, &[0xDE, 0xAD]);
     let sc_msg = serde_json::json!({
         "quartz": {"session_create": {"msg": {"nonce": HexBinary::from(nonce.to_vec()), "contract": contract_addr.to_string()}, "attestation": sc_attest}}
     });
@@ -324,7 +309,7 @@ fn test_session_set_pubkey_wrong_nonce() {
 
     let wrong_nonce = [99u8; 32];
     let spk_ud = session_set_pubkey_user_data(wrong_nonce, vec![0x04; 33]);
-    let spk_attest = build_dstack_attestation(&[0xDE, 0xAD], spk_ud, mr_enclave, &[], &[], &[]);
+    let spk_attest = build_dstack_attestation(spk_ud, mr_enclave, &[0xDE, 0xAD]);
     let spk_msg = serde_json::json!({
         "quartz": {"session_set_pub_key": {"msg": {"nonce": HexBinary::from(wrong_nonce.to_vec()), "pub_key": HexBinary::from(vec![0x04u8; 33])}, "attestation": spk_attest}}
     });
@@ -334,34 +319,26 @@ fn test_session_set_pubkey_wrong_nonce() {
 }
 
 // ============================================================
-// Tests: Proof verification (zkdcap_vkey set, ZK mock validates)
+// Tests: Quote attestation (raw quote variant, no ZK verification)
 // ============================================================
 
 #[test]
-fn test_handshake_with_zkdcap_proof_verification() {
-    let mut app = setup_app(ZkMockStargate::validating());
+fn test_handshake_with_quote_attestation() {
+    let mut app = setup_app(ZkMockStargate::accepting());
     let admin = app.api().addr_make("admin");
     let code = ContractWrapper::new(
         test_contract::execute, test_contract::instantiate, test_contract::query,
     );
     let code_id = app.store_code(Box::new(code));
 
-    let fixture = ZkdcapFixture::generate();
-    let mr_enclave = fixture.compose_hash;
+    let mr_enclave = [0xAA; 32];
+    let quote: Vec<u8> = [0xDE, 0xAD, 0xBE, 0xEF].iter().copied().cycle().take(256).collect();
 
-    // Config with zkdcap_vkey set — handler will query ZK module
-    let config = build_config(mr_enclave, Some("zkdcap-test".to_string()));
+    let config = build_config(mr_enclave, None);
     let raw_config: quartz_contract_core::state::RawConfig = config.clone().into();
 
     let user_data = instantiate_user_data(&config);
-    let attestation = build_dstack_attestation(
-        &fixture.quote_bytes,
-        user_data,
-        mr_enclave,
-        &fixture.proof_bytes,
-        &fixture.public_inputs,
-        &fixture.journal_bytes,
-    );
+    let attestation = build_dstack_attestation(user_data, mr_enclave, &quote);
 
     let raw_core = serde_json::json!({
         "config": serde_json::to_value(&raw_config).unwrap()
@@ -370,18 +347,14 @@ fn test_handshake_with_zkdcap_proof_verification() {
         "quartz": { "msg": raw_core, "attestation": attestation }
     });
 
-    // Instantiate — DstackAttestation handler queries ZK mock with real proof structure
     let contract_addr = app
-        .instantiate_contract(code_id, admin.clone(), &init_msg, &[], "quartz-zkdcap", None)
+        .instantiate_contract(code_id, admin.clone(), &init_msg, &[], "quartz-quote", None)
         .unwrap();
 
-    // Session handshake with proof data
+    // Session handshake with raw quote
     let nonce = [42u8; 32];
     let sc_ud = session_create_user_data(nonce, &contract_addr.to_string());
-    let sc_attest = build_dstack_attestation(
-        &fixture.quote_bytes, sc_ud, mr_enclave,
-        &fixture.proof_bytes, &fixture.public_inputs, &fixture.journal_bytes,
-    );
+    let sc_attest = build_dstack_attestation(sc_ud, mr_enclave, &quote);
     let sc_msg = serde_json::json!({
         "quartz": {"session_create": {"msg": {"nonce": HexBinary::from(nonce.to_vec()), "contract": contract_addr.to_string()}, "attestation": sc_attest}}
     });
@@ -389,10 +362,7 @@ fn test_handshake_with_zkdcap_proof_verification() {
 
     let pub_key = vec![0x04; 33];
     let spk_ud = session_set_pubkey_user_data(nonce, pub_key.clone());
-    let spk_attest = build_dstack_attestation(
-        &fixture.quote_bytes, spk_ud, mr_enclave,
-        &fixture.proof_bytes, &fixture.public_inputs, &fixture.journal_bytes,
-    );
+    let spk_attest = build_dstack_attestation(spk_ud, mr_enclave, &quote);
     let spk_msg = serde_json::json!({
         "quartz": {"session_set_pub_key": {"msg": {"nonce": HexBinary::from(nonce.to_vec()), "pub_key": HexBinary::from(pub_key.clone())}, "attestation": spk_attest}}
     });
@@ -404,38 +374,6 @@ fn test_handshake_with_zkdcap_proof_verification() {
         .query_wasm_smart(&contract_addr, &test_contract::QueryMsg::Session {})
         .unwrap();
     assert_eq!(session.pub_key, Some(HexBinary::from(pub_key)));
-}
-
-#[test]
-fn test_zkdcap_invalid_proof_rejected() {
-    let mut app = setup_app(ZkMockStargate::validating());
-    let admin = app.api().addr_make("admin");
-    let code = ContractWrapper::new(
-        test_contract::execute, test_contract::instantiate, test_contract::query,
-    );
-    let code_id = app.store_code(Box::new(code));
-
-    let mr_enclave = [0u8; 32];
-    let config = build_config(mr_enclave, Some("zkdcap-test".to_string()));
-    let raw_config: quartz_contract_core::state::RawConfig = config.clone().into();
-    let user_data = instantiate_user_data(&config);
-
-    // Invalid proof — not valid JSON, not SnarkJS format
-    let bad_proof = b"not a valid proof".to_vec();
-    let attestation = build_dstack_attestation(
-        &[0xDE, 0xAD], user_data, mr_enclave,
-        &bad_proof, &["123".to_string()], &[],
-    );
-
-    let raw_core = serde_json::json!({"config": serde_json::to_value(&raw_config).unwrap()});
-    let init_msg = serde_json::json!({"quartz": {"msg": raw_core, "attestation": attestation}});
-
-    let err = app
-        .instantiate_contract(code_id, admin, &init_msg, &[], "quartz-bad", None)
-        .unwrap_err();
-
-    assert!(err.to_string().contains("zkdcap verification failed") || err.to_string().contains("not valid JSON"),
-        "Expected ZK verification error, got: {}", err);
 }
 
 // ============================================================
