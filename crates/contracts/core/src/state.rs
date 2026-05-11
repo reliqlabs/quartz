@@ -243,3 +243,124 @@ impl Session {
         self.pub_key
     }
 }
+
+// ── Kani verification harnesses ────────────────────────────────────
+
+#[cfg(kani)]
+mod verification {
+    use super::*;
+
+    /// Session::with_pub_key never panics for any input combination.
+    /// Proves: the function is total (always returns Some or None).
+    #[kani::proof]
+    fn session_with_pub_key_no_panic() {
+        let create_nonce: Nonce = kani::any();
+        let check_nonce: Nonce = kani::any();
+        // Bound pub_key length to keep verification tractable
+        let pk_len: usize = kani::any_where(|&n: &usize| n <= 64);
+        let pub_key: Vec<u8> = vec![0u8; pk_len];
+
+        let session = Session::create(create_nonce);
+        // This must not panic — it returns Option
+        let _result = session.with_pub_key(check_nonce, pub_key);
+    }
+
+    /// Session::with_pub_key returns Some only when nonce matches
+    /// and pub_key was None.
+    #[kani::proof]
+    fn session_with_pub_key_guards() {
+        let create_nonce: Nonce = kani::any();
+        let check_nonce: Nonce = kani::any();
+        let pub_key = vec![0x04u8; 33];
+
+        let session = Session::create(create_nonce);
+        let result = session.with_pub_key(check_nonce, pub_key);
+
+        if create_nonce == check_nonce {
+            // Nonce matches, pub_key was None → must be Some
+            assert!(result.is_some(), "matching nonce with None pubkey must succeed");
+        } else {
+            // Nonce mismatch → must be None
+            assert!(result.is_none(), "mismatched nonce must fail");
+        }
+    }
+
+    /// Session::with_pub_key rejects double-set (pub_key already Some).
+    #[kani::proof]
+    fn session_pubkey_set_once() {
+        let nonce: Nonce = kani::any();
+        let pk1 = vec![0x04u8; 33];
+        let pk2 = vec![0x05u8; 33];
+
+        let session = Session::create(nonce);
+        let session = session.with_pub_key(nonce, pk1).unwrap();
+        // Second set with same nonce must fail
+        let result = session.with_pub_key(nonce, pk2);
+        assert!(result.is_none(), "double pubkey set must be rejected");
+    }
+
+    /// Session::nonce() is safe when constructed via Session::create.
+    #[kani::proof]
+    fn session_nonce_roundtrip() {
+        let nonce: Nonce = kani::any();
+        let session = Session::create(nonce);
+        let recovered = session.nonce();
+        assert_eq!(nonce, recovered, "nonce must round-trip");
+    }
+
+    /// LightClientOpts::new validates trust threshold bounds.
+    /// Proves: 3*num < den is rejected, num > den is rejected,
+    /// den == 0 is rejected, valid inputs accepted.
+    #[kani::proof]
+    fn light_client_opts_threshold_validation() {
+        let num: u64 = kani::any();
+        let den: u64 = kani::any();
+        // Use small height to avoid i64 overflow path dominating
+        let height: u64 = kani::any_where(|&h: &u64| h <= i64::MAX as u64);
+
+        let result = LightClientOpts::new(
+            "test".to_string(),
+            height,
+            [0u8; 32],
+            (num, den),
+            86400,
+            10,
+            10,
+        );
+
+        if den == 0 {
+            assert!(result.is_err(), "zero denominator must fail");
+        } else if num > den {
+            assert!(result.is_err(), "num > den must fail");
+        } else if 3 * num < den {
+            // Only check if no overflow in 3*num
+            if num <= u64::MAX / 3 {
+                assert!(result.is_err(), "threshold < 1/3 must fail");
+            }
+        } else {
+            assert!(result.is_ok(), "valid threshold must succeed");
+        }
+    }
+
+    /// LightClientOpts::new rejects heights that don't fit in i64.
+    #[kani::proof]
+    fn light_client_opts_height_bounds() {
+        let height: u64 = kani::any();
+
+        let result = LightClientOpts::new(
+            "test".to_string(),
+            height,
+            [0u8; 32],
+            (2, 3), // valid threshold
+            86400,
+            10,
+            10,
+        );
+
+        if height > i64::MAX as u64 {
+            assert!(result.is_err(), "height > i64::MAX must fail");
+        } else {
+            assert!(result.is_ok(), "valid height must succeed");
+        }
+    }
+}

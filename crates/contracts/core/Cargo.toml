@@ -35,5 +35,8 @@ cw-storage-plus.workspace = true
 cosmwasm-schema.workspace = true
 cosmwasm-std = { workspace = true, features = ["stargate", "cosmwasm_2_0"] }
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+
 [dev-dependencies]
 serde_json.workspace = true
