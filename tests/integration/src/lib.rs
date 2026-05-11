@@ -11,4 +11,7 @@ pub mod zk_mock;
 mod tests;
 
 #[cfg(test)]
+mod model_based;
+
+#[cfg(test)]
 mod testnet;
