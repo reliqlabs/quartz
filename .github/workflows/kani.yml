@@ -1,0 +1,31 @@
+name: Kani
+on:
+  pull_request:
+    paths:
+      - .github/workflows/kani.yml
+      - Cargo.lock
+      - Cargo.toml
+      - "crates/contracts/core/**"
+  push:
+    branches: main
+    paths:
+      - .github/workflows/kani.yml
+      - Cargo.lock
+      - Cargo.toml
+      - "crates/contracts/core/**"
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: 10
+
+jobs:
+  kani:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Kani
+        uses: model-checking/kani-github-action@v1.1
+        with:
+          working-directory: crates/contracts/core
+          args: --workspace

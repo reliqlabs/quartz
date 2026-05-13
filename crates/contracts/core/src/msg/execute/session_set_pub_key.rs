@@ -74,3 +74,38 @@ impl HasUserData for SessionSetPubKey {
         user_data
     }
 }
+
+// ── Kani verification harnesses ────────────────────────────────────
+
+#[cfg(kani)]
+mod verification {
+    use super::*;
+
+    /// SessionSetPubKey::new + into_tuple is identity on (nonce, pub_key).
+    /// Bounded unwind for Vec equality.
+    #[kani::proof]
+    #[kani::unwind(40)]
+    fn session_set_pub_key_tuple_roundtrip() {
+        let nonce: Nonce = kani::any();
+        let pub_key = vec![0x04u8; 33];
+        let msg = SessionSetPubKey::new(nonce, pub_key.clone());
+        let (n, p) = msg.into_tuple();
+        assert_eq!(n, nonce);
+        assert_eq!(p, pub_key);
+    }
+
+    /// RawSessionSetPubKey ↔ SessionSetPubKey preserves nonce when
+    /// the HexBinary nonce is exactly 32 bytes.
+    #[kani::proof]
+    #[kani::unwind(40)]
+    fn session_set_pub_key_raw_roundtrip() {
+        let nonce: Nonce = kani::any();
+        let pub_key = vec![0x04u8; 33];
+        let original = SessionSetPubKey::new(nonce, pub_key);
+        let raw: RawSessionSetPubKey = original.clone().into();
+        let back = SessionSetPubKey::try_from(raw)
+            .expect("32-byte nonce roundtrips");
+        let (n, _) = back.into_tuple();
+        assert_eq!(n, nonce);
+    }
+}

@@ -51,10 +51,27 @@ module auction {
 
   /// What an external observer sees
   type ObserverView = {
-    can_see_bids: bool,        // always false during bidding
+    can_see_bids: bool,        // always false (bid amounts never revealed)
     can_see_result: bool,      // true after resolution
-    can_see_ciphertexts: bool, // always true (on-chain)
+    // Per-round flag: at least one sealed bid has been posted to the
+    // chain this round. Reset at `start_auction`, set on the first
+    // `submit_bid`. This is intentionally a per-round predicate, not a
+    // monotone "any ciphertext has ever been revealed" — auctions reset
+    // their visible state at each new round.
+    current_round_has_revealed_ciphertexts: bool,
   }
+
+  /// Tag of the most recent action — promoted from the stub-style
+  /// `last_input` pattern in specs/attestation.qnt (Phase 2). Lets
+  /// state-only invariants check action-local obligations.
+  type LastAction =
+    | NoAction
+    | DidInit
+    | DidStartAuction
+    | DidSubmitBid
+    | DidTick
+    | DidCloseBidding
+    | DidResolve
 
   // ============================================================
   // State
@@ -64,6 +81,19 @@ module auction {
   var enclave: EnclaveState
   var observer: ObserverView
   var block_time: int
+  /// Most recent action label.
+  var last_action: LastAction
+  /// Sealed-bid keys at the moment the last submit_bid ran. Used to
+  /// check that the bidder was not already present (no double-bid),
+  /// and that the submitter was admitted only during Bidding.
+  var last_bidder: Addr
+  /// Block time at which the last action ran. For Resolve, this is
+  /// the time the enclave wrote the result — must be at/after deadline.
+  var last_action_block_time: int
+  /// Auction end captured at the moment the last action ran. Lets us
+  /// check `last_action_block_time < auction_end_at_action` for bids,
+  /// without relying on the current (possibly mutated) auction_end.
+  var last_auction_end: int
 
   // ============================================================
   // Constants
@@ -99,9 +129,13 @@ module auction {
     observer' = {
       can_see_bids: false,
       can_see_result: false,
-      can_see_ciphertexts: false,
+      current_round_has_revealed_ciphertexts: false,
     },
     block_time' = 1000,
+    last_action' = DidInit,
+    last_bidder' = "",
+    last_action_block_time' = 1000,
+    last_auction_end' = 0,
   }
 
   // ============================================================
@@ -124,8 +158,12 @@ module auction {
       winning_price: 0,
     },
     enclave' = { ...enclave, decrypted_bids: Map() },
-    observer' = { can_see_bids: false, can_see_result: false, can_see_ciphertexts: false },
+    observer' = { can_see_bids: false, can_see_result: false, current_round_has_revealed_ciphertexts: false },
     block_time' = block_time,
+    last_action' = DidStartAuction,
+    last_bidder' = "",
+    last_action_block_time' = block_time,
+    last_auction_end' = block_time + AUCTION_DURATION,
   }
 
   /// Sponsor submits an encrypted bid
@@ -142,10 +180,14 @@ module auction {
       bid_count: contract.bid_count + 1,
     },
     // Observer sees ciphertext appear on-chain but NOT the amount
-    observer' = { ...observer, can_see_ciphertexts: true, can_see_bids: false },
+    observer' = { ...observer, current_round_has_revealed_ciphertexts: true, can_see_bids: false },
     // Enclave doesn't decrypt yet — bids are just stored
     enclave' = enclave,
     block_time' = block_time,
+    last_action' = DidSubmitBid,
+    last_bidder' = sponsor,
+    last_action_block_time' = block_time,
+    last_auction_end' = contract.auction_end,
   }
 
   /// Advance block time
@@ -155,6 +197,30 @@ module auction {
     contract' = contract,
     enclave' = enclave,
     observer' = observer,
+    last_action' = DidTick,
+    last_bidder' = last_bidder,
+    last_action_block_time' = block_time + dt,
+    last_auction_end' = last_auction_end,
+  }
+
+  /// Bidding window has elapsed but the enclave has not yet posted an
+  /// attested resolution. Mirrors `AuctionPhase::Resolving` on-chain:
+  /// the contract reserves this variant as a legitimate input state to
+  /// `exec_resolve` (see the `phase != Bidding && phase != Resolving`
+  /// guard in `contract.rs::exec_resolve`). Anyone can flip the phase
+  /// once the deadline is past — it is a pure observable, not an
+  /// admin-gated transition.
+  action close_bidding: bool = all {
+    contract.phase == Bidding,
+    block_time >= contract.auction_end,
+    contract' = { ...contract, phase: Resolving },
+    enclave' = enclave,
+    observer' = observer,
+    block_time' = block_time,
+    last_action' = DidCloseBidding,
+    last_bidder' = last_bidder,
+    last_action_block_time' = block_time,
+    last_auction_end' = contract.auction_end,
   }
 
   /// Enclave decrypts all bids and resolves the auction.
@@ -163,8 +229,11 @@ module auction {
   /// 2. Decrypt each bid with the session key
   /// 3. Run Vickrey logic
   /// 4. Return attested result
+  ///
+  /// Accepts both `Bidding` and `Resolving` as entry phases — mirrors the
+  /// contract's `exec_resolve` guard, which permits either.
   action resolve(decrypted: Addr -> Amount): bool = all {
-    contract.phase == Bidding,
+    contract.phase == Bidding or contract.phase == Resolving,
     block_time >= contract.auction_end,
     contract.bid_count > 0,
     // The decrypted bids must have the same keys as the sealed bids
@@ -185,6 +254,10 @@ module auction {
           winning_price: 0,
         },
         observer' = { ...observer, can_see_result: true, can_see_bids: false },
+        last_action' = DidResolve,
+        last_bidder' = last_bidder,
+        last_action_block_time' = block_time,
+        last_auction_end' = contract.auction_end,
       }
     } else {
       // Find highest bidder
@@ -208,7 +281,11 @@ module auction {
           winning_price: second_price,
         },
         // Result is public, but individual bid amounts remain private
-        observer' = { can_see_bids: false, can_see_result: true, can_see_ciphertexts: true },
+        observer' = { can_see_bids: false, can_see_result: true, current_round_has_revealed_ciphertexts: true },
+        last_action' = DidResolve,
+        last_bidder' = last_bidder,
+        last_action_block_time' = block_time,
+        last_auction_end' = contract.auction_end,
       }
     },
     block_time' = block_time,
@@ -224,38 +301,34 @@ module auction {
     nondet ciphertext = oneOf(Set("ct_a", "ct_b", "ct_c"))
     nondet dt = oneOf(Set(1, 10, 100, 300, 500))
 
-    // For resolve, we need to provide decrypted bids that match sealed_bids keys.
-    // Since we can't dynamically construct maps matching arbitrary key sets in
-    // the step function, we enumerate specific scenarios.
+    // Per-sponsor nondet amounts. Quint 0.32 still does not permit
+    // introducing fresh `nondet` bindings inside `fold` or other
+    // higher-order combinators, so we pre-bind one amount per
+    // candidate bidder up front and look them up by address while
+    // building the decrypted-bids map. This is a workaround for the
+    // missing "nondet per element" capability — once Quint supports
+    // it, the per-sponsor bindings collapse to a single
+    // `nondet amount_for: Addr -> Amount` over the key set.
     nondet amount_a = oneOf(Set(50, 100, 200, 300))
     nondet amount_b = oneOf(Set(50, 150, 250, 500))
     nondet amount_c = oneOf(Set(50, 100, 200, 400))
+
+    // Build a decrypted-bids map whose keys exactly match the current
+    // sealed_bids keys, picking the matching per-sponsor amount. This
+    // replaces the previous cardinality-enumeration of resolve calls.
+    val decrypted_bids: Addr -> Amount =
+      contract.sealed_bids.keys().fold(Map(), (acc, addr) =>
+        if (addr == SPONSOR_A) acc.put(addr, amount_a)
+        else if (addr == SPONSOR_B) acc.put(addr, amount_b)
+        else acc.put(addr, amount_c)
+      )
 
     any {
       start_auction,
       submit_bid(sponsor, amount, ciphertext),
       tick(dt),
-      // Resolve with different bid count scenarios
-      resolve(Map()),
-      // Single bidder scenarios
-      all {
-        contract.sealed_bids.keys() == Set(SPONSOR_A),
-        resolve(Map(SPONSOR_A -> amount_a)),
-      },
-      all {
-        contract.sealed_bids.keys() == Set(SPONSOR_B),
-        resolve(Map(SPONSOR_B -> amount_b)),
-      },
-      // Two bidder scenarios
-      all {
-        contract.sealed_bids.keys() == Set(SPONSOR_A, SPONSOR_B),
-        resolve(Map(SPONSOR_A -> amount_a, SPONSOR_B -> amount_b)),
-      },
-      // Three bidder scenarios
-      all {
-        contract.sealed_bids.keys() == Set(SPONSOR_A, SPONSOR_B, SPONSOR_C),
-        resolve(Map(SPONSOR_A -> amount_a, SPONSOR_B -> amount_b, SPONSOR_C -> amount_c)),
-      },
+      close_bidding,
+      resolve(decrypted_bids),
     }
   }
 
@@ -301,12 +374,62 @@ module auction {
     else true
   }
 
-  /// No bids can be submitted after the deadline
+  /// No bids can be submitted after the deadline. Promoted from
+  /// `true` stub to a state-based check using last_action tracking:
+  /// whenever the most recent action was a SubmitBid, it ran strictly
+  /// before the auction_end captured at the time of that bid.
   val inv_no_late_bids: bool = {
-    if (contract.phase == Bidding and contract.bid_count > 0)
-      // If there are bids, they were submitted before the deadline
-      // (enforced by the block_time < auction_end guard in submit_bid)
-      true
+    if (last_action == DidSubmitBid)
+      last_action_block_time < last_auction_end
+    else true
+  }
+
+  /// No front-running / no premature reveal: bids cannot be "revealed"
+  /// (i.e., the enclave cannot publish decrypted_bids) while the
+  /// contract is still in the Bidding phase before the deadline. The
+  /// resolve action's pre-condition `block_time >= auction_end` is the
+  /// gate; this invariant is the corresponding state predicate.
+  ///
+  /// Concretely: if any decrypted bids exist (i.e. the enclave has
+  /// resolved), then either the phase is Complete already, or — at
+  /// the very least — the captured auction_end at the time of the
+  /// last action was at or before the resolve's block_time.
+  val inv_no_premature_reveal: bool = {
+    if (enclave.decrypted_bids.keys() != Set())
+      // After a resolve, phase must be Complete and the resolve must
+      // have run at or after the captured auction_end.
+      contract.phase == Complete
+        and (last_action == DidResolve
+             implies last_action_block_time >= last_auction_end)
+    else true
+  }
+
+  /// Reveal-phase consistency: when the enclave publishes decrypted
+  /// bids (which models the reveal step in the protocol), the set of
+  /// decrypted bidders must exactly match the set of sealed bidders.
+  /// This is the spec analog of "revealed bid matches commitment" —
+  /// since the contract holds the ciphertext as the commitment, the
+  /// enclave cannot manufacture bids for addresses that never submitted.
+  val inv_decrypted_matches_sealed: bool = {
+    if (contract.phase == Complete and enclave.decrypted_bids.keys() != Set())
+      enclave.decrypted_bids.keys() == contract.sealed_bids.keys()
+    else true
+  }
+
+  /// Resolve-phase guard: the enclave's resolve action runs only after
+  /// the bidding deadline. State-based equivalent of the action guard
+  /// `block_time >= contract.auction_end` inside `resolve`.
+  val inv_resolve_after_deadline: bool = {
+    if (last_action == DidResolve)
+      last_action_block_time >= last_auction_end
+    else true
+  }
+
+  /// Winner is one of the bidders that actually submitted a sealed
+  /// bid. The enclave cannot pick a winner who never participated.
+  val inv_winner_is_bidder: bool = {
+    if (contract.phase == Complete and contract.winner != "")
+      contract.sealed_bids.keys().contains(contract.winner)
     else true
   }
 
@@ -320,7 +443,9 @@ module auction {
 
   /// Session must be active for auction to start
   val inv_session_required: bool = {
-    if (contract.phase == Bidding or contract.phase == Complete)
+    if (contract.phase == Bidding
+        or contract.phase == Resolving
+        or contract.phase == Complete)
       contract.session_active
     else true
   }
@@ -328,7 +453,20 @@ module auction {
   /// Ciphertexts are visible on-chain when bids exist
   val inv_ciphertexts_public: bool = {
     if (contract.bid_count > 0)
-      observer.can_see_ciphertexts
+      observer.current_round_has_revealed_ciphertexts
+    else true
+  }
+
+  /// The Resolving phase is only ever entered after the bidding window
+  /// has closed. Catches accidental shortcut transitions that would
+  /// allow the enclave's resolve handler to accept bids closed early.
+  /// Before introducing the Resolving state explicitly, the spec had no
+  /// way to express "the contract is past the deadline but the enclave
+  /// has not yet posted" — the implicit Bidding -> Complete shortcut
+  /// silently merged the two.
+  val inv_resolving_only_after_deadline: bool = {
+    if (contract.phase == Resolving)
+      block_time >= contract.auction_end
     else true
   }
 
@@ -342,5 +480,11 @@ module auction {
     and inv_valid_phases
     and inv_session_required
     and inv_ciphertexts_public
+    and inv_no_late_bids
+    and inv_no_premature_reveal
+    and inv_decrypted_matches_sealed
+    and inv_resolve_after_deadline
+    and inv_winner_is_bidder
+    and inv_resolving_only_after_deadline
   }
 }

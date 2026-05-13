@@ -70,3 +70,34 @@ impl HasUserData for SessionCreate {
         user_data
     }
 }
+
+// ── Kani verification harnesses ────────────────────────────────────
+
+#[cfg(kani)]
+mod verification {
+    use super::*;
+
+    /// SessionCreate::new + accessors are consistent: nonce()/contract()
+    /// return what was passed in. The contract string is fixed ("c") to
+    /// avoid Kani's unbounded-string overhead — we're verifying the
+    /// struct's field-discipline, not String semantics.
+    #[kani::proof]
+    fn session_create_accessors() {
+        let nonce: Nonce = kani::any();
+        let contract = String::from("c");
+        let msg = SessionCreate::new(nonce, contract.clone());
+        assert_eq!(msg.nonce(), nonce);
+        assert_eq!(msg.contract(), contract.as_str());
+    }
+
+    /// RawSessionCreate ↔ SessionCreate roundtrip preserves the nonce
+    /// when the nonce HexBinary is exactly 32 bytes.
+    #[kani::proof]
+    fn session_create_roundtrip() {
+        let nonce: Nonce = kani::any();
+        let original = SessionCreate::new(nonce, String::from("c"));
+        let raw: RawSessionCreate = original.clone().into();
+        let back = SessionCreate::try_from(raw).expect("32-byte nonce roundtrips");
+        assert_eq!(back.nonce(), nonce);
+    }
+}

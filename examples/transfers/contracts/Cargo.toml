@@ -34,6 +34,9 @@ overflow-checks = true
 mock = ["quartz-contract-core/mock"]
 library = []
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(kani_slow)'] }
+
 [dependencies]
 # external
 thiserror = { version = "2" }

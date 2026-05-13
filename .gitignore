@@ -31,3 +31,9 @@ schema/
 *.iml
 .idea
 .vscode
+
+# Apalache working dirs (created by `quint verify`)
+_apalache-out/
+
+# Lean build output
+.lake/

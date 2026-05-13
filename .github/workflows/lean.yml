@@ -1,0 +1,39 @@
+name: Lean
+on:
+  pull_request:
+    paths:
+      - .github/workflows/lean.yml
+      - "proofs/lean/**"
+  push:
+    branches: main
+    paths:
+      - .github/workflows/lean.yml
+      - "proofs/lean/**"
+
+jobs:
+  lean:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Lean specs
+        # leanprover/lean-action installs elan from `lean-toolchain`, fetches
+        # the Mathlib olean cache via `lake exe cache get`, and runs `lake build`.
+        uses: leanprover/lean-action@v1.5.0
+        with:
+          lake-package-directory: "proofs/lean"
+          use-mathlib-cache: "true"
+          build: "true"
+          test: "false"
+          lint: "false"
+
+      - name: Forbid sorry / admit in Specs
+        # Build alone tolerates `sorry`/`admit`; this check fails CI if either
+        # appears anywhere under proofs/lean/Specs/ (including comments — keep
+        # those words out of comments too).
+        run: |
+          if grep -rnE "\bsorry\b|\badmit\b" proofs/lean/Specs/; then
+            echo "::error::Found sorry or admit in proofs/lean/Specs/"
+            exit 1
+          fi

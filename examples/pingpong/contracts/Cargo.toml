@@ -29,6 +29,9 @@ overflow-checks = true
 mock = ["quartz-contract-core/mock"]
 library = []
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(kani_slow)'] }
+
 [dependencies]
 # external
 serde_json = { version = "1.0.122", default-features = false }

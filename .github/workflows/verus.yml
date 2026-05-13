@@ -1,0 +1,62 @@
+name: Verus
+on:
+  pull_request:
+    paths:
+      - .github/workflows/verus.yml
+      - "crates/contracts/core/verus-prototype/**"
+      - "crates/enclave/core/verus-prototype/**"
+  push:
+    branches: main
+    paths:
+      - .github/workflows/verus.yml
+      - "crates/contracts/core/verus-prototype/**"
+      - "crates/enclave/core/verus-prototype/**"
+
+env:
+  VERUS_VERSION: "0.2026.05.05.d03e906"
+  VERUS_TAG: "release/0.2026.05.05.d03e906"
+  RUST_TOOLCHAIN: "1.95.0"
+
+jobs:
+  verus:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain ${{ env.RUST_TOOLCHAIN }}
+        # Pinned to commit SHA (dtolnay/rust-toolchain does not publish version tags).
+        uses: dtolnay/rust-toolchain@3c5f7ea28cf0d685e6c44f74cdcd54f4d1d4ef03
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Install Verus ${{ env.VERUS_VERSION }}
+        run: |
+          set -euo pipefail
+          ASSET="verus-${VERUS_VERSION}-x86-linux.zip"
+          URL="https://github.com/verus-lang/verus/releases/download/${VERUS_TAG}/${ASSET}"
+          echo "Downloading $URL"
+          curl -fsSL -o /tmp/verus.zip "$URL"
+          mkdir -p /tmp/verus-install
+          unzip -q /tmp/verus.zip -d /tmp/verus-install
+          VERUS_DIR="$(find /tmp/verus-install -maxdepth 2 -type f -name verus -executable | head -n1 | xargs dirname)"
+          echo "VERUS_DIR=$VERUS_DIR" >> "$GITHUB_ENV"
+          echo "$VERUS_DIR" >> "$GITHUB_PATH"
+
+      - name: Verus version
+        run: verus --version
+
+      - name: Verify Verus prototype files
+        run: |
+          set -euo pipefail
+          fail=0
+          for d in crates/contracts/core/verus-prototype crates/enclave/core/verus-prototype; do
+            for f in "$d"/*.rs; do
+              echo "=== verus $f ==="
+              if ! verus "$f"; then
+                echo "::error file=$f::Verus verification failed"
+                fail=1
+              fi
+            done
+          done
+          exit "$fail"

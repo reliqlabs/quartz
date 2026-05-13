@@ -1,0 +1,91 @@
+name: Quint
+on:
+  pull_request:
+    paths:
+      - .github/workflows/quint.yml
+      - "specs/**"
+  push:
+    branches: main
+    paths:
+      - .github/workflows/quint.yml
+      - "specs/**"
+
+env:
+  QUINT_VERSION: "0.32.0"
+
+jobs:
+  quint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Quint
+        run: npm install -g @informalsystems/quint@$QUINT_VERSION
+
+      - name: Typecheck specs
+        run: |
+          quint typecheck specs/handshake.qnt
+          quint typecheck specs/attestation.qnt
+
+      - name: Random simulation — handshake
+        run: |
+          quint run \
+            --invariant=all_invariants \
+            --max-steps=20 \
+            --max-samples=10000 \
+            specs/handshake.qnt
+
+      - name: Random simulation — attestation
+        run: |
+          quint run \
+            --invariant=all_invariants \
+            --max-steps=20 \
+            --max-samples=10000 \
+            specs/attestation.qnt
+
+  quint-apalache:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Apalache bounded model checking — slower, separate job
+    # so failures don't block the fast random-simulation gate.
+    continue-on-error: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Quint
+        run: npm install -g @informalsystems/quint@$QUINT_VERSION
+
+      - name: BMC verify — handshake
+        run: |
+          quint verify \
+            --invariant=all_invariants \
+            specs/handshake.qnt
+
+      - name: BMC verify — attestation
+        run: |
+          quint verify \
+            --invariant=all_invariants \
+            specs/attestation.qnt
+
+      # Temporal-property verification is experimental in Quint 0.32 —
+      # Apalache prints a stdin y/N confirmation prompt that needs piping.
+      # Promote to the regular `verify` step once the feature is stabilized.
+      - name: Temporal verify — attestation
+        run: |
+          echo "y" | quint verify \
+            --temporal=temporal_zk_accept_requires_vkey,temporal_mock_mode_monotonic \
+            specs/attestation.qnt

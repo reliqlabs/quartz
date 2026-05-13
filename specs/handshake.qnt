@@ -72,6 +72,16 @@ module handshake {
     | ErrNoConfig
     | ErrNotAttempted
 
+  /// Tag for the last action taken. Used so state-based invariants
+  /// can ask "what kind of action just ran?".
+  type LastAction =
+    | ActInit
+    | ActInstantiate
+    | ActSessionCreate
+    | ActSetPubkey
+    | ActAttestedMsg
+    | ActReset
+
   // ============================================================
   // State
   // ============================================================
@@ -79,6 +89,23 @@ module handshake {
   var contract: ContractState
   var enclave: EnclaveState
   var last_result: ActionResult
+
+  /// History tracking — lets us promote action-based properties
+  /// into state-based invariants checkable by Apalache.
+  var last_action: LastAction
+  /// Last inputs submitted to a verify-flow action. Reset by
+  /// non-verify actions (reset_session).
+  var last_msg_hash: Hash
+  var last_att_user_data: Hash
+  var last_att_compose_hash: ComposeHash
+  var last_msg_contract: Addr
+  var last_nonce: Nonce
+  /// Pre-action snapshots — sampled at the start of each action.
+  var prev_session: SessionState
+  var prev_session_nonce: Nonce
+  var prev_session_pubkey: PubKey
+  var prev_config_set: bool
+  var prev_config_mr_enclave: ComposeHash
 
   // ============================================================
   // Constants
@@ -117,6 +144,17 @@ module handshake {
       trusted_height: 0,
     },
     last_result' = ErrNotAttempted,
+    last_action' = ActInit,
+    last_msg_hash' = "",
+    last_att_user_data' = "",
+    last_att_compose_hash' = "",
+    last_msg_contract' = "",
+    last_nonce' = "",
+    prev_session' = NoSession,
+    prev_session_nonce' = "",
+    prev_session_pubkey' = "",
+    prev_config_set' = false,
+    prev_config_mr_enclave' = "",
   }
 
   // ============================================================
@@ -139,6 +177,17 @@ module handshake {
         last_result' = ErrConfigAlreadySet,
         contract' = contract,
         enclave' = enclave,
+        last_action' = ActInstantiate,
+        last_msg_hash' = last_msg_hash,
+        last_att_user_data' = last_att_user_data,
+        last_att_compose_hash' = att_compose_hash,
+        last_msg_contract' = last_msg_contract,
+        last_nonce' = last_nonce,
+        prev_session' = contract.session,
+        prev_session_nonce' = contract.session_nonce,
+        prev_session_pubkey' = contract.session_pubkey,
+        prev_config_set' = contract.config_set,
+        prev_config_mr_enclave' = contract.config_mr_enclave,
       }
     } else if (msg_mr_enclave != att_compose_hash) {
       // Instantiate<A>::handle line 18:
@@ -147,6 +196,17 @@ module handshake {
         last_result' = ErrMrEnclaveMismatch,
         contract' = contract,
         enclave' = enclave,
+        last_action' = ActInstantiate,
+        last_msg_hash' = last_msg_hash,
+        last_att_user_data' = last_att_user_data,
+        last_att_compose_hash' = att_compose_hash,
+        last_msg_contract' = last_msg_contract,
+        last_nonce' = last_nonce,
+        prev_session' = contract.session,
+        prev_session_nonce' = contract.session_nonce,
+        prev_session_pubkey' = contract.session_pubkey,
+        prev_config_set' = contract.config_set,
+        prev_config_mr_enclave' = contract.config_mr_enclave,
       }
     } else if (att_compose_hash != enclave.compose_hash) {
       // Attested wrapper: attestation must come from real enclave
@@ -155,6 +215,17 @@ module handshake {
         last_result' = ErrMrEnclaveMismatch,
         contract' = contract,
         enclave' = enclave,
+        last_action' = ActInstantiate,
+        last_msg_hash' = last_msg_hash,
+        last_att_user_data' = last_att_user_data,
+        last_att_compose_hash' = att_compose_hash,
+        last_msg_contract' = last_msg_contract,
+        last_nonce' = last_nonce,
+        prev_session' = contract.session,
+        prev_session_nonce' = contract.session_nonce,
+        prev_session_pubkey' = contract.session_pubkey,
+        prev_config_set' = contract.config_set,
+        prev_config_mr_enclave' = contract.config_mr_enclave,
       }
     } else {
       // Success: CoreInstantiate::handle saves config
@@ -166,6 +237,17 @@ module handshake {
           config_mr_enclave: msg_mr_enclave,
         },
         enclave' = enclave,
+        last_action' = ActInstantiate,
+        last_msg_hash' = last_msg_hash,
+        last_att_user_data' = last_att_user_data,
+        last_att_compose_hash' = att_compose_hash,
+        last_msg_contract' = last_msg_contract,
+        last_nonce' = last_nonce,
+        prev_session' = contract.session,
+        prev_session_nonce' = contract.session_nonce,
+        prev_session_pubkey' = contract.session_pubkey,
+        prev_config_set' = contract.config_set,
+        prev_config_mr_enclave' = contract.config_mr_enclave,
       }
     }
   }
@@ -196,6 +278,17 @@ module handshake {
         last_result' = ErrNoConfig,
         contract' = contract,
         enclave' = enclave,
+        last_action' = ActSessionCreate,
+        last_msg_hash' = msg_hash,
+        last_att_user_data' = att_user_data,
+        last_att_compose_hash' = att_compose_hash,
+        last_msg_contract' = msg_contract,
+        last_nonce' = nonce,
+        prev_session' = contract.session,
+        prev_session_nonce' = contract.session_nonce,
+        prev_session_pubkey' = contract.session_pubkey,
+        prev_config_set' = contract.config_set,
+        prev_config_mr_enclave' = contract.config_mr_enclave,
       }
     } else if (msg_hash != att_user_data) {
       // Attested wrapper: user_data mismatch
@@ -203,6 +296,17 @@ module handshake {
         last_result' = ErrUserDataMismatch,
         contract' = contract,
         enclave' = enclave,
+        last_action' = ActSessionCreate,
+        last_msg_hash' = msg_hash,
+        last_att_user_data' = att_user_data,
+        last_att_compose_hash' = att_compose_hash,
+        last_msg_contract' = msg_contract,
+        last_nonce' = nonce,
+        prev_session' = contract.session,
+        prev_session_nonce' = contract.session_nonce,
+        prev_session_pubkey' = contract.session_pubkey,
+        prev_config_set' = contract.config_set,
+        prev_config_mr_enclave' = contract.config_mr_enclave,
       }
     } else if (att_compose_hash != contract.config_mr_enclave) {
       // Attested wrapper: mr_enclave mismatch
@@ -210,6 +314,17 @@ module handshake {
         last_result' = ErrMrEnclaveMismatch,
         contract' = contract,
         enclave' = enclave,
+        last_action' = ActSessionCreate,
+        last_msg_hash' = msg_hash,
+        last_att_user_data' = att_user_data,
+        last_att_compose_hash' = att_compose_hash,
+        last_msg_contract' = msg_contract,
+        last_nonce' = nonce,
+        prev_session' = contract.session,
+        prev_session_nonce' = contract.session_nonce,
+        prev_session_pubkey' = contract.session_pubkey,
+        prev_config_set' = contract.config_set,
+        prev_config_mr_enclave' = contract.config_mr_enclave,
       }
     } else if (msg_contract != contract.contract_addr) {
       // SessionCreate::handle line 17: addr != env.contract.address
@@ -217,6 +332,17 @@ module handshake {
         last_result' = ErrContractAddrMismatch,
         contract' = contract,
         enclave' = enclave,
+        last_action' = ActSessionCreate,
+        last_msg_hash' = msg_hash,
+        last_att_user_data' = att_user_data,
+        last_att_compose_hash' = att_compose_hash,
+        last_msg_contract' = msg_contract,
+        last_nonce' = nonce,
+        prev_session' = contract.session,
+        prev_session_nonce' = contract.session_nonce,
+        prev_session_pubkey' = contract.session_pubkey,
+        prev_config_set' = contract.config_set,
+        prev_config_mr_enclave' = contract.config_mr_enclave,
       }
     } else {
       // Success: SESSION.save overwrites any previous session
@@ -235,6 +361,17 @@ module handshake {
           contract_addr: msg_contract,
           nonce: nonce,
         },
+        last_action' = ActSessionCreate,
+        last_msg_hash' = msg_hash,
+        last_att_user_data' = att_user_data,
+        last_att_compose_hash' = att_compose_hash,
+        last_msg_contract' = msg_contract,
+        last_nonce' = nonce,
+        prev_session' = contract.session,
+        prev_session_nonce' = contract.session_nonce,
+        prev_session_pubkey' = contract.session_pubkey,
+        prev_config_set' = contract.config_set,
+        prev_config_mr_enclave' = contract.config_mr_enclave,
       }
     }
   }
@@ -269,6 +406,17 @@ module handshake {
         last_result' = ErrNoConfig,
         contract' = contract,
         enclave' = enclave,
+        last_action' = ActSetPubkey,
+        last_msg_hash' = msg_hash,
+        last_att_user_data' = att_user_data,
+        last_att_compose_hash' = att_compose_hash,
+        last_msg_contract' = last_msg_contract,
+        last_nonce' = nonce,
+        prev_session' = contract.session,
+        prev_session_nonce' = contract.session_nonce,
+        prev_session_pubkey' = contract.session_pubkey,
+        prev_config_set' = contract.config_set,
+        prev_config_mr_enclave' = contract.config_mr_enclave,
       }
     } else if (msg_hash != att_user_data) {
       // Attested wrapper: user_data mismatch
@@ -276,6 +424,17 @@ module handshake {
         last_result' = ErrUserDataMismatch,
         contract' = contract,
         enclave' = enclave,
+        last_action' = ActSetPubkey,
+        last_msg_hash' = msg_hash,
+        last_att_user_data' = att_user_data,
+        last_att_compose_hash' = att_compose_hash,
+        last_msg_contract' = last_msg_contract,
+        last_nonce' = nonce,
+        prev_session' = contract.session,
+        prev_session_nonce' = contract.session_nonce,
+        prev_session_pubkey' = contract.session_pubkey,
+        prev_config_set' = contract.config_set,
+        prev_config_mr_enclave' = contract.config_mr_enclave,
       }
     } else if (att_compose_hash != contract.config_mr_enclave) {
       // Attested wrapper: mr_enclave mismatch
@@ -283,6 +442,17 @@ module handshake {
         last_result' = ErrMrEnclaveMismatch,
         contract' = contract,
         enclave' = enclave,
+        last_action' = ActSetPubkey,
+        last_msg_hash' = msg_hash,
+        last_att_user_data' = att_user_data,
+        last_att_compose_hash' = att_compose_hash,
+        last_msg_contract' = last_msg_contract,
+        last_nonce' = nonce,
+        prev_session' = contract.session,
+        prev_session_nonce' = contract.session_nonce,
+        prev_session_pubkey' = contract.session_pubkey,
+        prev_config_set' = contract.config_set,
+        prev_config_mr_enclave' = contract.config_mr_enclave,
       }
     } else if (contract.session != SessionCreated) {
       // SESSION.load would fail or with_pub_key returns None
@@ -291,6 +461,17 @@ module handshake {
         last_result' = ErrBadSessionTransition,
         contract' = contract,
         enclave' = enclave,
+        last_action' = ActSetPubkey,
+        last_msg_hash' = msg_hash,
+        last_att_user_data' = att_user_data,
+        last_att_compose_hash' = att_compose_hash,
+        last_msg_contract' = last_msg_contract,
+        last_nonce' = nonce,
+        prev_session' = contract.session,
+        prev_session_nonce' = contract.session_nonce,
+        prev_session_pubkey' = contract.session_pubkey,
+        prev_config_set' = contract.config_set,
+        prev_config_mr_enclave' = contract.config_mr_enclave,
       }
     } else if (nonce != contract.session_nonce) {
       // Session::with_pub_key guard 1: self.nonce == nonce
@@ -298,6 +479,17 @@ module handshake {
         last_result' = ErrBadSessionTransition,
         contract' = contract,
         enclave' = enclave,
+        last_action' = ActSetPubkey,
+        last_msg_hash' = msg_hash,
+        last_att_user_data' = att_user_data,
+        last_att_compose_hash' = att_compose_hash,
+        last_msg_contract' = last_msg_contract,
+        last_nonce' = nonce,
+        prev_session' = contract.session,
+        prev_session_nonce' = contract.session_nonce,
+        prev_session_pubkey' = contract.session_pubkey,
+        prev_config_set' = contract.config_set,
+        prev_config_mr_enclave' = contract.config_mr_enclave,
       }
     } else if (contract.session_pubkey != "") {
       // Session::with_pub_key guard 2: self.pub_key.is_none()
@@ -305,6 +497,17 @@ module handshake {
         last_result' = ErrBadSessionTransition,
         contract' = contract,
         enclave' = enclave,
+        last_action' = ActSetPubkey,
+        last_msg_hash' = msg_hash,
+        last_att_user_data' = att_user_data,
+        last_att_compose_hash' = att_compose_hash,
+        last_msg_contract' = last_msg_contract,
+        last_nonce' = nonce,
+        prev_session' = contract.session,
+        prev_session_nonce' = contract.session_nonce,
+        prev_session_pubkey' = contract.session_pubkey,
+        prev_config_set' = contract.config_set,
+        prev_config_mr_enclave' = contract.config_mr_enclave,
       }
     } else {
       // Success: session transitions to Active, sequence_num = 0
@@ -320,6 +523,17 @@ module handshake {
           ...enclave,
           pubkey: pubkey,
         },
+        last_action' = ActSetPubkey,
+        last_msg_hash' = msg_hash,
+        last_att_user_data' = att_user_data,
+        last_att_compose_hash' = att_compose_hash,
+        last_msg_contract' = last_msg_contract,
+        last_nonce' = nonce,
+        prev_session' = contract.session,
+        prev_session_nonce' = contract.session_nonce,
+        prev_session_pubkey' = contract.session_pubkey,
+        prev_config_set' = contract.config_set,
+        prev_config_mr_enclave' = contract.config_mr_enclave,
       }
     }
   }
@@ -339,18 +553,51 @@ module handshake {
         last_result' = ErrBadSessionTransition,
         contract' = contract,
         enclave' = enclave,
+        last_action' = ActAttestedMsg,
+        last_msg_hash' = msg_hash,
+        last_att_user_data' = att_user_data,
+        last_att_compose_hash' = att_compose_hash,
+        last_msg_contract' = last_msg_contract,
+        last_nonce' = last_nonce,
+        prev_session' = contract.session,
+        prev_session_nonce' = contract.session_nonce,
+        prev_session_pubkey' = contract.session_pubkey,
+        prev_config_set' = contract.config_set,
+        prev_config_mr_enclave' = contract.config_mr_enclave,
       }
     } else if (msg_hash != att_user_data) {
       all {
         last_result' = ErrUserDataMismatch,
         contract' = contract,
         enclave' = enclave,
+        last_action' = ActAttestedMsg,
+        last_msg_hash' = msg_hash,
+        last_att_user_data' = att_user_data,
+        last_att_compose_hash' = att_compose_hash,
+        last_msg_contract' = last_msg_contract,
+        last_nonce' = last_nonce,
+        prev_session' = contract.session,
+        prev_session_nonce' = contract.session_nonce,
+        prev_session_pubkey' = contract.session_pubkey,
+        prev_config_set' = contract.config_set,
+        prev_config_mr_enclave' = contract.config_mr_enclave,
       }
     } else if (att_compose_hash != contract.config_mr_enclave) {
       all {
         last_result' = ErrMrEnclaveMismatch,
         contract' = contract,
         enclave' = enclave,
+        last_action' = ActAttestedMsg,
+        last_msg_hash' = msg_hash,
+        last_att_user_data' = att_user_data,
+        last_att_compose_hash' = att_compose_hash,
+        last_msg_contract' = last_msg_contract,
+        last_nonce' = last_nonce,
+        prev_session' = contract.session,
+        prev_session_nonce' = contract.session_nonce,
+        prev_session_pubkey' = contract.session_pubkey,
+        prev_config_set' = contract.config_set,
+        prev_config_mr_enclave' = contract.config_mr_enclave,
       }
     } else {
       all {
@@ -360,6 +607,17 @@ module handshake {
           sequence_num: contract.sequence_num + 1,
         },
         enclave' = enclave,
+        last_action' = ActAttestedMsg,
+        last_msg_hash' = msg_hash,
+        last_att_user_data' = att_user_data,
+        last_att_compose_hash' = att_compose_hash,
+        last_msg_contract' = last_msg_contract,
+        last_nonce' = last_nonce,
+        prev_session' = contract.session,
+        prev_session_nonce' = contract.session_nonce,
+        prev_session_pubkey' = contract.session_pubkey,
+        prev_config_set' = contract.config_set,
+        prev_config_mr_enclave' = contract.config_mr_enclave,
       }
     }
   }
@@ -376,6 +634,17 @@ module handshake {
       pubkey: "",
     },
     contract' = contract,
+    last_action' = ActReset,
+    last_msg_hash' = "",
+    last_att_user_data' = "",
+    last_att_compose_hash' = "",
+    last_msg_contract' = last_msg_contract,
+    last_nonce' = last_nonce,
+    prev_session' = contract.session,
+    prev_session_nonce' = contract.session_nonce,
+    prev_session_pubkey' = contract.session_pubkey,
+    prev_config_set' = contract.config_set,
+    prev_config_mr_enclave' = contract.config_mr_enclave,
   }
 
   // ============================================================
@@ -413,13 +682,14 @@ module handshake {
     else true
   }
 
-  /// P2: Config is write-once — once set, compose_hash never changes
-  /// (modeled by: instantiate rejects if config_set is true)
+  /// P2: Config is write-once — once set, compose_hash never changes.
+  /// State check: if config was set before the last action, it is still
+  /// set, and config_mr_enclave is unchanged from the snapshot.
   val inv_config_write_once: bool = {
-    // The model enforces this: instantiate sets config_set=true,
-    // and all future instantiate calls return ErrConfigAlreadySet.
-    // No other action modifies config_mr_enclave.
-    true
+    if (prev_config_set)
+      contract.config_set and
+        contract.config_mr_enclave == prev_config_mr_enclave
+    else true
   }
 
   // ── Session State Machine ──────────────────────────────────────
@@ -460,55 +730,69 @@ module handshake {
 
   // ── Attestation Integrity ──────────────────────────────────────
 
-  /// P8: User data mismatch always produces an error
-  /// (no action with msg_hash != att_user_data results in Ok)
+  /// P8: User data mismatch always produces an error.
+  /// State check: if the last verify-flow action succeeded, the
+  /// recorded msg_hash and att_user_data must have matched.
   val inv_user_data_checked: bool = {
-    // This is enforced by the if-else chains in session_create,
-    // session_set_pubkey, and send_attested_message.
-    // The model checker verifies no path bypasses this check.
-    true
+    if (last_result == Ok and
+        (last_action == ActSessionCreate or
+         last_action == ActSetPubkey or
+         last_action == ActAttestedMsg))
+      last_msg_hash == last_att_user_data
+    else true
   }
 
-  /// P9: Wrong compose_hash always produces an error
-  /// (no action with att_compose_hash != config_mr_enclave results in Ok
-  ///  after config is set)
+  /// P9: Wrong compose_hash always produces an error.
+  /// State check: if the last verify-flow action succeeded, the
+  /// recorded att_compose_hash must equal the config_mr_enclave that
+  /// was in effect at the time. Since the snapshot of
+  /// prev_config_mr_enclave is taken at action entry and config is
+  /// write-once (P2), this captures the action-time check.
   val inv_compose_hash_checked: bool = {
-    // Enforced by the Attested wrapper check in every action.
-    true
+    if (last_result == Ok and
+        (last_action == ActSessionCreate or
+         last_action == ActSetPubkey or
+         last_action == ActAttestedMsg))
+      last_att_compose_hash == prev_config_mr_enclave
+    else true
   }
 
   // ── Contract Address Validation ────────────────────────────────
 
-  /// P10: SessionCreate with wrong contract address always fails
+  /// P10: SessionCreate with wrong contract address always fails.
+  /// State check: an Ok ActSessionCreate has last_msg_contract equal
+  /// to the contract's own address.
   val inv_contract_addr_validated: bool = {
-    // Enforced by session_create's msg_contract != contract.contract_addr check.
-    true
+    if (last_result == Ok and last_action == ActSessionCreate)
+      last_msg_contract == contract.contract_addr
+    else true
   }
 
   // ── Session Transition Guards ──────────────────────────────────
 
-  /// P11: SessionSetPubKey requires SessionCreated state
-  /// (cannot set pubkey from NoSession or SessionActive)
+  /// P11: SessionSetPubKey requires SessionCreated state.
+  /// State check: an Ok ActSetPubkey had prev_session == SessionCreated.
   val inv_set_pubkey_requires_created: bool = {
-    // If last action was a successful set_pubkey, session was Created before.
-    // Enforced by the session != SessionCreated guard.
-    true
+    if (last_result == Ok and last_action == ActSetPubkey)
+      prev_session == SessionCreated
+    else true
   }
 
-  /// P12: SessionSetPubKey requires matching nonce
-  /// (prevents attacker from using a different nonce)
+  /// P12: SessionSetPubKey requires matching nonce.
+  /// State check: an Ok ActSetPubkey had last_nonce equal to the
+  /// session_nonce in effect before the action.
   val inv_set_pubkey_nonce_match: bool = {
-    // Enforced by Session::with_pub_key guard: self.nonce == nonce
-    true
+    if (last_result == Ok and last_action == ActSetPubkey)
+      last_nonce == prev_session_nonce
+    else true
   }
 
-  /// P13: Pubkey can only be set once per session
-  /// (Session::with_pub_key rejects if pub_key is Some)
+  /// P13: Pubkey can only be set once per session.
+  /// State check: an Ok ActSetPubkey had prev_session_pubkey == "".
   val inv_pubkey_set_once: bool = {
-    // Enforced by Session::with_pub_key guard: self.pub_key.is_none()
-    // Combined with P5 (created_no_pubkey), this means pubkey
-    // transitions exactly once: None -> Some
-    true
+    if (last_result == Ok and last_action == ActSetPubkey)
+      prev_session_pubkey == ""
+    else true
   }
 
   // ── Cross-Component Consistency ────────────────────────────────
@@ -533,11 +817,18 @@ module handshake {
 
   val all_invariants: bool = {
     inv_config_authentic
+    and inv_config_write_once
     and inv_valid_session_states
     and inv_active_has_pubkey
     and inv_created_no_pubkey
     and inv_active_has_sequence
     and inv_sequence_valid
+    and inv_user_data_checked
+    and inv_compose_hash_checked
+    and inv_contract_addr_validated
+    and inv_set_pubkey_requires_created
+    and inv_set_pubkey_nonce_match
+    and inv_pubkey_set_once
     and inv_nonce_consistency
     and inv_pubkey_consistency
   }

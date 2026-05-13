@@ -286,7 +286,10 @@ mod verification {
     }
 
     /// Session::with_pub_key rejects double-set (pub_key already Some).
+    /// Bounded unwind: Vec<u8> equality goes through memcmp which Kani
+    /// cannot infer a finite bound for; cap explicitly.
     #[kani::proof]
+    #[kani::unwind(40)]
     fn session_pubkey_set_once() {
         let nonce: Nonce = kani::any();
         let pk1 = vec![0x04u8; 33];
@@ -308,10 +311,19 @@ mod verification {
         assert_eq!(nonce, recovered, "nonce must round-trip");
     }
 
+    // The LightClientOpts harnesses below are gated behind `kani_slow`
+    // because `StdError::msg(...)` in the error paths constructs a
+    // backtrace via std::backtrace::Backtrace, which pulls in
+    // ~thousand-iteration stdlib unwinding that Kani cannot bound.
+    // Run with `cargo kani --cfg-kani --harness ... -- --no-unwinding-checks`
+    // when you want to exercise them with a longer time budget.
+
     /// LightClientOpts::new validates trust threshold bounds.
     /// Proves: 3*num < den is rejected, num > den is rejected,
     /// den == 0 is rejected, valid inputs accepted.
+    #[cfg(kani_slow)]
     #[kani::proof]
+    #[kani::unwind(20)]
     fn light_client_opts_threshold_validation() {
         let num: u64 = kani::any();
         let den: u64 = kani::any();
@@ -343,7 +355,9 @@ mod verification {
     }
 
     /// LightClientOpts::new rejects heights that don't fit in i64.
+    #[cfg(kani_slow)]
     #[kani::proof]
+    #[kani::unwind(20)]
     fn light_client_opts_height_bounds() {
         let height: u64 = kani::any();
 

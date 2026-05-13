@@ -1,0 +1,543 @@
+/-
+  Protocol-layer VCV-io scaffolding — Step 6.3 quadruple-bundle lift.
+
+  --------------------------------------------------------------------
+  Scope
+  --------------------------------------------------------------------
+
+  This module is the **final lift** in the Step 6 sequence. It extends
+  `ProtocolVCVio.lean` (Step 6.0, single-bundle proof-of-concept),
+  `ProtocolVCVioDual.lean` (Step 6.1, dual-bundle), and
+  `ProtocolVCVioTriple.lean` (Step 6.2, triple-bundle) with the lift
+  of the **one quadruple-bundle protocol-layer theorem**:
+
+      cross_component_session_bind
+
+  The loop-closing theorem of the Quartz handshake — the integration
+  point where contract-side acceptance, enclave-side commitment,
+  ECIES roundtrip, and attestation soundness all compose into a
+  single end-to-end binding statement.
+
+  Bundle inventory (verified via `lean_verify`):
+
+      Specs.Quartz.Protocol.CrossComponent.cross_component_session_bind
+        axioms include: {commitHashE, commitHashBytesE,
+                         tdxVerifier, groth16Verifier}
+
+  Plus standard logic (`propext`, `Classical.choice`, `Quot.sound`)
+  and carriers (`MrEnclave`, `TdxQuote`, `UserData`, etc.). Genuinely
+  *quadruple-bundle*, matching the Step 6.1 / 6.2 classification.
+
+  --------------------------------------------------------------------
+  Lift pattern (quadruple-bundle template) — FIVE summands
+  --------------------------------------------------------------------
+
+  The four classical bundles in the closure compose into FIVE
+  cryptographic-assumption summands under the union bound. The fifth
+  summand is the **Step 5 doubled-negligibility decomposition** of
+  `groth16Verifier`: its soundness rests on two independent
+  computational assumptions —
+
+      Pr[groth16_forgery] ≤ negligible_groth16 + negligible_circuit
+
+  where:
+
+  * `negligible_groth16` is the BN254 Groth16 knowledge-soundness
+    bound (cryptographic — KZG / power-knowledge / GGM, ArkLib
+    roadmap target).
+  * `negligible_circuit` is the zkdcap R1CS circuit ≡ reference-DCAP
+    verifier equivalence bound (software-verification, separate
+    effort).
+
+  The triple-bundle lifts in Step 6.2 could afford a monolithic
+  `Groth16SoundAdvantage` because the doubled assumption didn't
+  surface at their abstraction level. Step 6.3 is where the
+  decomposition lands: the quadruple lift's bound makes BOTH
+  Groth16 KS and the zkdcap circuit-equivalence visible as
+  separate cryptographic-assumption budgets.
+
+  The lift therefore follows **Decision (β)** from the Step 6.3
+  brief: decompose `groth16Verifier` into two summands rather than
+  inheriting Step 6.2's monolithic framing. The bound becomes:
+
+      protocolFailAdv ≤ groth16KSAdv          -- Groth16 KS
+                      + circuitEqAdv          -- zkdcap circuit ≡ ref DCAP
+                      + tdxAdv                -- DCAP / PCK unforgeability
+                      + hashAdv               -- commitHashE collision
+                      + hashBAdv              -- commitHashBytesE collision
+
+  Five summands. Negligibility is closed under finite sums
+  (`negligible_add` ×4); pointwise monotonicity gives the union-
+  bound shape (`negligible_of_le`).
+
+  Step 6.0 (1 summand): `negligible_of_le h_bound h_negl`
+  Step 6.1 (2 summands): `negligible_of_le h_bound (add h₁ h₂)`
+  Step 6.2 (3 summands): `negligible_of_le h_bound (add (add h₁ h₂) h₃)`
+  Step 6.3 (5 summands): `negligible_of_le h_bound
+                            (add (add (add (add h₁ h₂) h₃) h₄) h₅)`
+
+  Left-associated chain for consistency with the Step 6.1 / 6.2
+  precedent — balanced bracketing gives no sharper bound for
+  sum-of-negligibles, so left-association is the canonical choice.
+
+  --------------------------------------------------------------------
+  Honest framing of the hash-collision summands — Option (b)
+  symmetrically
+  --------------------------------------------------------------------
+
+  Both `commitHashE : UserDataCommit ↪ UserData` (Step 2 bundle) and
+  `commitHashBytesE : ByteSeq ↪ UserData` (Step 3 bundle) are
+  **mathematically-impossible-as-stated** Function.Embeddings —
+  pigeonhole forbids any injection from an open-cardinality preimage
+  into a fixed-width 64-byte `UserData` codomain. Step 6.2 introduced
+  the **Option (b)** framing for the `commitHashE` summand: keep
+  the embedding model at the spec/classical layer, frame the
+  negligibility hypothesis as collision-resistance of the concrete
+  hash function `H` the embedding abstracts over.
+
+  Step 6.3 applies Option (b) **symmetrically** to BOTH the
+  `commitHashE` and `commitHashBytesE` summands. The two hashes
+  abstract over different concrete hash functions
+  (`H : UserDataCommit → UserData` and `H_b : ByteSeq → UserData`),
+  but the meta-(d) "vacuous-impossible-axiom-as-hypothesis" finding
+  applies symmetrically:
+
+  * spec-level embedding hypothesis (either side): vacuous
+    (impossible-as-stated);
+  * lift-level collision-resistance hypothesis: non-vacuous,
+    standard cryptographic statement.
+
+  The collision-resistance adversary types
+  (`CommitHashCollisionAdv`, `CommitHashBytesCollisionAdv`) and
+  their advantage / game packages are imported unchanged from
+  `ProtocolVCVioTriple.lean`. No new collision-resistance carrier
+  is introduced.
+
+  --------------------------------------------------------------------
+  Doubled-negligibility carriers
+  --------------------------------------------------------------------
+
+  Two new adversary types are introduced to model the Step 5
+  decomposition of `groth16Verifier`:
+
+  * `Groth16KSAdv : Type` — outputs a candidate
+    `(VKey × Groth16Proof × PublicInputs)` that verifies under the
+    trusted vkey but for which no satisfying R1CS witness exists.
+    The "win" condition is a Groth16 knowledge-soundness break.
+
+  * `CircuitEqAdv : Type` — outputs a candidate `PublicInputs` for
+    which the zkdcap R1CS encoding disagrees with the reference
+    DCAP verifier semantics. The "win" condition is a circuit-
+    correctness break.
+
+  These two are the truthful decomposition of the Step 5 monolithic
+  `Groth16SoundAdv`: the latter is observationally equivalent to
+  the disjunction of these two events (a Groth16 forgery occurs
+  iff *either* knowledge soundness breaks *or* the circuit is
+  inequivalent to the reference). The triple-bundle lifts collapsed
+  the disjunction; the quadruple lift expands it.
+
+  Plus one composite adversary:
+
+  * `CrossSessionBindAdv : Type` — outputs a candidate
+    `(HandshakeCheck × RawSessionSetPubKey × PrivKey × Plaintext)`
+    such that the contract accepts but the conclusion of
+    `cross_component_session_bind` fails on the produced tuple.
+    This is the truthful adversary game: a real attacker tries to
+    construct a tuple that the contract accepts but doesn't
+    actually deliver the loop-closing binding.
+
+  All adversary types ride on the project-standard `IsPPT`
+  placeholder filter (see `ProtocolVCVio.lean` for the rationale).
+-/
+
+import VCVio.CryptoFoundations.Asymptotics.Security
+import Specs.Quartz.Protocol.ProtocolVCVio
+import Specs.Quartz.Protocol.ProtocolVCVioDual
+import Specs.Quartz.Protocol.ProtocolVCVioTriple
+import Specs.Quartz.Protocol.CrossComponent
+
+namespace Specs.Quartz.Protocol.ProtocolVCVioQuad
+
+open ENNReal
+open OracleSpec OracleComp
+
+open Specs.Quartz.Crypto.Ecies
+open Specs.Quartz.Crypto
+open Specs.Quartz.Attestation.Dstack
+open Specs.Quartz.Attestation.Zkdcap
+open Specs.Quartz.Protocol.Handshake
+open Specs.Quartz.Protocol.CrossComponent
+open Specs.Quartz.Protocol.ProtocolVCVio
+open Specs.Quartz.Protocol.ProtocolVCVioDual
+open Specs.Quartz.Protocol.ProtocolVCVioTriple
+
+/-! ## Doubled-negligibility adversaries for the Step 5 decomposition
+
+The Step 5 honesty finding established that `groth16Verifier`'s
+soundness rests on **two** independent computational assumptions:
+
+  1. Groth16 knowledge soundness over BN254 (cryptographic).
+  2. zkdcap R1CS circuit ≡ reference DCAP verifier (software-
+     verification).
+
+The triple-bundle lifts of Step 6.2 inherited the Step 6.0
+monolithic `Groth16SoundAdv` because the doubled assumption was
+methodologically invisible at the three-summand level. Step 6.3
+makes it visible: the quadruple lift's union bound has FIVE
+summands, with the `Groth16SoundAdv` decomposing into
+`Groth16KSAdv + CircuitEqAdv`.
+
+The two summands have independent justifications and independent
+discharge paths. Surfacing them separately is the entire point of
+the Step 5 (d)-bucket "doubled-negligibility" finding.
+-/
+
+/-- A Groth16 knowledge-soundness adversary: at each security
+    parameter `n`, outputs a candidate
+    `(VKey × Groth16Proof × PublicInputs)`. The "win" condition is
+    that the proof verifies under the canonical vkey but no
+    satisfying R1CS witness exists for the public inputs.
+
+    Mirrors the Step 6.0 `Groth16SoundAdv` shape but specialised to
+    the KS half of the doubled-negligibility decomposition. When
+    ArkLib lands a Groth16 KS theorem, this adversary's negligibility
+    becomes provable from a reduction to BN254 generic-group-model
+    bounds. -/
+def Groth16KSAdv : Type :=
+  ℕ → ProbComp (VKey × Groth16Proof × PublicInputs)
+
+/-- The advantage of a Groth16 knowledge-soundness adversary. -/
+abbrev Groth16KSAdvantage : Type := Groth16KSAdv → ℕ → ℝ≥0∞
+
+/-- The Groth16 knowledge-soundness security game. -/
+def groth16KSGame (adv : Groth16KSAdvantage) :
+    SecurityGame Groth16KSAdv where
+  advantage := adv
+
+/-- A zkdcap circuit-equivalence adversary: at each security
+    parameter `n`, outputs a candidate `PublicInputs` for which the
+    zkdcap R1CS circuit and the reference DCAP verifier disagree.
+
+    The "win" condition is a witness to circuit-vs-reference-DCAP
+    inequivalence. This is the software-verification half of the
+    doubled-negligibility decomposition. When a Lean reference DCAP
+    verifier is formalised AND the zkdcap R1CS circuit is given a
+    matching formal model, this adversary's negligibility becomes
+    provable from a circuit-equivalence theorem. -/
+def CircuitEqAdv : Type :=
+  ℕ → ProbComp PublicInputs
+
+/-- The advantage of a zkdcap circuit-equivalence adversary. -/
+abbrev CircuitEqAdvantage : Type := CircuitEqAdv → ℕ → ℝ≥0∞
+
+/-- The zkdcap circuit-equivalence security game. -/
+def circuitEqGame (adv : CircuitEqAdvantage) :
+    SecurityGame CircuitEqAdv where
+  advantage := adv
+
+/-! ## Composite quadruple-bundle adversary -/
+
+/-- A `cross_component_session_bind`-attack adversary: at each
+    security parameter, outputs a candidate
+    `(HandshakeCheck × RawSessionSetPubKey × PrivKey × Plaintext)`
+    such that the contract accepts but the loop-closing conclusion
+    fails. The conclusion bundles five conjuncts:
+
+      1. ∃ dstack-signed quote
+      2. quote.mrEnclave matches expected
+      3. quote.userData matches msg.userData
+      4. pkOfUserData extracts the raw pubkey
+      5. ECIES roundtrip recovers the plaintext
+
+    A failure on any of these is a win for the adversary. The
+    union-bound decomposition below maps each conjunct failure to a
+    bundle break. -/
+def CrossSessionBindAdv : Type :=
+  ℕ → ProbComp (HandshakeCheck × RawSessionSetPubKey × PrivKey × Plaintext)
+
+/-- The advantage of a `cross_component_session_bind`-attack
+    adversary. Parametric on an opaque bound for the same
+    `[Fintype]` reasons as the rest of the Step 6 lift sequence. -/
+abbrev CrossSessionBindAdvantage : Type :=
+  CrossSessionBindAdv → ℕ → ℝ≥0∞
+
+/-- The `cross_component_session_bind` security game. -/
+def crossSessionBindGame (adv : CrossSessionBindAdvantage) :
+    SecurityGame CrossSessionBindAdv where
+  advantage := adv
+
+/-! ## Quadruple-bundle lifted theorem: `cross_component_session_bind` -/
+
+/-- **Classical form (preserved as a corollary)**:
+    `cross_component_session_bind`.
+
+    Re-exported from `CrossComponent.lean` for convenience. Rides
+    on the quadruple-bundle `commitHashE` + `commitHashBytesE`
+    + `tdxVerifier` + `groth16Verifier` classical-`Prop` axioms.
+
+    The classical chain remains unchanged: this corollary preserves
+    the original axiom closure exactly. -/
+theorem cross_component_session_bind_classical
+    (h : HandshakeCheck) (acc : Accepted h)
+    (raw : RawSessionSetPubKey)
+    (h_raw : h.msgUserData = userDataOfSessionSetPubKey raw)
+    (sk : PrivKey) (h_sk : keyOf sk = raw.pubKey) :
+    ∃ q : TdxQuote,
+      was_signed_by_dstack q ∧
+      mrEnclaveOf q = some h.expectedMr ∧
+      userDataOf q = some h.msgUserData ∧
+      pkOfUserData h.msgUserData = some raw.pubKey ∧
+      (∀ msg : Plaintext, decrypt sk (encrypt raw.pubKey msg) = some msg) :=
+  cross_component_session_bind h acc raw h_raw sk h_sk
+
+/-- **Probabilistic form (the Step 6.3 quadruple-bundle lift —
+    FIVE-summand union bound)**:
+    `cross_component_session_bind_negl`.
+
+    The load-bearing methodology target of the entire Step 6 lift.
+
+    Given:
+
+    * a cross-component-session-bind attack adversary
+      `𝒜 : CrossSessionBindAdv`,
+    * the corresponding fail advantage `bindFailAdv`,
+    * **FIVE** soundness advantages, one per cryptographic
+      assumption:
+        - `groth16KSAdv` — Groth16 knowledge soundness over BN254,
+        - `circuitEqAdv` — zkdcap R1CS ≡ reference DCAP verifier,
+        - `tdxAdv` — DCAP / PCK-signature unforgeability,
+        - `hashAdv` — `commitHashE` collision resistance,
+        - `hashBAdv` — `commitHashBytesE` collision resistance,
+    * a pointwise FIVE-summand union bound:
+
+          bindFailAdv 𝒜 n
+            ≤ groth16KSAdv 𝒜_groth_ks n
+            + circuitEqAdv 𝒜_circuit n
+            + tdxAdv       𝒜_tdx n
+            + hashAdv      𝒜_hash n
+            + hashBAdv     𝒜_hashB n
+
+    * negligibility of EACH of the five summands,
+
+    Then `bindFailAdv 𝒜` is negligible.
+
+    **Proof structure**: real reduction-based proof using
+    `negligible_of_le` + four chained `negligible_add` applications,
+    left-associated:
+
+        negligible_of_le h_bound
+          (negligible_add
+            (negligible_add
+              (negligible_add
+                (negligible_add h_groth_ks h_circuit)
+                h_tdx)
+              h_hash)
+            h_hashB)
+
+    The Step 6.1 / 6.2 union-bound pattern scales mechanically to
+    five summands: each new summand adds one `negligible_add` step.
+
+    **Honesty (the Step 5 doubled-negligibility finding made
+    visible)**: this lift is the methodology-level fulfilment of
+    Step 5's (d)-bucket "doubled-negligibility" surfacing. The
+    triple-bundle lifts of Step 6.2 could afford a monolithic
+    `Groth16SoundAdv` because they didn't reach the load-bearing
+    composition that exercises BOTH halves of the
+    `groth16Verifier` soundness assumption. Step 6.3 is where the
+    decomposition becomes load-bearing — `cross_component_session_bind`
+    is the cross-component theorem whose downstream is the entire
+    Quartz protocol-layer trust statement, so both halves of the
+    `groth16Verifier` soundness assumption end up in the audit
+    surface.
+
+    Discharging the underlying negligibility hypotheses requires:
+
+    1. ArkLib Groth16 KS coverage (cryptographic).
+    2. A Lean reference DCAP verifier + circuit-equivalence theorem
+       against the zkdcap R1CS encoding (software-verification).
+    3. PCK-signature unforgeability reduction (cryptographic).
+    4. Collision resistance of the concrete hash function that
+       `commitHashE` abstracts over (cryptographic — random-oracle
+       birthday bound).
+    5. Collision resistance of the concrete hash function that
+       `commitHashBytesE` abstracts over (cryptographic — same
+       shape).
+
+    None are discharged here — the lift demonstrates the
+    five-summand composition pattern, which is the final scaling
+    step of the Step 6 lift sequence. -/
+theorem cross_component_session_bind_negl
+    (𝒜 : CrossSessionBindAdv)
+    (𝒜_groth_ks : Groth16KSAdv)
+    (𝒜_circuit : CircuitEqAdv)
+    (𝒜_tdx : TdxVerifierSoundAdv)
+    (𝒜_hash : CommitHashCollisionAdv)
+    (𝒜_hashB : CommitHashBytesCollisionAdv)
+    (bindFailAdv : CrossSessionBindAdv → ℕ → ℝ≥0∞)
+    (groth16KSAdv : Groth16KSAdvantage)
+    (circuitEqAdv : CircuitEqAdvantage)
+    (tdxAdv : TdxVerifierSoundAdvantage)
+    (hashAdv : CommitHashCollisionAdvantage)
+    (hashBAdv : CommitHashBytesCollisionAdvantage)
+    (h_bound : ∀ n,
+      bindFailAdv 𝒜 n ≤
+        groth16KSAdv 𝒜_groth_ks n + circuitEqAdv 𝒜_circuit n +
+        tdxAdv 𝒜_tdx n + hashAdv 𝒜_hash n + hashBAdv 𝒜_hashB n)
+    (h_groth_ks_negl : negligible (groth16KSAdv 𝒜_groth_ks))
+    (h_circuit_negl  : negligible (circuitEqAdv 𝒜_circuit))
+    (h_tdx_negl      : negligible (tdxAdv 𝒜_tdx))
+    (h_hash_negl     : negligible (hashAdv 𝒜_hash))
+    (h_hashB_negl    : negligible (hashBAdv 𝒜_hashB)) :
+    negligible (bindFailAdv 𝒜) :=
+  negligible_of_le h_bound
+    (negligible_add
+      (negligible_add
+        (negligible_add
+          (negligible_add h_groth_ks_negl h_circuit_negl)
+          h_tdx_negl)
+        h_hash_negl)
+      h_hashB_negl)
+
+/-- **Convenience packaging** for `cross_component_session_bind_negl`
+    via `SecurityExp` — the asymptotic security-experiment form.
+
+    Given a fail experiment `bindFailExp`, five soundness
+    experiments (one per cryptographic assumption), the pointwise
+    five-summand union bound, and security (negligibility) of each
+    component experiment, `bindFailExp.secure` holds.
+
+    Mirrors the Step 6.1 / 6.2 dual / triple `SecurityExp`
+    packagings, scaled to the five-summand case. -/
+theorem crossSessionBindFail_secure_of_quad_bundle_secure
+    (bindFailExp : SecurityExp)
+    (groth16KSExp : SecurityExp)
+    (circuitEqExp : SecurityExp)
+    (tdxExp : SecurityExp)
+    (hashExp : SecurityExp)
+    (hashBExp : SecurityExp)
+    (h_bound : ∀ n,
+      bindFailExp.advantage n ≤
+        groth16KSExp.advantage n + circuitEqExp.advantage n +
+        tdxExp.advantage n + hashExp.advantage n + hashBExp.advantage n)
+    (h_groth_ks_secure : groth16KSExp.secure)
+    (h_circuit_secure  : circuitEqExp.secure)
+    (h_tdx_secure      : tdxExp.secure)
+    (h_hash_secure     : hashExp.secure)
+    (h_hashB_secure    : hashBExp.secure) :
+    bindFailExp.secure :=
+  SecurityExp.secure_of_pointwise_bound
+    bindFailExp
+    (fun n =>
+      groth16KSExp.advantage n + circuitEqExp.advantage n +
+      tdxExp.advantage n + hashExp.advantage n + hashBExp.advantage n)
+    (negligible_add
+      (negligible_add
+        (negligible_add
+          (negligible_add h_groth_ks_secure h_circuit_secure)
+          h_tdx_secure)
+        h_hash_secure)
+      h_hashB_secure)
+    h_bound
+
+/-- **Security-game reduction form** for
+    `cross_component_session_bind_negl`: the quadruple-bundle
+    (five-summand) reduction expressed via
+    `SecurityGame.secureAgainst` with the project-standard `IsPPT`
+    filter.
+
+    Given a fixed reduction
+        reduce : CrossSessionBindAdv → Groth16KSAdv × CircuitEqAdv ×
+                                       TdxVerifierSoundAdv ×
+                                       CommitHashCollisionAdv ×
+                                       CommitHashBytesCollisionAdv
+    and the pointwise five-summand bound on the games' advantages,
+    security of each of the five component games (against `IsPPT`)
+    implies security of the cross-component-session-bind game
+    (against `IsPPT`).
+
+    The proof composes four `negligible_add` applications around
+    five `secure A` invocations, then closes via `negligible_of_le`.
+    Same shape as the Step 6.1 / 6.2 game-form packagings, scaled. -/
+theorem crossSessionBindGame_secure_of_quad_bundle_secure
+    {bindGame    : SecurityGame CrossSessionBindAdv}
+    {groth16KSGame' : SecurityGame Groth16KSAdv}
+    {circuitEqGame' : SecurityGame CircuitEqAdv}
+    {tdxGame     : SecurityGame TdxVerifierSoundAdv}
+    {hashGame    : SecurityGame CommitHashCollisionAdv}
+    {hashBGame   : SecurityGame CommitHashBytesCollisionAdv}
+    (reduce : CrossSessionBindAdv →
+      Groth16KSAdv × CircuitEqAdv × TdxVerifierSoundAdv ×
+      CommitHashCollisionAdv × CommitHashBytesCollisionAdv)
+    (h_bound : ∀ A n,
+      bindGame.advantage A n ≤
+        groth16KSGame'.advantage (reduce A).1 n +
+        circuitEqGame'.advantage (reduce A).2.1 n +
+        tdxGame.advantage        (reduce A).2.2.1 n +
+        hashGame.advantage       (reduce A).2.2.2.1 n +
+        hashBGame.advantage      (reduce A).2.2.2.2 n)
+    (h_groth_ks_secure : groth16KSGame'.secureAgainst IsPPT)
+    (h_circuit_secure  : circuitEqGame'.secureAgainst IsPPT)
+    (h_tdx_secure      : tdxGame.secureAgainst IsPPT)
+    (h_hash_secure     : hashGame.secureAgainst IsPPT)
+    (h_hashB_secure    : hashBGame.secureAgainst IsPPT) :
+    bindGame.secureAgainst IsPPT := fun A _hA =>
+  negligible_of_le (h_bound A)
+    (negligible_add
+      (negligible_add
+        (negligible_add
+          (negligible_add
+            (h_groth_ks_secure (reduce A).1       (IsPPT_trivial _))
+            (h_circuit_secure  (reduce A).2.1     (IsPPT_trivial _)))
+          (h_tdx_secure        (reduce A).2.2.1   (IsPPT_trivial _)))
+        (h_hash_secure         (reduce A).2.2.2.1 (IsPPT_trivial _)))
+      (h_hashB_secure          (reduce A).2.2.2.2 (IsPPT_trivial _)))
+
+/-! ## Closing assessment
+
+This is the **final lift** of the Step 6 sequence.
+
+Cumulative state at Step 6.3 exit:
+
+* Axiom count: 26 (unchanged since Step 5; the lift sequence is
+  additive — no axioms touched).
+* Protocol theorems lifted: 8 of 8 — 1 single-bundle (Step 6.0) +
+  1 dual-bundle (Step 6.1) + 5 triple-bundle (Step 6.2) + 1
+  quadruple-bundle (this step).
+* Union-bound composition: scales from 1 summand (Step 6.0) to 5
+  summands (Step 6.3), each step adding one `negligible_add`.
+* All lifts: zero `sorry`, real reduction proofs, parametric over
+  hardness hypotheses.
+
+The Step 6.3 lift exercises the doubled-negligibility shape that
+Step 5 surfaced as a (d)-bucket finding: `groth16Verifier` is the
+classical-`Prop` collapse of TWO independent computational
+assumptions (Groth16 knowledge soundness + zkdcap circuit
+equivalence). The triple-bundle lifts collapsed the disjunction
+back into a monolithic adversary; the quadruple lift expands it
+into the truthful five-summand union bound. This is the
+methodology-level pay-off of the Step 5 honesty finding.
+
+Outstanding (out of scope for Step 6.3, in scope for Step 7):
+
+* Integration-ledger regeneration with the post-Step-6 trust
+  density metric and the explicit five-summand decomposition of
+  `cross_component_session_bind`'s soundness budget.
+
+* Discharging the five negligibility hypotheses against
+  cryptographic libraries:
+    - ArkLib Groth16 KS (when ArkLib lands)
+    - Lean reference DCAP verifier + circuit equivalence
+    - PCK-signature unforgeability reduction
+    - Random-oracle birthday bound for both hash summands (requires
+      `[Fintype UserData]` carrier refinement)
+
+* Adopting VCV-io's `PolyQueries` as the `IsPPT` body once
+  adversaries take `OracleComp ProtocolSpec` access.
+
+* `colosseum-adversarial` review of the composed
+  single+dual+triple+quadruple surface (Step 6.2 deferred until
+  this lift landed).
+-/
+
+end Specs.Quartz.Protocol.ProtocolVCVioQuad

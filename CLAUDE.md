@@ -2,6 +2,16 @@
 
 Fork of informalsystems/cycles-quartz, modernized for dstack TDX + zkdcap + Xion.
 
+## Current priority
+
+Refactoring `proofs/lean/Specs/Quartz/Crypto/*` and `Specs/Quartz/Attestation/*` axioms onto VCVio's `OracleComp` framework. Goal: shrink the cryptographic trust boundary from 40 axioms to ~11 (per-module breakdown in the plan).
+
+- **Plan**: `.colosseum/refactor-plan-vcvio.md` (read this first)
+- **Methodology**: run one `colosseum-change` cycle per module, sequenced Ecies → UserDataCommit → RawMessages → Dstack → Zkdcap, then re-prove the protocol layer on the new substrate
+- **Stop condition**: each module is independently shippable. Stop after each module re-proves cleanly so the human can review before moving to the next.
+- **First step**: add VCV-io to `proofs/lean/lakefile.lean`, run `lake update && lake build`, confirm the dependency resolves before any theorem changes
+- **Background**: see `.colosseum/attacks/temporal_zk_accept_requires_vkey-multimodel-2026-05-12T16-38-48Z/synthesis.md` for the most recent adversarial review of the Quint spec layer (separate work; not blocked by this refactor)
+
 ## Build
 
 ```bash
