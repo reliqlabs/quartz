@@ -186,6 +186,68 @@ def handshakeSoundnessGame (adv : HandshakeSoundAdvantage) :
     SecurityGame HandshakeSoundAdv where
   advantage := adv
 
+/-! ## Content-bearing advantage definitions (Cycle 6.5 — Round A fix)
+
+Same shape as cycle 6.4 for `verifyGroth16_yields_decoded_negl`.
+Round A established the prior `handshake_sound_negl` was content-free:
+`handshakeFailAdv` was a free `ℝ≥0∞`-valued function symbol, both
+summand advantages were `Type`-only aliases, and the `h_bound` was a
+caller-supplied hypothesis.
+
+**Bundling correction (Round A-adjacent finding)**: the classical
+`handshake_sound` at `Handshake.lean:64` uses ONLY `verifyGroth16_sound`
+in its proof (witness quote is `inputs_to_quote h.inputs`; `mrEnclaveOf`
+and `userDataOf` equalities come directly from `Accepted h`; `tdxVerifier`
+is not consumed). The prior dual-bundle decomposition was over-bundled
+relative to the actual axiom usage. Cycle 6.5 corrects this by lifting
+`handshake_sound_negl` as a **single-bundle** Groth16-only reduction.
+`TdxVerifierSoundAdvantage` is retained at the module level for the
+downstream lifts that DO consume `tdxVerifier.complete`, but is no
+longer threaded through this lift's hypotheses.
+
+The `handshakeFail_secure_of_dual_bundle_secure` and
+`handshakeSoundnessGame_secure_of_dual_bundle_secure` packagings below
+remain dual-bundle in shape because they are generic over arbitrary
+`SecurityExp` / `SecurityGame` summand decompositions — a caller who
+wants to bound `handshakeFailExp.advantage` by a sum of two terms can
+still do so, the second summand being optionally zero.
+-/
+
+/-- **Win predicate for the handshake-soundness game**: the contract
+    accepts the handshake check, but there is no dstack-signed
+    `TdxQuote` with matching `mrEnclaveOf` and `userDataOf` projections. -/
+def handshakeSoundnessWinPred (h : HandshakeCheck) : Prop :=
+  Accepted h ∧
+  ¬ ∃ q : TdxQuote,
+    was_signed_by_dstack q ∧
+    mrEnclaveOf q = some h.expectedMr ∧
+    userDataOf q  = some h.msgUserData
+
+/-- **Reduction**: from a handshake-soundness adversary, construct a
+    Groth16-soundness adversary by projecting the candidate
+    `HandshakeCheck`'s `(proof, inputs)` pair. The classical proof of
+    `handshake_sound` shows this projection witnesses a Groth16
+    soundness break whenever the handshake-soundness adversary wins. -/
+def reduce_handshake_to_groth (𝒜 : HandshakeSoundAdv) : Groth16SoundAdv :=
+  fun n => do let h ← 𝒜 n; pure (h.proof, h.inputs)
+
+/-- **Content-bearing advantage** for the handshake-soundness game: the
+    probability that the adversary's `HandshakeCheck` output causes the
+    contract to accept under a quote that is not dstack-signed. -/
+noncomputable def handshakeFailAdv (𝒜 : HandshakeSoundAdv) (n : ℕ) : ℝ≥0∞ :=
+  Pr[ handshakeSoundnessWinPred | 𝒜 n ]
+
+/-- Forward implication: a handshake-soundness win on `h` implies a
+    Groth16-soundness win on the projected `(h.proof, h.inputs)`. -/
+theorem handshakeSoundnessWinPred_imp_groth16SoundnessWinPred_projected
+    (h : HandshakeCheck) (hp : handshakeSoundnessWinPred h) :
+    groth16SoundnessWinPred (h.proof, h.inputs) := by
+  obtain ⟨⟨hZk, hMr, hUd⟩, h_neg⟩ := hp
+  refine ⟨hZk, ?_⟩
+  intro h_signed
+  apply h_neg
+  exact ⟨inputs_to_quote h.inputs, h_signed, hMr, hUd⟩
+
 /-! ## Dual-bundle lifted theorem: `handshake_sound_negl` -/
 
 /-- **Classical form (preserved as a corollary)**: `handshake_sound`.
@@ -203,56 +265,57 @@ theorem handshake_sound_classical (h : HandshakeCheck) (acc : Accepted h) :
       userDataOf q  = some h.msgUserData :=
   handshake_sound h acc
 
-/-- **Probabilistic form (the Step 6.1 dual-bundle lift)**:
+/-- **Probabilistic form (Step 6.1 lift, Cycle-6.5-corrected)**:
     `handshake_sound_negl`.
 
     Given:
 
     * a handshake-soundness adversary `𝒜 : HandshakeSoundAdv`,
-    * a handshake-soundness advantage `handshakeFailAdv`,
-    * Groth16 and TDX-verifier soundness advantages
-      `groth16Adv`, `tdxAdv`,
-    * a pointwise union bound:
+    * a negligibility assumption on the Groth16 soundness-win event
+      under the projected adversary
+      `reduce_handshake_to_groth 𝒜`:
+      `h_groth_negl : negligible (groth16SoundnessAdv (reduce_handshake_to_groth 𝒜))`,
 
-          handshakeFailAdv 𝒜 n ≤ groth16Adv 𝒜_groth n + tdxAdv 𝒜_tdx n
+    Then `negligible (handshakeFailAdv 𝒜)`.
 
-      for adversaries `𝒜_groth`, `𝒜_tdx` derived from `𝒜`,
-    * a project-PPT-class hypothesis on `𝒜`,
-    * negligibility of each summand,
+    **Cycle 6.5 correction notes** (Round A response):
 
-    Then `handshakeFailAdv 𝒜` is negligible.
-
-    **Proof structure**: real reduction-based proof using
-    `negligible_of_le` + `negligible_add`. The two summands are
-    closed under sum (`negligible_add`); the pointwise bound
-    delivers the union-bound monotonicity (`negligible_of_le`).
-
-    **Honesty**: the proof is *parametric* over the two
-    soundness advantages and the reduction
-    (`𝒜 ↦ (𝒜_groth, 𝒜_tdx)`). Discharging them requires:
-
-    1. Concrete reductions to ArkLib Groth16 KS (cryptographic).
-    2. A PCK-signature unforgeability reduction (cryptographic).
-    3. A `[Fintype]`-instantiable carrier refinement
-       (software-verification).
-
-    None are discharged here — they are *what future work would
-    provide*, made explicit as hypotheses. The lift demonstrates
-    the dual-bundle composition pattern that Steps 6.2 / 6.3
-    will scale to triple and quadruple bundles. -/
+    - `handshakeFailAdv` is now a `def` over `Pr[handshakeSoundnessWinPred | …]`,
+      not a free function symbol. Cannot be instantiated to `0`.
+    - The reduction `reduce_handshake_to_groth` is a `def` (not a free
+      parameter), so the bundle adversary is provably derived from the
+      main adversary — closes Round A attack #3 for this lift.
+    - The pointwise bound is proven via `probEvent_mono` +
+      `probEvent_bind_pure_comp`, not assumed via `h_bound`.
+    - **Bundling**: single-bundle (Groth16-only), matching the
+      classical `handshake_sound` proof's actual axiom consumption.
+      The prior dual-bundle decomposition was over-bundled; see the
+      Content-bearing advantage definitions section above.
+    - The remaining hypothesis `h_groth_negl` is the substantive
+      cryptographic assumption — Groth16 KS over the deployed
+      verifier — which ArkLib + circuit-equivalence would discharge. -/
 theorem handshake_sound_negl
     (𝒜 : HandshakeSoundAdv)
-    (𝒜_groth : Groth16SoundAdv)
-    (𝒜_tdx : TdxVerifierSoundAdv)
-    (handshakeFailAdv : HandshakeSoundAdv → ℕ → ℝ≥0∞)
-    (groth16Adv : Groth16SoundAdvantage)
-    (tdxAdv : TdxVerifierSoundAdvantage)
-    (h_bound : ∀ n,
-      handshakeFailAdv 𝒜 n ≤ groth16Adv 𝒜_groth n + tdxAdv 𝒜_tdx n)
-    (h_groth_negl : negligible (groth16Adv 𝒜_groth))
-    (h_tdx_negl : negligible (tdxAdv 𝒜_tdx)) :
-    negligible (handshakeFailAdv 𝒜) :=
-  negligible_of_le h_bound (negligible_add h_groth_negl h_tdx_negl)
+    (h_groth_negl :
+      negligible (groth16SoundnessAdv (reduce_handshake_to_groth 𝒜))) :
+    negligible (handshakeFailAdv 𝒜) := by
+  refine negligible_of_le ?_ h_groth_negl
+  intro n
+  -- Goal: handshakeFailAdv 𝒜 n ≤ groth16SoundnessAdv (reduce_handshake_to_groth 𝒜) n
+  -- Unfold both sides to Pr[…]; the RHS equals the LHS-projected probability
+  -- via `probEvent_bind_pure_comp`.
+  show Pr[ handshakeSoundnessWinPred | 𝒜 n ] ≤
+       Pr[ groth16SoundnessWinPred | reduce_handshake_to_groth 𝒜 n ]
+  -- Rewrite the RHS using probEvent_bind_pure_comp:
+  --   reduce_handshake_to_groth 𝒜 n = 𝒜 n >>= pure ∘ (fun h => (h.proof, h.inputs))
+  -- so Pr[g | rhs] = Pr[g ∘ (fun h => (h.proof, h.inputs)) | 𝒜 n].
+  rw [show reduce_handshake_to_groth 𝒜 n
+        = 𝒜 n >>= pure ∘ (fun h : HandshakeCheck => (h.proof, h.inputs))
+        from rfl,
+      probEvent_bind_pure_comp]
+  -- LHS ≤ RHS by probEvent_mono using the forward implication.
+  exact probEvent_mono (fun h _ hp =>
+    handshakeSoundnessWinPred_imp_groth16SoundnessWinPred_projected h hp)
 
 /-- **Convenience packaging**: the lifted dual-bundle theorem
     expressed via VCV-io's `SecurityExp` reduction shape.
