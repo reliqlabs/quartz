@@ -168,9 +168,47 @@ module handshake {
   // Precondition: CONFIG not yet saved (enforced by being first msg)
   // ============================================================
 
-  /// Honest instantiate: enclave attests with correct compose_hash
-  action instantiate(msg_mr_enclave: ComposeHash, att_compose_hash: ComposeHash): bool = {
-    if (contract.config_set) {
+  /// Honest instantiate: enclave attests with correct compose_hash.
+  ///
+  /// **Round C 2026-05-14 Claude #2 fix**: now also models the outer
+  /// `Attested<M,A>::handle` wrapper's user_data check at
+  /// `crates/contracts/core/src/handler/execute/attested.rs:179-181`.
+  /// That wrapper rejects on `UserDataMismatch` UNCONDITIONALLY
+  /// (before the inner `Instantiate<A>::handle` runs). The wrapper's
+  /// mr_enclave check is conditionally skipped at instantiate because
+  /// CONFIG is not yet saved (`CONFIG.may_load` returns None), but
+  /// the user_data check still runs. Prior to this fix the Quint
+  /// `instantiate` action took no `msg_hash`/`att_user_data`
+  /// parameters and silently accepted attestations where they
+  /// differed — divergence from the Rust wrapper that Apalache
+  /// could not catch because the parameters were absent.
+  action instantiate(
+    msg_mr_enclave: ComposeHash,
+    att_compose_hash: ComposeHash,
+    msg_hash: Hash,
+    att_user_data: Hash
+  ): bool = {
+    if (msg_hash != att_user_data) {
+      // Attested<M,A>::handle line 179: msg.user_data() != attestation.user_data()
+      // returns Error::UserDataMismatch. Runs *before* CONFIG.may_load,
+      // so it fires even at instantiate time.
+      all {
+        last_result' = ErrUserDataMismatch,
+        contract' = contract,
+        enclave' = enclave,
+        last_action' = ActInstantiate,
+        last_msg_hash' = msg_hash,
+        last_att_user_data' = att_user_data,
+        last_att_compose_hash' = att_compose_hash,
+        last_msg_contract' = last_msg_contract,
+        last_nonce' = last_nonce,
+        prev_session' = contract.session,
+        prev_session_nonce' = contract.session_nonce,
+        prev_session_pubkey' = contract.session_pubkey,
+        prev_config_set' = contract.config_set,
+        prev_config_mr_enclave' = contract.config_mr_enclave,
+      }
+    } else if (contract.config_set) {
       // Config already set — in real code, this would be a different
       // contract call (execute, not instantiate), but we model the guard
       all {
@@ -178,8 +216,8 @@ module handshake {
         contract' = contract,
         enclave' = enclave,
         last_action' = ActInstantiate,
-        last_msg_hash' = last_msg_hash,
-        last_att_user_data' = last_att_user_data,
+        last_msg_hash' = msg_hash,
+        last_att_user_data' = att_user_data,
         last_att_compose_hash' = att_compose_hash,
         last_msg_contract' = last_msg_contract,
         last_nonce' = last_nonce,
@@ -197,8 +235,8 @@ module handshake {
         contract' = contract,
         enclave' = enclave,
         last_action' = ActInstantiate,
-        last_msg_hash' = last_msg_hash,
-        last_att_user_data' = last_att_user_data,
+        last_msg_hash' = msg_hash,
+        last_att_user_data' = att_user_data,
         last_att_compose_hash' = att_compose_hash,
         last_msg_contract' = last_msg_contract,
         last_nonce' = last_nonce,
@@ -216,8 +254,8 @@ module handshake {
         contract' = contract,
         enclave' = enclave,
         last_action' = ActInstantiate,
-        last_msg_hash' = last_msg_hash,
-        last_att_user_data' = last_att_user_data,
+        last_msg_hash' = msg_hash,
+        last_att_user_data' = att_user_data,
         last_att_compose_hash' = att_compose_hash,
         last_msg_contract' = last_msg_contract,
         last_nonce' = last_nonce,
@@ -238,8 +276,8 @@ module handshake {
         },
         enclave' = enclave,
         last_action' = ActInstantiate,
-        last_msg_hash' = last_msg_hash,
-        last_att_user_data' = last_att_user_data,
+        last_msg_hash' = msg_hash,
+        last_att_user_data' = att_user_data,
         last_att_compose_hash' = att_compose_hash,
         last_msg_contract' = last_msg_contract,
         last_nonce' = last_nonce,
@@ -660,7 +698,7 @@ module handshake {
     nondet msg_hash = oneOf(Set(VALID_HASH, WRONG_HASH))
     nondet att_user_data = oneOf(Set(VALID_HASH, WRONG_HASH))
     any {
-      instantiate(mr_enclave, att_compose),
+      instantiate(mr_enclave, att_compose, msg_hash, att_user_data),
       session_create(nonce, msg_contract, att_compose, msg_hash, att_user_data),
       session_set_pubkey(nonce, pubkey, att_compose, msg_hash, att_user_data),
       send_attested_message(att_compose, msg_hash, att_user_data),
@@ -733,9 +771,14 @@ module handshake {
   /// P8: User data mismatch always produces an error.
   /// State check: if the last verify-flow action succeeded, the
   /// recorded msg_hash and att_user_data must have matched.
+  ///
+  /// **Round C 2026-05-14 Claude #2**: `ActInstantiate` added to
+  /// the disjunction now that `instantiate` models the
+  /// Attested-wrapper user_data check (see action definition).
   val inv_user_data_checked: bool = {
     if (last_result == Ok and
-        (last_action == ActSessionCreate or
+        (last_action == ActInstantiate or
+         last_action == ActSessionCreate or
          last_action == ActSetPubkey or
          last_action == ActAttestedMsg))
       last_msg_hash == last_att_user_data
@@ -832,7 +875,8 @@ module handshake {
   /// Temporal mirror of P8 (`inv_user_data_checked`).
   temporal temporal_user_data_checked = always(
     ((next(last_result) == Ok) and
-     ((next(last_action) == ActSessionCreate) or
+     ((next(last_action) == ActInstantiate) or
+      (next(last_action) == ActSessionCreate) or
       (next(last_action) == ActSetPubkey) or
       (next(last_action) == ActAttestedMsg)))
     implies next(last_msg_hash) == next(last_att_user_data)
