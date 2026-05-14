@@ -291,113 +291,130 @@ theorem cross_component_session_bind_classical
       (∀ msg : Plaintext, decrypt sk (encrypt raw.pubKey msg) = some msg) :=
   cross_component_session_bind h acc raw h_raw sk h_sk
 
-/-- **Probabilistic form (the Step 6.3 quadruple-bundle lift —
-    FIVE-summand union bound)**:
-    `cross_component_session_bind_negl`.
+/-! ### Cycle-6.11 framing (terminal lift)
 
-    The load-bearing methodology target of the entire Step 6 lift.
+Per Round A's specific concern, the terminal lift is the place where
+disjunction-decomposition discipline matters. The cycle-6.4-through-
+6.10 pattern showed every intermediate lift over-bundled relative to
+its classical proof's actual axiom consumption. The terminal lift is
+analyzed the same way:
 
-    Given:
+Classical `cross_component_session_bind` (`CrossComponent.lean:92-109`)
+proves a 5-conjunct conclusion. The conjuncts and their failure modes:
 
-    * a cross-component-session-bind attack adversary
-      `𝒜 : CrossSessionBindAdv`,
-    * the corresponding fail advantage `bindFailAdv`,
-    * **FIVE** soundness advantages, one per cryptographic
-      assumption:
-        - `groth16KSAdv` — Groth16 knowledge soundness over BN254,
-        - `circuitEqAdv` — zkdcap R1CS ≡ reference DCAP verifier,
-        - `tdxAdv` — DCAP / PCK-signature unforgeability,
-        - `hashAdv` — `commitHashE` collision resistance,
-        - `hashBAdv` — `commitHashBytesE` collision resistance,
-    * a pointwise FIVE-summand union bound:
+  P1 `was_signed_by_dstack q`                     — Groth16-soundness break
+  P2 `mrEnclaveOf q = some h.expectedMr`         — derived from Accepted, no axiom
+  P3 `userDataOf q = some h.msgUserData`         — derived from Accepted, no axiom
+  P4 `pkOfUserData h.msgUserData = some raw.pubKey`
+                                                 — UNCONDITIONAL via
+                                                   `userData_session_set_pub_key_binds_ecies`
+                                                   (consumes commitHashE in
+                                                   closure but no probabilistic
+                                                   failure event in current
+                                                   carrier model)
+  P5 `∀ msg, decrypt sk (encrypt raw.pubKey msg) = some msg`
+                                                 — UNCONDITIONAL via `roundtrip`
+                                                   (derived theorem, no axiom)
 
-          bindFailAdv 𝒜 n
-            ≤ groth16KSAdv 𝒜_groth_ks n
-            + circuitEqAdv 𝒜_circuit n
-            + tdxAdv       𝒜_tdx n
-            + hashAdv      𝒜_hash n
-            + hashBAdv     𝒜_hashB n
+Net: only P1 has a real probabilistic failure event. The terminal lift
+is therefore single-bundle (Groth16) under the current spec abstraction,
+same as cycles 6.5/6.6/6.9/6.10. The 5-summand union bound in the prior
+formulation was over-bundled.
 
-    * negligibility of EACH of the five summands,
+**On Round A's disjunction-decomposition concern**: the original
+finding observed that the terminal lift's 5-summand union bound made
+the bundle visible but didn't tie each summand to a concrete win
+predicate. The cycle-6.11 correction makes the lift HONEST about
+which summands are real probabilistic-failure modes vs. which were
+cosmetic Type-aliases. The terminal lift now has **one real failure
+mode (Groth16)** and the other 4 are commitHashE / TDX / ECIES /
+commitHashBytesE *axioms consumed unconditionally* — present in the
+classical-proof closure but not lifted to probabilistic hypotheses
+in the current carrier model. This is the correct framing per the
+Round A v0.2 ask 4 strengthening criteria: each disjunct must be
+tied to a concrete win predicate, OR explicitly downgraded to "axiom
+consumed in classical proof, not probabilistic in this lift". -/
 
-    Then `bindFailAdv 𝒜` is negligible.
+/-- **Win predicate**: hypotheses hold but the cross-component
+    conclusion fails. -/
+def crossSessionBindWinPred
+    (p : HandshakeCheck × RawSessionSetPubKey × PrivKey × Plaintext) : Prop :=
+  let (h, raw, sk, _) := p
+  Accepted h ∧
+  h.msgUserData = userDataOfSessionSetPubKey raw ∧
+  keyOf sk = raw.pubKey ∧
+  ¬ ∃ q : TdxQuote,
+      was_signed_by_dstack q ∧
+      mrEnclaveOf q = some h.expectedMr ∧
+      userDataOf q = some h.msgUserData ∧
+      pkOfUserData h.msgUserData = some raw.pubKey ∧
+      (∀ msg : Plaintext, decrypt sk (encrypt raw.pubKey msg) = some msg)
 
-    **Proof structure**: real reduction-based proof using
-    `negligible_of_le` + four chained `negligible_add` applications,
-    left-associated:
+/-- **Reduction** to Groth16-soundness adversary. -/
+def reduce_crossSessionBind_to_groth
+    (𝒜 : CrossSessionBindAdv) : Groth16SoundAdv :=
+  fun n => do let p ← 𝒜 n; pure (p.1.proof, p.1.inputs)
 
-        negligible_of_le h_bound
-          (negligible_add
-            (negligible_add
-              (negligible_add
-                (negligible_add h_groth_ks h_circuit)
-                h_tdx)
-              h_hash)
-            h_hashB)
+/-- **Content-bearing failure advantage**. -/
+noncomputable def bindFailAdv
+    (𝒜 : CrossSessionBindAdv) (n : ℕ) : ℝ≥0∞ :=
+  Pr[ crossSessionBindWinPred | 𝒜 n ]
 
-    The Step 6.1 / 6.2 union-bound pattern scales mechanically to
-    five summands: each new summand adds one `negligible_add` step.
+/-- Forward implication: a cross-component-bind win implies a Groth16
+    soundness break on the projected `(h.proof, h.inputs)`. The proof
+    discharges P4 and P5 unconditionally via
+    `userData_session_set_pub_key_binds_ecies` (after `h_raw` rewrite)
+    and `roundtrip` (after `h_sk` rewrite) respectively, then derives
+    the Groth16 break from the remaining ¬∃ q. -/
+theorem crossSessionBindWinPred_imp_groth16SoundnessWinPred_projected
+    (p : HandshakeCheck × RawSessionSetPubKey × PrivKey × Plaintext)
+    (hp : crossSessionBindWinPred p) :
+    groth16SoundnessWinPred (p.1.proof, p.1.inputs) := by
+  obtain ⟨⟨hZk, hMr, hUd⟩, h_raw, h_sk, h_neg⟩ := hp
+  refine ⟨hZk, ?_⟩
+  intro h_signed
+  apply h_neg
+  refine ⟨inputs_to_quote p.1.inputs, h_signed, hMr, hUd, ?_, ?_⟩
+  · rw [h_raw]
+    exact userData_session_set_pub_key_binds_ecies p.2.1
+  · intro msg
+    rw [← h_sk]
+    exact roundtrip p.2.2.1 msg
 
-    **Honesty (the Step 5 doubled-negligibility finding made
-    visible)**: this lift is the methodology-level fulfilment of
-    Step 5's (d)-bucket "doubled-negligibility" surfacing. The
-    triple-bundle lifts of Step 6.2 could afford a monolithic
-    `Groth16SoundAdv` because they didn't reach the load-bearing
-    composition that exercises BOTH halves of the
-    `groth16Verifier` soundness assumption. Step 6.3 is where the
-    decomposition becomes load-bearing — `cross_component_session_bind`
-    is the cross-component theorem whose downstream is the entire
-    Quartz protocol-layer trust statement, so both halves of the
-    `groth16Verifier` soundness assumption end up in the audit
-    surface.
+/-- **Probabilistic form (Step 6.3 lift, Cycle-6.11-corrected)**:
+    `cross_component_session_bind_negl`. **Terminal lift.**
 
-    Discharging the underlying negligibility hypotheses requires:
+    Was: 12 free parameters, 5 free advantages, 5 independent
+    negligibility hypotheses, no reduction relating the 6 free
+    adversaries.
 
-    1. ArkLib Groth16 KS coverage (cryptographic).
-    2. A Lean reference DCAP verifier + circuit-equivalence theorem
-       against the zkdcap R1CS encoding (software-verification).
-    3. PCK-signature unforgeability reduction (cryptographic).
-    4. Collision resistance of the concrete hash function that
-       `commitHashE` abstracts over (cryptographic — random-oracle
-       birthday bound).
-    5. Collision resistance of the concrete hash function that
-       `commitHashBytesE` abstracts over (cryptographic — same
-       shape).
+    Now: 1 adversary + 1 Groth16-negligibility hypothesis on the
+    *derived* adversary, bound proven internally via `probEvent_mono`
+    + `probEvent_bind_pure_comp` + the explicit forward implication.
 
-    None are discharged here — the lift demonstrates the
-    five-summand composition pattern, which is the final scaling
-    step of the Step 6 lift sequence. -/
+    Bundle correction: 5-summand → single (Groth16-only). See the
+    section docstring above for the per-conjunct analysis. Round A
+    attacks #1, #2, #3, #11 are structurally closed; the
+    disjunction-decomposition concern (#4) is addressed by explicit
+    documentation of which axioms are probabilistic vs.
+    unconditionally-consumed in the current carrier model. -/
 theorem cross_component_session_bind_negl
     (𝒜 : CrossSessionBindAdv)
-    (𝒜_groth_ks : Groth16KSAdv)
-    (𝒜_circuit : CircuitEqAdv)
-    (𝒜_tdx : TdxVerifierSoundAdv)
-    (𝒜_hash : CommitHashCollisionAdv)
-    (𝒜_hashB : CommitHashBytesCollisionAdv)
-    (bindFailAdv : CrossSessionBindAdv → ℕ → ℝ≥0∞)
-    (groth16KSAdv : Groth16KSAdvantage)
-    (circuitEqAdv : CircuitEqAdvantage)
-    (tdxAdv : TdxVerifierSoundAdvantage)
-    (hashAdv : CommitHashCollisionAdvantage)
-    (hashBAdv : CommitHashBytesCollisionAdvantage)
-    (h_bound : ∀ n,
-      bindFailAdv 𝒜 n ≤
-        groth16KSAdv 𝒜_groth_ks n + circuitEqAdv 𝒜_circuit n +
-        tdxAdv 𝒜_tdx n + hashAdv 𝒜_hash n + hashBAdv 𝒜_hashB n)
-    (h_groth_ks_negl : negligible (groth16KSAdv 𝒜_groth_ks))
-    (h_circuit_negl  : negligible (circuitEqAdv 𝒜_circuit))
-    (h_tdx_negl      : negligible (tdxAdv 𝒜_tdx))
-    (h_hash_negl     : negligible (hashAdv 𝒜_hash))
-    (h_hashB_negl    : negligible (hashBAdv 𝒜_hashB)) :
-    negligible (bindFailAdv 𝒜) :=
-  negligible_of_le h_bound
-    (negligible_add
-      (negligible_add
-        (negligible_add
-          (negligible_add h_groth_ks_negl h_circuit_negl)
-          h_tdx_negl)
-        h_hash_negl)
-      h_hashB_negl)
+    (h_groth_negl :
+      negligible (groth16SoundnessAdv (reduce_crossSessionBind_to_groth 𝒜))) :
+    negligible (bindFailAdv 𝒜) := by
+  refine negligible_of_le ?_ h_groth_negl
+  intro n
+  show Pr[ crossSessionBindWinPred | 𝒜 n ] ≤
+       Pr[ groth16SoundnessWinPred | reduce_crossSessionBind_to_groth 𝒜 n ]
+  rw [show reduce_crossSessionBind_to_groth 𝒜 n
+        = 𝒜 n >>= pure ∘
+            (fun p : HandshakeCheck × RawSessionSetPubKey × PrivKey × Plaintext =>
+              (p.1.proof, p.1.inputs))
+        from rfl,
+      probEvent_bind_pure_comp]
+  exact probEvent_mono (fun p _ hp =>
+    crossSessionBindWinPred_imp_groth16SoundnessWinPred_projected p hp)
 
 /-- **Convenience packaging** for `cross_component_session_bind_negl`
     via `SecurityExp` — the asymptotic security-experiment form.
