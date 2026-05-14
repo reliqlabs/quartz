@@ -203,13 +203,20 @@ module auction {
     last_auction_end' = last_auction_end,
   }
 
-  /// Bidding window has elapsed but the enclave has not yet posted an
-  /// attested resolution. Mirrors `AuctionPhase::Resolving` on-chain:
-  /// the contract reserves this variant as a legitimate input state to
-  /// `exec_resolve` (see the `phase != Bidding && phase != Resolving`
-  /// guard in `contract.rs::exec_resolve`). Anyone can flip the phase
-  /// once the deadline is past — it is a pure observable, not an
-  /// admin-gated transition.
+  /// **Off-chain orchestration step**: an external admin/relayer flips
+  /// the on-chain phase from `Bidding` to `Resolving` once the deadline
+  /// has passed. The contract's `exec_resolve` accepts `Bidding |
+  /// Resolving` as input phases (see the `phase != Bidding && phase
+  /// != Resolving` guard at `contract.rs::exec_resolve`), but no execute
+  /// branch in `contract.rs` writes `Resolving` — this action models
+  /// the external transition that does. The prior docstring claimed
+  /// "anyone can flip the phase ... pure observable, not an admin-gated
+  /// transition" — this was misleading: the contract has no on-chain
+  /// path into `Resolving` at all. The action remains as a *model* of
+  /// the orchestration step the deployment relies on; if/when the
+  /// contract gains a real `exec_close_bidding` branch, this can be
+  /// re-aligned. (Round B 2026-05-14 adversarial finding; see
+  /// `.colosseum/attacks/quint-recently-revised-2026-05-14/`.)
   action close_bidding: bool = all {
     contract.phase == Bidding,
     block_time >= contract.auction_end,

@@ -442,6 +442,67 @@ def groth16SoundnessGame (adv : Groth16SoundAdvantage) :
     SecurityGame Groth16SoundAdv where
   advantage := adv
 
+/-! ## Content-bearing advantage definitions (Cycle 6.4 — Round A fix)
+
+Round A adversarial review (`.colosseum/attacks/lean-negl-lifts-2026-05-14/`)
+established that the prior form of `verifyGroth16_yields_decoded_negl` was
+content-free: its `protocolFailAdv` was a free `ℝ≥0∞`-valued function symbol
+with no tie to the actual protocol-fail event, making the theorem reducible
+to `negligible_of_le` + `negligible_add` closure properties of `negligible`.
+
+The defs below replace the free symbols with `Pr[…]`-based probability events
+over the adversary's `ProbComp` output. The bound is now *proven* (not
+assumed) via `probEvent_mono` and the classical implication
+`verifyTdxQuote_complete : was_signed_by_dstack q → ∃ mr ud, verifyTdxQuote q = some (mr, ud)`.
+
+The Type-alias `Groth16SoundAdvantage` is retained for backwards-compatibility
+with cycles 6.5–6.11 (downstream lifts in `ProtocolVCVio{Dual,Triple,Quad}.lean`
+parametrise their `groth16Adv` argument over it). Those cycles will replace
+the Type-alias with content-bearing defs analogous to those below.
+-/
+
+/-- **Win predicate for the Groth16 soundness game.** A candidate
+    `(proof, inputs)` pair "wins" the soundness game when the verifier
+    accepts but the associated TDX quote is not actually signed by dstack.
+    This is the event whose probability the cryptographic-assumption layer
+    is supposed to bound. -/
+def groth16SoundnessWinPred (p : Groth16Proof × PublicInputs) : Prop :=
+  verifyGroth16 zkdcapVKey p.1 p.2 = true ∧
+  ¬ was_signed_by_dstack (inputs_to_quote p.2)
+
+/-- **Protocol-fail predicate**: the verifier accepts but the TDX quote
+    does not decode (no `(mr, ud)` is recovered). This is the event whose
+    probability `verifyGroth16_yields_decoded_negl` bounds. -/
+def verifyGroth16FailPred (p : Groth16Proof × PublicInputs) : Prop :=
+  verifyGroth16 zkdcapVKey p.1 p.2 = true ∧
+  ¬ ∃ mr ud, verifyTdxQuote (inputs_to_quote p.2) = some (mr, ud)
+
+/-- **Content-bearing advantage** for the Groth16 soundness game: the
+    probability that the adversary's `(proof, inputs)` output causes the
+    verifier to accept on an un-signed quote. This is a `def`, not a
+    `Type`-only alias — the body mentions `verifyGroth16`, `zkdcapVKey`,
+    `was_signed_by_dstack`, and `inputs_to_quote`, so an external auditor
+    can read off exactly which cryptographic event is being bounded. -/
+noncomputable def groth16SoundnessAdv (𝒜 : Groth16SoundAdv) (n : ℕ) : ℝ≥0∞ :=
+  Pr[ groth16SoundnessWinPred | 𝒜 n ]
+
+/-- **Content-bearing advantage** for the protocol-fail event: the
+    probability that the adversary's `(proof, inputs)` output causes the
+    verifier to accept on a quote that does not decode. -/
+noncomputable def verifyGroth16FailAdv (𝒜 : Groth16SoundAdv) (n : ℕ) : ℝ≥0∞ :=
+  Pr[ verifyGroth16FailPred | 𝒜 n ]
+
+/-- The protocol-fail event implies the Groth16 soundness-win event:
+    if the verifier accepts but no `(mr, ud)` is decoded, then the quote
+    cannot have been signed by dstack (because `tdxVerifier.complete`
+    would otherwise produce the decoding). This is the pointwise
+    implication that the Round A-corrected `verifyGroth16_yields_decoded_negl`
+    closes over via `probEvent_mono`. -/
+theorem verifyGroth16FailPred_imp_groth16SoundnessWinPred
+    (p : Groth16Proof × PublicInputs)
+    (h : verifyGroth16FailPred p) : groth16SoundnessWinPred p :=
+  ⟨h.1, fun h_signed => h.2 (verifyTdxQuote_complete _ h_signed)⟩
+
 /-! ## Lifted protocol theorem: `verifyGroth16_yields_decoded_negl`
 
 The classical-`Prop` form of `verifyGroth16_yields_decoded`
@@ -489,58 +550,50 @@ theorem verifyGroth16_yields_decoded_classical
     ∃ mr ud, verifyTdxQuote (inputs_to_quote inputs) = some (mr, ud) :=
   verifyGroth16_yields_decoded proof inputs h
 
-/-- **Probabilistic form (the Step 6.0 lift)**:
+/-- **Probabilistic form (the Step 6.0 lift, Cycle-6.4-corrected)**:
     `verifyGroth16_yields_decoded_negl`.
 
     Given:
 
     * an adversary `𝒜 : Groth16SoundAdv` that outputs a candidate
       `(proof, inputs)` pair,
-    * an advantage function `adv : Groth16SoundAdvantage` modelling
-      the Groth16 soundness game,
-    * a negligibility assumption on the advantage:
-      `h_negl : negligible (adv 𝒜)`,
+    * a negligibility assumption on the Groth16 soundness-win event
+      under `𝒜`: `h_negl : negligible (groth16SoundnessAdv 𝒜)`,
 
-    Then there exists a "protocol-fail" advantage function for the
-    event
+    Then the protocol-fail event — `verifier accepts ∧ ¬ ∃ mr ud,
+    verifyTdxQuote (inputs_to_quote inputs) = some (mr, ud)` — is also
+    negligible under `𝒜`: `negligible (verifyGroth16FailAdv 𝒜)`.
 
-        verifyGroth16 zkdcapVKey proof inputs = true ∧
-        ¬ ∃ mr ud, verifyTdxQuote (inputs_to_quote inputs) = some (mr, ud)
+    **Cycle 6.4 correction notes** (Round A response):
 
-    bounded pointwise by `adv 𝒜`, and therefore also negligible.
+    - The advantage and the protocol-fail advantage are now `def`s
+      (`groth16SoundnessAdv`, `verifyGroth16FailAdv`) over `Pr[…]`
+      events, not free `ℝ≥0∞`-valued function symbols. The user can no
+      longer instantiate them to `fun _ _ => 0` and trivialize the
+      conclusion.
+    - The pointwise bound is *proven* (not assumed) via
+      `probEvent_mono` + `verifyGroth16FailPred_imp_groth16SoundnessWinPred`,
+      the latter resting on `verifyTdxQuote_complete` (which is itself
+      a projection of the bundled `tdxVerifier` axiom). The hypothesis
+      list shrinks from three parameters (`adv`, `protocolFailAdv`,
+      `h_bound`) to one (`h_negl`).
+    - The remaining hypothesis `h_negl` is the substantive cryptographic
+      assumption — that the actual Groth16 verifier's soundness-win
+      probability is negligible — which is what ArkLib Groth16-KS
+      coverage + a Lean reference DCAP verifier would discharge.
 
-    Proof sketch: at each security parameter `n`, the protocol-fail
-    event is *implied* by the Groth16 soundness failure event (via
-    `verifyGroth16_sound` + `verifyTdxQuote_complete`). So
-    `protocolFailAdv 𝒜 n ≤ adv 𝒜 n` pointwise. Negligibility
-    closes under pointwise bounds (`negligible_of_le`).
-
-    The proof here is **real** (no `sorry`): it does not require
-    discharging the underlying Groth16 KS / circuit-equivalence
-    reductions, only the implication "Groth16 failure ⇒ protocol
-    failure", which is the *forward* direction of soundness and
-    is exactly the classical-`Prop` implication
-    `groth16Verifier.sound`.
-
-    Honesty caveat: the negligibility hypothesis `h_negl` is **not
-    discharged** in this module. Discharging it requires:
-
-    1. ArkLib Groth16 knowledge-soundness coverage for the
-       `negligible_groth16` summand. Not yet available.
-    2. A reference DCAP verifier formalised in Lean for the
-       `negligible_circuit` summand. Separate effort.
-
-    The hypothesis is what ArkLib + circuit-equivalence would
-    eventually provide. Until then, the negligibility assumption
-    remains exactly that: an *assumption* the theorem is
-    parametric over. -/
+    Proof: by `probEvent_mono` on `verifyGroth16FailPred ⇒
+    groth16SoundnessWinPred` (forward soundness via `tdxVerifier.complete`),
+    we get `verifyGroth16FailAdv 𝒜 n ≤ groth16SoundnessAdv 𝒜 n` pointwise.
+    Then `negligible_of_le` closes from `h_negl`. -/
 theorem verifyGroth16_yields_decoded_negl
-    (𝒜 : Groth16SoundAdv) (adv : Groth16SoundAdvantage)
-    (protocolFailAdv : Groth16SoundAdv → ℕ → ℝ≥0∞)
-    (h_bound : ∀ n, protocolFailAdv 𝒜 n ≤ adv 𝒜 n)
-    (h_negl : negligible (adv 𝒜)) :
-    negligible (protocolFailAdv 𝒜) :=
-  negligible_of_le h_bound h_negl
+    (𝒜 : Groth16SoundAdv)
+    (h_negl : negligible (groth16SoundnessAdv 𝒜)) :
+    negligible (verifyGroth16FailAdv 𝒜) := by
+  refine negligible_of_le ?_ h_negl
+  intro n
+  exact probEvent_mono (fun p _ hp =>
+    verifyGroth16FailPred_imp_groth16SoundnessWinPred p hp)
 
 /-- **Convenience packaging**: the lifted protocol theorem expressed
     as a `SecurityExp` (asymptotic security experiment), reducing the

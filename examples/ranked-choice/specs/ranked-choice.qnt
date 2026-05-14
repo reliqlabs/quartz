@@ -47,9 +47,17 @@ module ranked_choice {
   type Candidate = str
   type Ballot = List[Candidate]
 
+  /// Phase enum mirrors `contracts/src/state.rs::ElectionPhase`. Note
+  /// the contract never *writes* `Tallying` from any of its execute
+  /// branches: `exec_tally` accepts `Voting | Tallying` as input phases
+  /// but only writes `Complete`. `Tallying` is therefore reachable only
+  /// via off-chain orchestration (a relayer or external admin call not
+  /// modelled in `contract.rs`). The `set_tallying` action below models
+  /// this external transition explicitly; see its docstring.
   type Phase =
     | Setup
     | Voting
+    | Tallying
     | Complete
 
   /// On-chain visible state.
@@ -174,17 +182,21 @@ module ranked_choice {
   }
 
   /// Deterministic tie-break: among candidates tied for fewest votes,
-  /// eliminate the LEXICOGRAPHICALLY SMALLEST. This matches
+  /// eliminate the LEXICOGRAPHICALLY LARGEST. This matches
   /// enclave/src/request.rs lines 92-93 + 137-143: the vec is sorted
   /// `b.1.cmp(&a.1).then(a.0.cmp(&b.0))` (votes desc, then name asc),
-  /// then we scan from the back and pick the first min-vote entry —
-  /// i.e. the lexicographically smallest name among the losers.
+  /// then we scan from the back (`.iter().rev()`) and pick the first
+  /// min-vote entry — backwards through a name-ASC-sorted run yields
+  /// the lex-LARGEST name first, not the smallest. (Round B 2026-05-14
+  /// adversarial finding: prior docstring drew the wrong conclusion from
+  /// the correct intermediate step, and the spec body matched the wrong
+  /// conclusion. See `.colosseum/attacks/quint-recently-revised-2026-05-14/`.)
   pure def find_loser(counts: Candidate -> int): Candidate = {
     val min_v = counts.keys().fold(999999, (best, c) =>
       if (counts.get(c) < best) counts.get(c) else best
     )
     counts.keys().fold("", (acc, c) =>
-      if (counts.get(c) == min_v and (acc == "" or lex_lt(c, acc))) c
+      if (counts.get(c) == min_v and (acc == "" or lex_lt(acc, c))) c
       else acc
     )
   }
@@ -300,9 +312,24 @@ module ranked_choice {
     round_active' = round_active,
   }
 
-  /// Enclave runs IRV and the contract stores the result.
-  action tally: bool = all {
+  /// **Off-chain orchestration step**: an external admin/relayer flips
+  /// the on-chain phase from `Voting` to `Tallying`. The contract's
+  /// `exec_tally` accepts `Voting | Tallying` as input phases, but no
+  /// execute branch in `contract.rs` writes `Tallying` — this action
+  /// models the external transition that does. Mirror of the auction
+  /// spec's `close_bidding` (which is similarly off-chain).
+  action set_tallying: bool = all {
     contract.phase == Voting,
+    contract' = { ...contract, phase: Tallying },
+    ballots' = ballots,
+    round_active' = round_active,
+  }
+
+  /// Enclave runs IRV and the contract stores the result.
+  /// Fires from either `Voting` or `Tallying` to match `exec_tally`'s
+  /// phase guard at `contracts/src/contract.rs:160`.
+  action tally: bool = all {
+    contract.phase == Voting or contract.phase == Tallying,
     contract.ballot_count > 0,
     val result = instant_runoff(ballots, contract.candidates)
     all {
@@ -330,6 +357,7 @@ module ranked_choice {
       create_election(Set(ALICE, CAROL)),
       open_voting,
       cast_ballot(voter, ballot),
+      set_tallying,
       tally,
     }
   }
@@ -420,10 +448,11 @@ module ranked_choice {
 
   // -- Sanity guards (kept terse) ---------------------------------
 
-  /// I6 - Phase is one of the three legal values (no garbage states).
+  /// I6 - Phase is one of the four legal values (no garbage states).
   val inv_phase_well_formed: bool = {
     contract.phase == Setup or
     contract.phase == Voting or
+    contract.phase == Tallying or
     contract.phase == Complete
   }
 
