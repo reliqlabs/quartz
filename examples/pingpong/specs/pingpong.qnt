@@ -345,10 +345,36 @@ module pingpong {
   // Invariants — Protocol Security Properties
   // ============================================================
 
-  /// P1: Plaintexts are never visible to observers. The contract
-  /// only ever stores ciphertexts (encrypted to the enclave for
-  /// Ping, encrypted to the user pubkey for Pong); no plaintext
-  /// path exists.
+  /// P1: **By-construction** plaintext privacy. The contract only
+  /// ever stores ciphertexts (Ping encrypted to enclave pubkey,
+  /// Pong encrypted to user pubkey, both via ECIES per
+  /// `examples/pingpong/enclave/src/request.rs:124,136`); no
+  /// model action ever assigns a plaintext to `observer.can_see_plaintext`.
+  ///
+  /// **HONESTY CAVEAT (Round C 2026-05-14)**: this invariant is a
+  /// *sanity guard against future refactors that introduce a
+  /// plaintext-leak action*, NOT a verification of the underlying
+  /// cryptographic primitive's confidentiality. `observer.can_see_plaintext`
+  /// is initialized to `false` and has no writer; the invariant
+  /// reduces to `not(false) == true` for every reachable state.
+  /// Round C Critical Finding #1 (synthesis 2026-05-14, both arms):
+  ///
+  ///   - Verifying the *actual* plaintext-privacy property of
+  ///     ECIES requires a chosen-plaintext or chosen-ciphertext
+  ///     adversary model with oracle access — outside Quint's
+  ///     reach. The honest in-Quint refinement is an action
+  ///     `observer_attempts_decryption(ct)` that conditionally
+  ///     flips the flag based on a *modeled* leak path (e.g.,
+  ///     key reuse, malformed ciphertext rejection patterns,
+  ///     a buggy enclave that returns plaintext); the spec
+  ///     currently models no such leak path.
+  ///
+  /// The invariant retains documentary value: any future spec
+  /// extension that *does* assign plaintext to the observer
+  /// (e.g., a buggy "debug" action, a leaky reset, a Pong that
+  /// echoes plaintext rather than ciphertext) will be flagged by
+  /// Apalache. As a verification of present-day protocol secrecy,
+  /// however, this invariant is vacuous.
   val inv_plaintext_private: bool = {
     not(observer.can_see_plaintext)
   }

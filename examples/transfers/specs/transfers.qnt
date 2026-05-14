@@ -107,6 +107,9 @@ module transfers {
   // conservation-step invariants.
   var prev_total_supply: Amount
   var prev_balances: Addr -> Amount
+  // Snapshot of sequence_num before the last action, used by the
+  // strict-monotonicity invariant (Round C Gemma examples #6).
+  var prev_sequence_num: int
 
   // ============================================================
   // Constants — bounded address universe for BMC tractability
@@ -157,6 +160,7 @@ module transfers {
     last_action' = ActInit,
     prev_total_supply' = 0,
     prev_balances' = ADDRS.mapBy(_ => 0),
+    prev_sequence_num' = 0,
   }
 
   // ============================================================
@@ -186,6 +190,7 @@ module transfers {
     last_action' = ActDeposit,
     prev_total_supply' = enclave.total_supply,
     prev_balances' = enclave.balances,
+    prev_sequence_num' = contract.sequence_num,
   }
 
   /// User requests withdrawal of all their balance (public — results
@@ -209,6 +214,7 @@ module transfers {
     last_action' = ActWithdraw,
     prev_total_supply' = enclave.total_supply,
     prev_balances' = enclave.balances,
+    prev_sequence_num' = contract.sequence_num,
   }
 
   /// User submits encrypted transfer request (private). The contract
@@ -236,6 +242,7 @@ module transfers {
     last_action' = ActTransfer,
     prev_total_supply' = enclave.total_supply,
     prev_balances' = enclave.balances,
+    prev_sequence_num' = contract.sequence_num,
   }
 
   /// Apply a single deposit to enclave state. Increases the depositor's
@@ -298,6 +305,41 @@ module transfers {
   ///
   /// `op` is the enclave's decryption of the ciphertext, if any. For
   /// non-transfer requests it's ignored.
+  ///
+  /// **HONESTY CAVEAT — Round C 2026-05-14, Critical Finding #3
+  /// (both arms agree)**:
+  ///
+  /// The Rust `execute::update` at
+  /// `examples/transfers/contracts/src/contract.rs:194` calls
+  ///
+  ///     requests.drain(0..msg.quantity as usize);
+  ///
+  /// — draining `msg.quantity` items in one transaction, with
+  /// `msg.quantity` supplied by the attested UpdateMsg. The
+  /// contract has **no check** that:
+  ///   - `msg.quantity` matches the prefix length the enclave
+  ///     actually observed and processed,
+  ///   - The supplied `msg.withdrawals` list is consistent with
+  ///     the drained prefix (e.g., a compromised enclave with
+  ///     valid attestation can set `quantity=0` while supplying
+  ///     nonzero `BankMsg::Send` withdrawals, allowing replay),
+  ///   - The encrypted state delta corresponds to the drained
+  ///     requests' enclave-side semantics.
+  ///
+  /// This Quint action models `quantity == 1` only — exactly one
+  /// request consumed per step. The spec is therefore *strictly
+  /// stricter* than the Rust contract: divergences where the
+  /// drained prefix does not match the applied operations are
+  /// unreachable in the model. The conservation theorem `I1` is
+  /// preserved by construction here.
+  ///
+  /// **Future cycle**: parameterise this action with
+  /// `quantity: int` and `ops: List[TransferOp]`, drain `quantity`
+  /// items, apply each `(req, op)` pair via `fold`, and add an
+  /// invariant that conservation FAILS without a contract-side
+  /// check `quantity == ops.length()`. The failure is the load-
+  /// bearing motivation for adding that check to the Rust
+  /// contract — it does not currently have one.
   action update(op: TransferOp, new_encrypted_state: Ciphertext): bool = all {
     contract.session_active,
     contract.requests.length() > 0,
@@ -314,6 +356,7 @@ module transfers {
       last_action' = ActUpdate,
       prev_total_supply' = enclave.total_supply,
       prev_balances' = enclave.balances,
+    prev_sequence_num' = contract.sequence_num,
     },
   }
 
@@ -328,6 +371,7 @@ module transfers {
     last_action' = ActQuery,
     prev_total_supply' = enclave.total_supply,
     prev_balances' = enclave.balances,
+    prev_sequence_num' = contract.sequence_num,
   }
 
   // ============================================================
@@ -388,32 +432,85 @@ module transfers {
 
   // ── I3: Privacy ──────────────────────────────────────────────
 
-  /// I3: Individual balances are NEVER visible to passive observers.
-  /// Encoded as: the observer view's `can_see_balances` is always
-  /// false. Withdraw and deposit reveal *amounts* (since they're
-  /// on-chain bank movements), but individual balance positions
-  /// are not revealed by the contract.
+  /// I3: **By-construction** balance privacy. `observer.can_see_balances`
+  /// is initialized to `false` (line 152) and the only writer is
+  /// `query_balance` (line 327), which sets it back to `false`. The
+  /// invariant reduces to `not(false) == true` for every reachable state.
+  ///
+  /// **HONESTY CAVEAT (Round C 2026-05-14, both arms agree)**: this
+  /// invariant is vacuous — a sanity guard against future refactors
+  /// that introduce a balance-leak action, NOT a verification of
+  /// confidentiality. Specifically the spec does NOT model:
+  ///
+  ///   - **`BankMsg::Send` plaintext leak**: the Rust `update`
+  ///     emits `BankMsg::Send { to_address, amount }` for every
+  ///     withdrawal (`transfers/contracts/src/contract.rs:201-207`).
+  ///     The recipient + amount are public chain state. Every
+  ///     withdrawal therefore reveals the *exact pre-withdraw
+  ///     balance* to any chain observer (the drain semantics in
+  ///     `apply_withdraw` set the balance to 0 and the
+  ///     `BankMsg::Send` value equals the prior balance). A
+  ///     sequence "deposit Alice 100; withdraw Alice" reveals
+  ///     Alice's balance was 100; pair this with intermediate
+  ///     transfers and the observer infers transfer amounts too.
+  ///     The honest version of this invariant would model
+  ///     `observer.observed_bank_sends: Set[(Addr, Amount)]` and
+  ///     assert what is and isn't inferable; it would *fail* under
+  ///     current contract semantics, motivating either a privacy-
+  ///     preserving withdraw redesign or an explicit acknowledgment
+  ///     that withdrawal amounts are public.
+  ///
+  ///   - **Inference from `requests` queue**: every transfer-request
+  ///     ciphertext sits on-chain alongside its sender (in
+  ///     `Request.sender`). The plaintext amount is hidden, but
+  ///     the *graph* of (sender, sequence number, request kind)
+  ///     is fully observable.
+  ///
+  /// As a verification of present-day privacy semantics, this
+  /// invariant is vacuous. As a refactor-regression guard against
+  /// "we accidentally added a debug action that leaks balances",
+  /// it retains documentary value.
   val inv_balances_private: bool = {
     not(observer.can_see_balances)
   }
 
-  /// I4: Transfer amounts are NEVER visible to observers. The
-  /// contract stores ciphertext only; the plaintext amount lives
-  /// inside the enclave.
+  /// I4: **By-construction** transfer-amount privacy.
+  /// `observer.can_see_transfer_amounts` is initialized to `false`
+  /// and never modified by any action. Same vacuity caveat as I3.
+  ///
+  /// **HONESTY CAVEAT (Round C 2026-05-14)**: while the *ciphertext*
+  /// of the encrypted transfer-op is on-chain in `Request.ciphertext`,
+  /// the plaintext amount is not directly revealed. But amounts are
+  /// *inferable* via the `BankMsg::Send` leak path (see I3): a
+  /// transfer is followed eventually by a withdrawal by the
+  /// recipient, and that withdrawal's `BankMsg::Send` value gives
+  /// a lower bound on the cumulative transfers received. The
+  /// invariant as written does not model this inference channel.
   val inv_transfers_private: bool = {
     not(observer.can_see_transfer_amounts)
   }
 
   // ── I4: Replay protection ────────────────────────────────────
 
-  /// I5: Sequence number is monotonically non-decreasing.
-  /// Mirrors `RawSequenced<TransferRequestMsg>`: each TransferRequest
+  /// I5: Sequence number is **strictly** monotone across ActTransfer
+  /// and non-decreasing otherwise. Mirrors
+  /// `RawSequenced<TransferRequestMsg>`: each TransferRequest
   /// increments the seq, no action ever decrements it.
+  ///
+  /// **Strengthened 2026-05-14 (Round C, Gemma examples #6)**: the
+  /// prior form `contract.sequence_num > 0` after ActTransfer only
+  /// caught the boundary case "seq stays at 0 after a transfer".
+  /// A subtle replay-protection bug — an action that left
+  /// `sequence_num` *unchanged* after ActTransfer (e.g. omitting
+  /// the `+ 1` write) — would be admitted: `sequence_num > 0`
+  /// holds for all post-first-transfer states regardless of
+  /// monotonicity. The strict `> prev_sequence_num` form binds
+  /// every ActTransfer step.
   val inv_sequence_monotone: bool = {
     if (last_action == ActTransfer)
-      contract.sequence_num > 0
+      contract.sequence_num > prev_sequence_num
     else
-      contract.sequence_num >= 0
+      contract.sequence_num >= prev_sequence_num
   }
 
   // ── I5: Transfer atomicity / authorization ───────────────────

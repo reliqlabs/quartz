@@ -349,6 +349,29 @@ This is the standard cryptographic-spec move when the win-condition
 predicate is over abstract / off-chain witnesses. The win
 condition's *meaning* is unchanged; only its decidability shape
 in the type theory is adjusted.
+
+### Live consumers (post-cycle-6.4–6.11)
+
+Round A attack #10 (2026-05-14, advisory) noted this instance was
+"dead" because Step 6.0 lifts did not actually consume a `Pr[…]`
+over `was_signed_by_dstack`. That observation is now stale: cycles
+6.4–6.11 def-tied every protocol-layer `_negl` lift to a
+`noncomputable def *FailAdv := Pr[winPred | 𝒜 n]` shape, and the
+seven non-degenerate winPreds (`groth16SoundnessWinPred`,
+`handshakeSoundnessWinPred`, `handshakeBindsWinPred`,
+`transfersConsWinPred`, `auctionDetermWinPred`,
+`crossSessionBindWinPred`, and the `_imp_*_projected` forward
+implications) all reference `was_signed_by_dstack q`. The
+decidability instance is therefore **load-bearing** for the
+`Pr[…]` typing of every cycle-6.4–6.11 lift.
+
+The remaining (still live) caveat: while `Pr[winPred | 𝒜 n]` is
+well-typed, its concrete numerical value cannot be computed from
+the abstract carriers alone — `evalDist` lacks a measurable
+structure over `TdxQuote`. The lifts prove pointwise *bounds* on
+the probability, not a concrete value; the bound's discharge
+against a concrete cryptographic primitive (Groth16 KS, etc.)
+remains the externally-deferred discharge path.
 -/
 
 /-- Decidable instance for `was_signed_by_dstack` via classical
