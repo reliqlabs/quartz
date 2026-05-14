@@ -8,11 +8,13 @@ Last refreshed by maintainer at the same time as the latest CI run.
 
 | Surface | Kani harnesses | Quint invariants | Verus verified | Lean theorems |
 |---|---|---|---|---|
-| **Framework** (`crates/contracts/core` + `crates/enclave/core`) | 8 | 20 + 2 temporal | 43 (6 files) | 31 |
-| **Examples** (4 contracts) | 31 | 42 (4 specs) | — | — |
-| **Total** | **39** | **62 + 2 temporal** | **43** | **31** |
+| **Framework** (`crates/contracts/core` + `crates/enclave/core`) | 8 | 20 + 2 temporal | 43 (6 files) | 71 |
+| **Examples** (4 contracts) | 31 | 43 (4 specs) | — | — |
+| **Total** | **39** | **63 + 2 temporal** | **43** | **71** |
 
-Trust-boundary axioms in Lean: **47 named, documented**. Each is a single cryptographic / serialization assumption (e.g., `commitHash_inj`, `ecies_roundtrip_axiom`, `was_signed_by_dstack`).
+Trust-boundary axioms in Lean: **26 named, bucketed** (down from 40; -35%). Bucket split per `.colosseum/ledger.md`: 3 (a) named-constants, ~9 (c) genuine carrier/bridge axioms, 4 (d) bundle axioms, plus 14 abstract carriers and miscellaneous (b) demotables already discharged. Classical chain preserved via `_classical` corollaries.
+
+**Content-phase status [2026-05-14]**: 8 `_negl` lifts exist in `ProtocolVCVio*.lean` and type-check with zero `sorry`, but Round A adversarial review (`.colosseum/attacks/lean-negl-lifts-2026-05-14/synthesis.md`) found they are structurally content-free — each binds its protocol-fail advantage as a free `ℝ≥0∞` function symbol and proves only the closure properties of `negligible`. The lifts have the *shape* of parametric security reductions but not the *content*. They are scaffolding pending the def-tying refactor scoped at `.colosseum/refactor-plan-vcvio-content.md`. The 40 → 26 axiom reduction itself is durable and the classical chain is unaffected.
 
 All CI workflows green: `.github/workflows/{kani,quint,verus,lean}.yml`.
 
@@ -25,7 +27,7 @@ All CI workflows green: `.github/workflows/{kani,quint,verus,lean}.yml`.
 | Kani | 8 harnesses in `state.rs`, `msg/execute/session_create.rs`, `msg/execute/session_set_pub_key.rs`. All pass <5s each. Two `LightClientOpts` harnesses gated behind `#[cfg(kani_slow)]` — stdlib `Backtrace` unwinding too deep for default budget. |
 | Quint | `specs/handshake.qnt` (15 invariants, all real state-based — promoted from 7 stubs in Phase 2) + `specs/attestation.qnt` (5 real state-based invariants + 2 temporal properties `temporal_zk_accept_requires_vkey`, `temporal_mock_mode_monotonic`). Apalache BMC at depth 15 clean. |
 | Verus | 4 handler prototypes in `crates/contracts/core/verus-prototype/`: `session_create` (6 verified), `session_set_pub_key` (5), `instantiate` (8), `attested` (13). Standalone — not integrated into production build. cw_storage_plus + cosmwasm-std stubbed via `external_body`. |
-| Lean | 7 spec files: `Ecies`, `UserDataCommit`, `RawMessages`, `Dstack`, `Zkdcap`, `Handshake`, `Confidentiality`, plus `CrossComponent` linking the framework to the protocol layer. |
+| Lean | 14 spec files split across `Crypto/`, `Attestation/`, and `Protocol/`. Each of the 5 carrier modules (`Ecies`, `UserDataCommit`, `RawMessages`, `Dstack`, `Zkdcap`) has a paired `*VCVio.lean` companion holding `OracleComp` material. Protocol layer split by bundle cardinality: `ProtocolVCVio` (foundations), `ProtocolVCVioDual` / `Triple` / `Quad` (8 lifted `_negl` theorems — scaffolding pending def-tying refactor per Round A; classical chain unaffected). `Handshake`, `Confidentiality`, `Conservation`, `AuctionDeterminism`, `CrossComponent` keep the classical-Prop forms via `_classical` re-exports (Round A confirms these are honest). |
 
 ### Framework — `crates/enclave/core`
 
@@ -88,5 +90,15 @@ See `proofs/lean/Specs/Quartz/Protocol/CrossComponent.lean` and `Conservation.le
 - **Verus on enclave `handler.rs`**: `async_trait` + `tonic` + `cosmrs` heavy, doesn't translate cleanly. Needs design work before committing time.
 - **Ranked-choice Apalache depth**: addressed — state-space slimmed (dropped `ballot_history`, `last_action`, `last_voter`, `election_id`; flattened `EnclaveState` wrapper; ballot universe 15→9; voter universe 4→2; `instant_runoff` fold range tightened from 5→3 iters matching `|candidates|`). Depth 7 now 51.1s (target was <60s), depth 10 reachable at 391s. `round_active` retained as state — recomputing it as a `pure def` in invariants regressed depth-7 BMC from 51s to >633s timeout.
 - **Sealed-auction spec smells**: addressed — `Resolving` phase now wired into the Quint state machine matching the contract's `AuctionPhase::Resolving`, plus 1 new invariant governing the transition. Hardcoded bidder count and observer-flag reset semantics may still be present depending on the agent's scope; verify in the diff.
-- **No multi-model adversarial spec review** (single-model only). The methodology calls for multiple model families running adversarial validation; not yet operationalized in this tree.
-- **Lean trust-boundary axioms (44) are not yet bridged to underlying primitives**. ECIES, SHA-256, secp256k1 ECDH, serde_json injectivity remain named axioms. Discharging any of these against an underlying construction is a substantial separate project.
+- **Multi-model adversarial review**: two rounds complete.
+  - Round 1 (2026-05-12): Quint `temporal_zk_accept_requires_vkey` spec — BREAKS, 9 findings. See `.colosseum/attacks/temporal_zk_accept_requires_vkey-multimodel-2026-05-12T16-38-48Z/synthesis.md`.
+  - Round A (2026-05-14): 8 Lean `_negl` lifts — BREAKS (Claude arm) / WEAKENS (Gemma arm), 12 distinct attacks. See `.colosseum/attacks/lean-negl-lifts-2026-05-14/synthesis.md`. Root cause: lifts are content-free tautologies of `negligible_of_le` + `negligible_add`. Action queued at `.colosseum/refactor-plan-vcvio-content.md`.
+  - Pending: adversarial review on the 2 recently-revised Quint specs (sealed-auction, ranked-choice) — Round B.
+- **Lean trust-boundary axiom discharge** (substantial, mostly upstream-blocked):
+  - `negligible_groth16_ks` — needs ArkLib Groth16 knowledge-soundness (upstream roadmap)
+  - `negligible_circuit` — Lean reference DCAP verifier (multi-month, no owner)
+  - `negligible_tdx` — PCK-signature unforgeability reduction
+  - `negligible_commitHash` / `_commitHashBytes` — VCVio `randomOracle` + birthday bound + `[Fintype UserData]`
+- **Near-term tractable (1–2 days)**: demote 3 (a)-bucket named-constant axioms (`rawDomainSep`, `rawBoundContract`, `rawPlaceholderPubKey`) to `def`s once their carriers (`DomainSep`, `Addr`, `PubKey`) are refined to concrete byte strings. Closes the (a) bucket entirely.
+- **Carrier refinement queue**: 14 abstract carriers blocking concrete `Pr[...]` statements. Currently sidestepped via parametric `[Fintype X] →` formulation in all 8 `_negl` lifts.
+- **In-codebase Lean cleanup**: adopt VCVio's `PolyQueries` as the `IsPPT` body (placeholder `True` today, blocked on adversaries gaining `OracleComp ProtocolSpec` access); reformulate `Classical.propDecidable` for `was_signed_by_dstack` via extractor if a less-classical move is desired.

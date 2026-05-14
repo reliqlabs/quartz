@@ -1,13 +1,19 @@
 # Colosseum integration ledger — Quartz (post-VCVio refactor)
 
+> **CORRECTION 2026-05-14**: Round A adversarial review (`.colosseum/attacks/lean-negl-lifts-2026-05-14/`) returned BREAKS on the content-phase lift. The 8 `_negl` theorems are content-free tautologies — each binds its protocol-fail advantage as a free `ℝ≥0∞` function symbol with no defining equation; proofs go through via `negligible_of_le` + `negligible_add` (closure properties of `negligible`), which together prove only that the negligible class is closed under pointwise domination and finite sums. The lifts have the *shape* of a security reduction but not the *content*. 24 downstream packaging theorems inherit the same defect.
+>
+> The form-phase reduction (40 → 26 axioms) stands and is durable. The classical chain is unaffected. CI is unaffected. What changes is the *interpretation* of what the lifts achieve: scaffolding-without-content, not audit-ready content.
+>
+> Specific retractions follow inline below, each marked with `[RETRACTED 2026-05-14]`. The historical claims are kept in place so the corrective trail is visible. See the synthesis at `.colosseum/attacks/lean-negl-lifts-2026-05-14/synthesis.md` for the 12-attack unified list and recommended actions.
+
 - Project: /Users/mvid/Development/reliq/quartz
 - Generated: 2026-05-13T16-30-00Z (Step 7, post-Step-6.3 regeneration)
 - Compared against: prior emission 2026-05-12T12:57:07Z (40 axioms, 5 composition theorems, pre-VCVio)
 - Generator: `colosseum-compose` skill (manual walk; methodology v0.1; v0.2 asks below)
 - Build status: `lake build` green at 2667 jobs (Step 6.3 baseline)
-- Phase: end of VCVio refactor Steps 0-6.3 (form-phase axiom reduction 40 → 26 = -14 / -35%; content-phase lift of all 8 protocol theorems complete)
+- Phase: ~~end of VCVio refactor Steps 0-6.3 (form-phase axiom reduction 40 → 26 = -14 / -35%; content-phase lift of all 8 protocol theorems complete)~~ — **[CORRECTED 2026-05-14]** form-phase reduction holds (40 → 26 axioms); content-phase lift exists in `_negl` form but is structurally content-free (Round A finding). Refactor is at "form-phase complete, content-phase pending".
 
-## Audit-ready trust-boundary summary (60-second read)
+## Audit-ready trust-boundary summary (60-second read) — [RETRACTED 2026-05-14, see banner]
 
 After the VCVio refactor, Quartz's Lean trust boundary decomposes into three honest classes. **Honest carriers** (14 opaque types + 3 named-constant witnesses + 5 function/predicate signatures = 22 of 26 axioms) are non-cryptographic abstractions over types and named values from the deployed Rust stack (k256/ECIES key shapes, serde_json byte sequences, DCAP quote bytes, gnark vkey/proof/input bytes). They compile to nothing — they are the parametric model the Lean tree refines. **Honest cryptographic assumptions** (4 bundled record axioms — `commitHashE`, `commitHashBytesE`, `tdxVerifier`, `groth16Verifier`) name real cryptographic / attestation primitives; two are spec-impossible-as-stated injections (pigeonhole bound on hash codomain), two are classical-Prop verification implications dropping computational-soundness qualifiers. Each is consumed by the protocol-layer classical theorems but is **shadowed at the content layer** by 8 `_negl` lifts in `ProtocolVCVio*.lean` that re-state the trust claim as parametric negligibility hypotheses (zero `sorry`). **Externally deferred** discharges (5 negligibility budgets feeding the `cross_component_session_bind` 5-summand union bound) point to: ArkLib Groth16 KS coverage (upstream), a Lean reference DCAP verifier (separate effort), a PCK-signature unforgeability reduction (Intel-spec + crypto-lib), and VCVio random-oracle + birthday bound after `[Fintype UserData]` carrier refinement. The protocol layer's verified surface is now: 5 honest cryptographic assumptions on real-world primitives, plus standard carrier axioms, plus a parametric union-bound composition — *none* of the 8 lifted theorems carry a bundle axiom in its `_negl` closure (only carriers + standard logic + the parametric negligibility hypotheses).
 
@@ -60,7 +66,9 @@ Categories: **(a)** demotable-to-def-or-dead · **(b)** demotable-to-derived-the
 
 (`tdxVerifier` carries two distinct (d) sub-tags inside one record axiom.)
 
-## Lifted theorem index (8 of 8, all `_negl`-shadowed)
+## Lifted theorem index (8 of 8, all `_negl`-shadowed) — [PARTIALLY RETRACTED 2026-05-14]
+
+> The 8 lifted theorems exist and type-check, but their `_negl` forms bind the protocol-fail advantage as a free `ℝ≥0∞` function symbol rather than a defined probability event. Round A established that each can be vacuously satisfied by instantiating the fail-advantage to `0`. Reading this section: the theorem *names* and *bundle composition* below are correct; the trust claim attached to each (that the `_negl` form constitutes a content-bearing parametric security reduction) is retracted pending the def-tying refactor.
 
 | # | Theorem | Module | Bundle card. | Summands in union bound | `_negl` closure | `_classical` closure |
 |---|---------|--------|--------------|-------------------------|-----------------|----------------------|
@@ -211,16 +219,23 @@ Concrete `Pr[...]` statements (instead of parametric `[Fintype X] → ...`) requ
 - attestation `temporal_zk_accept_requires_vkey` design decision (Option A/B per change record `2026-05-12T17-13-32Z-temporal_zk_accept_action_tag.md`)
 - 38 unsampled Verus annotations, 39 unsampled Kani harnesses, 20 unsampled Quint invariants
 
-## Reviewer checklist
+## Reviewer checklist — [REVISED 2026-05-14 after Round A]
 
 - [ ] All 26 axioms reviewed — bucket assignments stand?
-- [ ] All 4 (d)-bundle sub-tags match their discharge paths?
-- [ ] All 8 `_negl` closures verified to carry **no bundle axioms**?
-- [ ] `cross_component_session_bind_negl` 5-summand union bound matches the load-bearing claim the protocol layer is meant to make?
-- [ ] No new `sorry` introduced in the lift modules?
-- [ ] No regression in classical-chain axiom closures (each `_classical` corollary preserves its pre-refactor closure)?
-- [ ] Option-(b) collision-resistance framing is the framing the team intended?
-- [ ] `IsPPT := True` placeholder is acceptable as a documented gap (or is `PolyQueries` adoption a blocker)?
+- [ ] ~~All 4 (d)-bundle sub-tags match their discharge paths?~~ → Round A finds the sub-tag *labels* are correct but their *discharge mechanism* is cosmetic at the current code state. Re-frame as: do the (d) sub-tags name the right discharge paths *and* is each path's advantage abbrev tied to a concrete win predicate? (Currently no — see attacks #4, #8.)
+- [ ] ~~All 8 `_negl` closures verified to carry **no bundle axioms**?~~ → **VACUOUSLY SATISFIED**. The closures are clean because the lifts say nothing about the bundle axioms (or about Quartz). Reframe as: does each `_negl` closure contain *exactly* the axioms its `_classical` form contains, *minus* the bundle axiom shadowed by the parametric negligibility hypothesis?
+- [ ] `cross_component_session_bind_negl` 5-summand union bound matches the load-bearing claim the protocol layer is meant to make? — **Round A: no**, because the 5 underlying adversaries are unconstrained from the main one. See attack #3.
+- [ ] No new `sorry` introduced in the lift modules? — Yes, still none.
+- [ ] No regression in classical-chain axiom closures (each `_classical` corollary preserves its pre-refactor closure)? — **Yes, Round A confirms this is honest.**
+- [ ] ~~Option-(b) collision-resistance framing is the framing the team intended?~~ → Round A: the framing is correctly intended, but the *implementation* of the framing names a new symbol without tying it back to `commitHash`. See attack #8.
+- [ ] `IsPPT := True` placeholder is acceptable as a documented gap (or is `PolyQueries` adoption a blocker)? — **Round A escalates: blocker**. The placeholder interacts with the free-symbol root cause to admit "for all adversaries, this opaque function is negligible" certificates that mean nothing. See attack #5.
+
+**New items added by Round A:**
+
+- [ ] For each `_negl` theorem, is the protocol-fail advantage a `def` over a concrete win event, or a free function symbol?
+- [ ] For each `*Advantage` `abbrev`, is it tied to a concrete win condition involving the actual verifier/hash, or is it a `Type`-only alias?
+- [ ] At the terminal lift, are the bundle adversaries *derived* from the main adversary (via a `reduce : 𝒜 → 𝒜_low` function with a `reduce_correct` lemma), or are they free arguments?
+- [ ] Has the `ProtocolSpec` oracle-access framework been wired into adversary types, or is it imported but unused?
 
 ---
 
@@ -265,14 +280,22 @@ Already on the docket (pre-Step-6, not specific to this refactor):
 
 ### Emergent findings from regeneration
 
-- **All 8 `_negl` lifts hide bundle axioms from their closures uniformly** — a stronger invariant than any single change record states. This is the *single most important observable* in the ledger: external auditors can take any lifted theorem, run `lean_verify`, and confirm that the bundle axiom is absent from the closure. The trust claim moves from "the bundle axiom is honest" (which it isn't, for the 4 (d) cases) to "the lift's parametric negligibility hypothesis is honest" (which it can be, given the discharge paths).
+- ~~**All 8 `_negl` lifts hide bundle axioms from their closures uniformly** — a stronger invariant than any single change record states. This is the *single most important observable* in the ledger: external auditors can take any lifted theorem, run `lean_verify`, and confirm that the bundle axiom is absent from the closure. The trust claim moves from "the bundle axiom is honest" (which it isn't, for the 4 (d) cases) to "the lift's parametric negligibility hypothesis is honest" (which it can be, given the discharge paths).~~ **[RETRACTED 2026-05-14]** The uniform invariant is satisfied vacuously: the `_negl` forms have no bundle axiom in closure *because they say nothing about Quartz*. A theorem of the form `negligible f → negligible f` (which is what each lift currently reduces to under the right adversarial instantiation) trivially has no axiom closure beyond standard logic. The invariant's intended reading — "the lift's parametric negligibility hypothesis stands in for the bundle axiom" — requires the advantage symbols to be tied to defined probability events; they are not. See Round A attacks #1, #2, #7 in `.colosseum/attacks/lean-negl-lifts-2026-05-14/claude.md`.
 - **Companion-module count is asymmetric**: 5 carrier-side modules paired with 4 protocol-side modules. The asymmetry is structural — the carrier-side modules are 1-per-trust-primitive (Ecies, UserDataCommit, RawMessages, Dstack, Zkdcap) while protocol-side modules are sliced by bundle cardinality (foundations, dual, triple, quad). The 9 total is correct per the Step 7 brief.
 - **The `_classical` corollaries form a load-bearing "exit door"**: downstream consumers (engineering code that wants the classical Prop form) get unchanged behaviour via `*_classical` re-exports. Removing the classical chain would break this exit door. The lift sequence preserves backward compatibility intentionally.
 - **None of the 8 lifts use `Function.Injective` directly** — the spec-level injectivity claims (`commitHash_inj`, `commitHashBytes_inj`, etc.) are now derived theorems consumed by `_classical` corollaries only. The `_negl` chain bypasses injectivity entirely, substituting collision-resistance hypotheses on the underlying concrete hash.
 - **`Ecies.lean` produced no (d)-bucket axioms** — alone among the 5 modules. The original ECIES roundtrip was demoted to a real theorem; the carrier axioms are (c). This is a methodology-positive observation: when the substrate supports a concrete spec-level model (here a deterministic `Ciphertext := PubKey × Plaintext`), no (d) emerges.
 
-## What's next — recommendation
+## What's next — recommendation — [REVISED 2026-05-14 after Round A]
 
-The Quartz trust boundary is **in a state worth merging to mainline**. The form-phase reduction (40 → 26 axioms, -35%) is durable; the content-phase lift (8 of 8 protocol theorems with zero `sorry`) is honest about its parametric dependencies; the audit surface is small and named (4 bundle axioms shadowed by 5 negligibility hypotheses, 14 carriers, 3 named-constant witnesses, 5 bridges/functions). External auditors can read this ledger in a minute and inspect any lifted theorem's closure in seconds via `lean_verify`.
+~~The Quartz trust boundary is **in a state worth merging to mainline**.~~ Round A established that the content-phase lift is structurally content-free. Revised recommendation:
+
+The **form-phase reduction (40 → 26 axioms, -35%) is durable** and ships as-is. The classical chain is honest. The 8 `_negl` lifts and 24 packagings should be marked as scaffolding pending the def-tying refactor — see `.colosseum/refactor-plan-vcvio-content.md` (scoped 2026-05-14) for the work that converts the lifts from "shape of a security reduction" to "content-bearing parametric reduction".
+
+The highest-leverage immediate moves:
+1. Convert one lift (e.g. `verifyGroth16_yields_decoded_negl`) to tie its `protocolFailAdv` to an `evalDist`-based probability event. Establishes the pattern.
+2. Promote each `*Advantage` `abbrev` from a `Type` alias to a `def` mentioning the actual verifier/hash + win condition.
+3. Constrain the bundle adversaries at terminal lift (`cross_component_session_bind_negl`) to be derived from the main adversary via concrete `OracleComp`-program reductions.
+4. Send the strengthened v0.2 ask criteria to colosseum (the asks were satisfied cosmetically; the satisfaction criteria need strengthening, not the ask wording).
 
 The highest-leverage remaining work item is **methodology-side**: back-port the four v0.2 asks into colosseum (especially `dead_axiom_scan` and bundle-cardinality drift tracking, which are mechanically straightforward and would have caught the Step 6.0 → 6.1 bundle-count surprise). The Quartz-side discharges (concrete hash spec, ArkLib integration, reference DCAP verifier, carrier refinement) are mostly **upstream-blocked**: ArkLib's Groth16 coverage is on a roadmap not yet shipped; the reference DCAP verifier is a multi-month software-verification effort with no current owner; the `[Fintype]` carrier refinement requires deciding on concrete byte representations across the whole crypto layer. The single near-term-tractable Quartz-side item is **demoting the 3 (a)-bucket named-constant axioms** (`rawDomainSep`, `rawBoundContract`, `rawPlaceholderPubKey`) once their carriers are refined to concrete byte strings — this is a 1-2-day refactor with no external dependencies and would close out the (a) bucket entirely, leaving only (c) and (d) on the ledger. After that, focused adversarial review of the 8 `_negl` lifts (especially the Option-(b) collision-resistance framing) is the right cadence; bug-finding in the lift surface is higher-yield than chasing the upstream discharge paths.
