@@ -2,15 +2,41 @@
 
 Fork of informalsystems/cycles-quartz, modernized for dstack TDX + zkdcap + Xion.
 
-## Current priority
+## Two-agent split
 
-Refactoring `proofs/lean/Specs/Quartz/Crypto/*` and `Specs/Quartz/Attestation/*` axioms onto VCVio's `OracleComp` framework. Goal: shrink the cryptographic trust boundary from 40 axioms to ~11 (per-module breakdown in the plan).
+This repo is worked by two agents that do not run in parallel:
 
-- **Plan**: `.colosseum/refactor-plan-vcvio.md` (read this first)
-- **Methodology**: run one `colosseum-change` cycle per module, sequenced Ecies → UserDataCommit → RawMessages → Dstack → Zkdcap, then re-prove the protocol layer on the new substrate
-- **Stop condition**: each module is independently shippable. Stop after each module re-proves cleanly so the human can review before moving to the next.
-- **First step**: add VCV-io to `proofs/lean/lakefile.lean`, run `lake update && lake build`, confirm the dependency resolves before any theorem changes
-- **Background**: see `.colosseum/attacks/temporal_zk_accept_requires_vkey-multimodel-2026-05-12T16-38-48Z/synthesis.md` for the most recent adversarial review of the Quint spec layer (separate work; not blocked by this refactor)
+- **Colosseum agent** — methodology, verification, adversarial review. Owns `.colosseum/`, `proofs/lean/`, `specs/` (the verification surface).
+- **Quartz agent** — product engineering. Owns `crates/`, `examples/`, `tests/`, application logic.
+
+The integration ledger `.colosseum/ledger.md` is the contract between them. Each agent reads its own priority section below and treats the other's as background.
+
+## Current verification priority (Colosseum agent)
+
+**Status: Steps 1-7 complete. Audit-ready ledger in place; awaiting external discharge paths.**
+
+VCV-io OracleComp refactor done. Cumulative: **40 → 26 axioms (-14, ~35%)**; 8 of 8 protocol theorems lifted into probabilistic `_negl` forms with zero `sorry`, parametric over hardness hypotheses. Build at 2667 jobs, green.
+
+- **Ledger**: `.colosseum/ledger.md` (audit-ready paragraph at the top; 26-axiom 4-bucket classification; 8-theorem lift index; cross-bundle composition map)
+- **Plan archive**: `.colosseum/refactor-plan-vcvio.md` (executed)
+- **Change records**: `.colosseum/changes/2026-05-13T*.md` (10 records spanning Steps 1-7)
+- **What's open**:
+  - External discharge of (d)-bucket axioms — ArkLib Groth16-KS reduction, reference DCAP verifier in Lean, concrete bytes/userdata hash specs. All upstream-blocked or substantial separate work.
+  - 3 (a)-bucket named-constant axioms could be demoted to `def` after carrier refinement (one of the few near-term Quartz-side wins).
+  - `IsPPT` predicate is currently `True`-placeholder; hardening required if/when adversaries gain oracle access.
+  - Upstream PR for the refactor: ready to draft; ledger paragraph is the spine of the PR description.
+- **Background**: `.colosseum/attacks/temporal_zk_accept_requires_vkey-multimodel-2026-05-12T16-38-48Z/synthesis.md` — Quint adversarial review (closed loop, action-tag rewrite landed pre-VCVio)
+
+## Current product priority (Quartz agent)
+
+**Open product blockers (in approximate order of urgency):**
+
+- **zkdcap verifier migration**: circom `ProofVerify` → gnark `ProofVerifyGnark` endpoint. Live blocker for testnet flow. See `crates/cli/src/handler/zkdcap.rs` + `tests/integration/src/zk_mock.rs` (both endpoints already mocked).
+- **Register zkdcap gnark vkey on testnet**: keygen tool at `zkdcap/circuits/dcap-gnark/cmd/keygen/`.
+- **Anti-sniping for BidBoard auction contract** (separate repo at `/Users/mvid/Development/reliq/bidboard`, but the integration touches Quartz).
+- **IBE-based key management**: commonware `feat/threshold-ibe` branch. Blocked on chain signature support in xiond.
+
+The verification surface (Colosseum side) is currently quiescent — product changes that don't touch `crates/enclave/core/src/encryption.rs`, the attestor, or the key manager will not invalidate any ledger entries. Changes that do touch those should be flagged for a Colosseum-side re-verify pass.
 
 ## Build
 
@@ -48,13 +74,6 @@ cd tests/integration && cargo test testnet -- --ignored  # live testnet
 - `crates/cli/src/handler/zkdcap.rs` — gnark prover integration
 - `specs/handshake.qnt` — Quint formal spec (11 invariants)
 - `tests/integration/src/zk_mock.rs` — ZK module mock (both ProofVerify and ProofVerifyGnark)
-
-## Pending work
-
-- zkdcap verifier needs to migrate from circom ProofVerify to gnark ProofVerifyGnark endpoint
-- Anti-sniping for BidBoard auction contract
-- Register zkdcap gnark vkey on testnet (keygen tool at zkdcap/circuits/dcap-gnark/cmd/keygen/)
-- IBE-based key management (commonware feat/threshold-ibe branch) — needs chain signature support in xiond
 
 ## Related repos
 
