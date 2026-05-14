@@ -295,6 +295,76 @@ def AuctionDeterminismAdv : Type :=
 abbrev AuctionDeterminismAdvantage : Type :=
   AuctionDeterminismAdv → ℕ → ℝ≥0∞
 
+/-! ## Content-bearing advantage definitions (Cycle 6.6 — Round A fix)
+
+Replicates the cycle-6.4/6.5 def-tying pattern on `handshake_binds_ecies_key_negl`.
+
+**Bundling correction (continuation of cycle 6.5's pattern)**: tracing
+the classical `handshake_binds_ecies_key` proof's conclusion parts:
+
+- **P1** (`∃ q, was_signed_by_dstack q ∧ userDataOf q = some h.msgUserData`):
+  failure event is a Groth16-soundness break (forward direction).
+- **P2** (`pkOfUserData h.msgUserData = some c.eciesPubkey`):
+  `pkOfUserData_commitHash` is an *unconditional theorem* in the classical
+  chain (it derives from `commitHash_inj`, which projects from the bundled
+  `commitHashE`). No probabilistic failure event in the current carrier
+  model.
+- **P3** (`decrypt sk (encrypt c.eciesPubkey pt) = some pt`):
+  `roundtrip` is an *unconditional axiomatic equality* given the
+  `keyOf sk = c.eciesPubkey` hypothesis. No probabilistic failure event.
+
+The lift's probabilistic failure event is therefore *only* the P1 failure
+mode — single-bundle (Groth16-only). The prior triple-bundle decomposition
+included `tdxAdv` and `hashAdv` summands that were not load-bearing
+relative to the actual axiom consumption. `commitHashE` and ECIES axioms
+remain in the classical closure of this proof (because `pkOfUserData_commitHash`
+and `roundtrip` are consumed), but their probabilistic refinement is a
+separate concern queued for a later cycle (would move P2's failure event
+behind a collision-resistance hypothesis on the concrete hash).
+-/
+
+/-- **Win predicate for the handshake-binds-ECIES-key game**: the
+    hypotheses hold (contract accepts; user_data is the structured
+    commit; the private key matches the committed ECIES pubkey), but
+    the three-conjunct conclusion fails. Per the analysis above, the
+    only realisable failure mode is the P1 (signed-quote-existence)
+    failure — P2 and P3 are unconditional in the current carrier model. -/
+def handshakeBindsWinPred
+    (p : HandshakeCheck × UserDataCommit × PrivKey × Plaintext) : Prop :=
+  let (h, c, sk, pt) := p
+  Accepted h ∧
+  h.msgUserData = commitHash c ∧
+  keyOf sk = c.eciesPubkey ∧
+  ¬ ( (∃ q, was_signed_by_dstack q ∧ userDataOf q = some h.msgUserData) ∧
+      pkOfUserData h.msgUserData = some c.eciesPubkey ∧
+      decrypt sk (encrypt c.eciesPubkey pt) = some pt )
+
+/-- **Reduction**: from a binds-attack adversary, construct a
+    Groth16-soundness adversary by projecting the candidate's
+    `(proof, inputs)` pair. -/
+def reduce_binds_to_groth (𝒜 : HandshakeBindsAdv) : Groth16SoundAdv :=
+  fun n => do let p ← 𝒜 n; pure (p.1.proof, p.1.inputs)
+
+/-- **Content-bearing advantage** for the handshake-binds game. -/
+noncomputable def bindsFailAdv (𝒜 : HandshakeBindsAdv) (n : ℕ) : ℝ≥0∞ :=
+  Pr[ handshakeBindsWinPred | 𝒜 n ]
+
+/-- Forward implication: a binds-attack win on `(h, c, sk, pt)` implies
+    a Groth16-soundness win on the projected `(h.proof, h.inputs)`.
+    The proof uses `pkOfUserData_commitHash` and `roundtrip` to eliminate
+    the P2 and P3 failure cases, leaving only the P1 (Groth16) break. -/
+theorem handshakeBindsWinPred_imp_groth16SoundnessWinPred_projected
+    (p : HandshakeCheck × UserDataCommit × PrivKey × Plaintext)
+    (hp : handshakeBindsWinPred p) :
+    groth16SoundnessWinPred (p.1.proof, p.1.inputs) := by
+  obtain ⟨⟨hZk, hMr, hUd⟩, h_commit, h_sk, h_neg⟩ := hp
+  refine ⟨hZk, ?_⟩
+  intro h_signed
+  apply h_neg
+  refine ⟨⟨inputs_to_quote p.1.inputs, h_signed, hUd⟩, ?_, ?_⟩
+  · rw [h_commit]; exact pkOfUserData_commitHash p.2.1
+  · rw [← h_sk]; exact roundtrip p.2.2.1 p.2.2.2
+
 /-! ## Triple-bundle lifted theorem 1: `handshake_binds_ecies_key` -/
 
 /-- **Classical form (preserved as a corollary)**: `handshake_binds_ecies_key`.
@@ -317,64 +387,38 @@ theorem handshake_binds_ecies_key_classical
     decrypt sk (encrypt c.eciesPubkey pt) = some pt :=
   handshake_binds_ecies_key h acc c h_commit sk h_sk pt
 
-/-- **Probabilistic form (Step 6.2 triple-bundle lift)**:
+/-- **Probabilistic form (Step 6.2 lift, Cycle-6.6-corrected)**:
     `handshake_binds_ecies_key_negl`.
 
-    Given:
+    Given a handshake-binds adversary `𝒜` and a Groth16-soundness
+    negligibility hypothesis on the projected adversary, the binds
+    failure advantage is negligible.
 
-    * a handshake-binds attack adversary `𝒜 : HandshakeBindsAdv`,
-    * the corresponding fail advantage `bindsFailAdv`,
-    * Groth16, TDX-verifier, and `commitHash`-collision soundness
-      advantages,
-    * a pointwise three-summand union bound:
-
-          bindsFailAdv 𝒜 n
-            ≤ groth16Adv 𝒜_groth n
-            + tdxAdv 𝒜_tdx n
-            + hashAdv 𝒜_hash n
-
-    * negligibility of each of the three summands,
-
-    Then `bindsFailAdv 𝒜` is negligible.
-
-    **Proof structure**: real reduction-based proof using
-    `negligible_of_le` + (`negligible_add` ∘ `negligible_add`). The
-    union-bound pattern from Steps 6.0/6.1 scales mechanically.
-
-    **Honesty**: the proof is *parametric* over the three soundness
-    advantages and the reduction. Discharging the underlying
-    negligibility hypotheses requires:
-
-    1. ArkLib Groth16 KS coverage (cryptographic; not yet available).
-    2. PCK-signature unforgeability reduction (cryptographic;
-       requires DCAP formalisation).
-    3. Collision resistance of the concrete hash function the
-       `commitHashE` embedding axiomatises (cryptographic;
-       discharged by VCV-io's random-oracle birthday bound once
-       `[Fintype UserData]` is available — see
-       `UserDataCommitVCVio.lean` for the documentary statement).
-
-    None are discharged here — the lift demonstrates the
-    three-summand composition pattern, ready for Step 6.3 to
-    scale to four summands. -/
+    **Cycle 6.6 correction notes**: see the Content-bearing definitions
+    section above. The bundling is reduced from triple to single
+    (Groth16-only) to match the actual axiom consumption of the
+    classical proof. `commitHashE` and ECIES axioms remain in the
+    closure (consumed by `pkOfUserData_commitHash` and `roundtrip`
+    respectively), but they do not contribute probabilistic failure
+    summands in the current carrier model. Round A attacks #1, #2, #3,
+    #11 are structurally closed for this lift. -/
 theorem handshake_binds_ecies_key_negl
     (𝒜 : HandshakeBindsAdv)
-    (𝒜_groth : Groth16SoundAdv)
-    (𝒜_tdx : TdxVerifierSoundAdv)
-    (𝒜_hash : CommitHashCollisionAdv)
-    (bindsFailAdv : HandshakeBindsAdv → ℕ → ℝ≥0∞)
-    (groth16Adv : Groth16SoundAdvantage)
-    (tdxAdv : TdxVerifierSoundAdvantage)
-    (hashAdv : CommitHashCollisionAdvantage)
-    (h_bound : ∀ n,
-      bindsFailAdv 𝒜 n ≤
-        groth16Adv 𝒜_groth n + tdxAdv 𝒜_tdx n + hashAdv 𝒜_hash n)
-    (h_groth_negl : negligible (groth16Adv 𝒜_groth))
-    (h_tdx_negl : negligible (tdxAdv 𝒜_tdx))
-    (h_hash_negl : negligible (hashAdv 𝒜_hash)) :
-    negligible (bindsFailAdv 𝒜) :=
-  negligible_of_le h_bound
-    (negligible_add (negligible_add h_groth_negl h_tdx_negl) h_hash_negl)
+    (h_groth_negl :
+      negligible (groth16SoundnessAdv (reduce_binds_to_groth 𝒜))) :
+    negligible (bindsFailAdv 𝒜) := by
+  refine negligible_of_le ?_ h_groth_negl
+  intro n
+  show Pr[ handshakeBindsWinPred | 𝒜 n ] ≤
+       Pr[ groth16SoundnessWinPred | reduce_binds_to_groth 𝒜 n ]
+  rw [show reduce_binds_to_groth 𝒜 n
+        = 𝒜 n >>= pure ∘
+            (fun p : HandshakeCheck × UserDataCommit × PrivKey × Plaintext =>
+              (p.1.proof, p.1.inputs))
+        from rfl,
+      probEvent_bind_pure_comp]
+  exact probEvent_mono (fun p _ hp =>
+    handshakeBindsWinPred_imp_groth16SoundnessWinPred_projected p hp)
 
 /-- **Convenience packaging** for `handshake_binds_ecies_key_negl`
     via `SecurityExp`. -/
