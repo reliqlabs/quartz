@@ -470,7 +470,25 @@ theorem handshakeBindsGame_secure_of_triple_bundle_secure
         (h_tdx_secure   (reduce A).2.1   (IsPPT_trivial _)))
       (h_hash_secure  (reduce A).2.2     (IsPPT_trivial _)))
 
-/-! ## Triple-bundle lifted theorem 2: `session_confidentiality` -/
+/-! ## Triple-bundle lifted theorem 2: `session_confidentiality`
+
+**Cycle 6.7 framing (Round A response)**: under the spec's current
+ECIES abstraction (`roundtrip` is a derived theorem in `Ecies.lean`,
+not a probabilistic axiom), the session-confidentiality failure event
+is **unconditionally impossible** given the hypotheses. The lift
+therefore proves the strict claim "`confFailAdv 𝒜 = 0`", from which
+negligibility follows immediately. No bundle hypothesis is required.
+
+This is honest about a real limitation: the lift only captures the
+*deterministic-roundtrip* failure mode, not chosen-plaintext-attack
+(IND-CPA) security. The latter would require modelling ECIES as a
+probabilistic encryption scheme with an adversary that observes
+oracle outputs — a separate refactor that adds a CPA-style win event
+parameterised on an ECIES IND-CPA hypothesis. The current cycle does
+NOT make that claim; it makes the strictly weaker (and honestly
+true) claim that the spec's deterministic-roundtrip failure event
+has probability zero.
+-/
 
 /-- **Classical form (preserved as a corollary)**: `session_confidentiality`. -/
 theorem session_confidentiality_classical
@@ -481,32 +499,58 @@ theorem session_confidentiality_classical
     decrypt sk (encrypt c.eciesPubkey msg) = some msg :=
   session_confidentiality h acc c h_commit sk h_sk msg
 
-/-- **Probabilistic form (Step 6.2 triple-bundle lift)**:
+/-- **Win predicate**: hypotheses hold but the ECIES roundtrip fails. -/
+def sessionConfWinPred
+    (p : HandshakeCheck × UserDataCommit × PrivKey × Plaintext) : Prop :=
+  let (h, c, sk, msg) := p
+  Accepted h ∧
+  h.msgUserData = commitHash c ∧
+  keyOf sk = c.eciesPubkey ∧
+  ¬ decrypt sk (encrypt c.eciesPubkey msg) = some msg
+
+/-- The win predicate is unconditionally false. Given `keyOf sk =
+    c.eciesPubkey`, the ECIES roundtrip `decrypt sk (encrypt
+    c.eciesPubkey msg) = some msg` holds (rewriting via `h_sk` and
+    applying `roundtrip sk msg`). -/
+theorem sessionConfWinPred_false
+    (p : HandshakeCheck × UserDataCommit × PrivKey × Plaintext)
+    (hp : sessionConfWinPred p) : False := by
+  obtain ⟨_, _, h_sk, h_neg⟩ := hp
+  apply h_neg
+  rw [← h_sk]
+  exact roundtrip p.2.2.1 p.2.2.2
+
+/-- **Content-bearing failure advantage** for the session-confidentiality
+    game. Identically zero under the current spec abstraction. -/
+noncomputable def confFailAdv
+    (𝒜 : SessionConfidentialityAdv) (n : ℕ) : ℝ≥0∞ :=
+  Pr[ sessionConfWinPred | 𝒜 n ]
+
+/-- **Probabilistic form (Step 6.2 lift, Cycle-6.7-corrected)**:
     `session_confidentiality_negl`.
 
-    Three-summand union bound identical in shape to
-    `handshake_binds_ecies_key_negl`. The `session_confidentiality`
-    classical proof rides on the same three bundles (and is in fact
-    a downstream of `handshake_binds_ecies_key`); the lifted form
-    shares the same hypothesis discipline. -/
+    Under the spec's deterministic-roundtrip abstraction, the failure
+    advantage is identically zero, so negligibility is immediate.
+    Compare cycle 6.6: in `handshake_binds_ecies_key_negl`, the P1
+    (Groth16-soundness) failure mode survives the lift as a real
+    probabilistic event; here, the only failure event captured by
+    the classical spec is the (unconditionally-impossible) roundtrip
+    failure. -/
 theorem session_confidentiality_negl
-    (𝒜 : SessionConfidentialityAdv)
-    (𝒜_groth : Groth16SoundAdv)
-    (𝒜_tdx : TdxVerifierSoundAdv)
-    (𝒜_hash : CommitHashCollisionAdv)
-    (confFailAdv : SessionConfidentialityAdv → ℕ → ℝ≥0∞)
-    (groth16Adv : Groth16SoundAdvantage)
-    (tdxAdv : TdxVerifierSoundAdvantage)
-    (hashAdv : CommitHashCollisionAdvantage)
-    (h_bound : ∀ n,
-      confFailAdv 𝒜 n ≤
-        groth16Adv 𝒜_groth n + tdxAdv 𝒜_tdx n + hashAdv 𝒜_hash n)
-    (h_groth_negl : negligible (groth16Adv 𝒜_groth))
-    (h_tdx_negl : negligible (tdxAdv 𝒜_tdx))
-    (h_hash_negl : negligible (hashAdv 𝒜_hash)) :
-    negligible (confFailAdv 𝒜) :=
-  negligible_of_le h_bound
-    (negligible_add (negligible_add h_groth_negl h_tdx_negl) h_hash_negl)
+    (𝒜 : SessionConfidentialityAdv) :
+    negligible (confFailAdv 𝒜) := by
+  -- `confFailAdv 𝒜 n ≤ Pr[ fun _ => False | 𝒜 n ] = 0`
+  have h_zero : ∀ n, confFailAdv 𝒜 n = 0 := by
+    intro n
+    refine le_antisymm ?_ (zero_le _)
+    calc Pr[ sessionConfWinPred | 𝒜 n ]
+        ≤ Pr[ fun _ => False | 𝒜 n ] := by
+          exact probEvent_mono (fun p _ hp => sessionConfWinPred_false p hp)
+      _ = 0 := probEvent_False _
+  have h_fun_zero : confFailAdv 𝒜 = 0 := by
+    funext n; exact h_zero n
+  rw [h_fun_zero]
+  exact negligible_zero
 
 /-- **Convenience packaging** for `session_confidentiality_negl`
     via `SecurityExp`. -/
