@@ -599,7 +599,16 @@ theorem sessionConfGame_secure_of_triple_bundle_secure
         (h_tdx_secure   (reduce A).2.1   (IsPPT_trivial _)))
       (h_hash_secure  (reduce A).2.2     (IsPPT_trivial _)))
 
-/-! ## Triple-bundle lifted theorem 3: `session_confidentiality_via_extractor` -/
+/-! ## Triple-bundle lifted theorem 3: `session_confidentiality_via_extractor`
+
+**Cycle 6.8 framing**: same degenerate-zero-advantage pattern as
+cycle 6.7. The classical `session_confidentiality_via_extractor`
+proof witnesses the conclusion's `∃ pk` with `pk := c.eciesPubkey`,
+then discharges the two conjuncts via `pkOfUserData_commitHash` and
+`session_confidentiality` (which transitively uses `roundtrip`).
+Both conjuncts are unconditional theorems given the hypotheses, so
+the failure event is unconditionally impossible.
+-/
 
 /-- **Classical form (preserved as a corollary)**:
     `session_confidentiality_via_extractor`. -/
@@ -612,27 +621,53 @@ theorem session_confidentiality_via_extractor_classical
           decrypt sk (encrypt pk msg) = some msg :=
   session_confidentiality_via_extractor h acc c h_commit sk h_sk msg
 
-/-- **Probabilistic form (Step 6.2 triple-bundle lift)**:
-    `session_confidentiality_via_extractor_negl`. Same union-bound
-    shape as the previous two. -/
+/-- **Win predicate**: hypotheses hold but no `pk` exists witnessing
+    the `∃ pk, pkOfUserData = some pk ∧ decrypt = some msg`
+    conclusion. -/
+def sessionConfExtractorWinPred
+    (p : HandshakeCheck × UserDataCommit × PrivKey × Plaintext) : Prop :=
+  let (h, c, sk, msg) := p
+  Accepted h ∧
+  h.msgUserData = commitHash c ∧
+  keyOf sk = c.eciesPubkey ∧
+  ¬ ∃ pk, pkOfUserData h.msgUserData = some pk ∧
+          decrypt sk (encrypt pk msg) = some msg
+
+/-- The win predicate is unconditionally false. Witness `pk :=
+    c.eciesPubkey`; both conjuncts hold by `pkOfUserData_commitHash`
+    (after rewriting via `h_commit`) and `roundtrip` (after rewriting
+    via `h_sk`). -/
+theorem sessionConfExtractorWinPred_false
+    (p : HandshakeCheck × UserDataCommit × PrivKey × Plaintext)
+    (hp : sessionConfExtractorWinPred p) : False := by
+  obtain ⟨_, h_commit, h_sk, h_neg⟩ := hp
+  apply h_neg
+  refine ⟨p.2.1.eciesPubkey, ?_, ?_⟩
+  · rw [h_commit]; exact pkOfUserData_commitHash p.2.1
+  · rw [← h_sk]; exact roundtrip p.2.2.1 p.2.2.2
+
+/-- **Content-bearing failure advantage**, identically zero. -/
+noncomputable def extFailAdv
+    (𝒜 : SessionConfidentialityExtractorAdv) (n : ℕ) : ℝ≥0∞ :=
+  Pr[ sessionConfExtractorWinPred | 𝒜 n ]
+
+/-- **Probabilistic form (Step 6.2 lift, Cycle-6.8-corrected)**:
+    `session_confidentiality_via_extractor_negl`. Degenerate
+    zero-advantage case, same as cycle 6.7. -/
 theorem session_confidentiality_via_extractor_negl
-    (𝒜 : SessionConfidentialityExtractorAdv)
-    (𝒜_groth : Groth16SoundAdv)
-    (𝒜_tdx : TdxVerifierSoundAdv)
-    (𝒜_hash : CommitHashCollisionAdv)
-    (extFailAdv : SessionConfidentialityExtractorAdv → ℕ → ℝ≥0∞)
-    (groth16Adv : Groth16SoundAdvantage)
-    (tdxAdv : TdxVerifierSoundAdvantage)
-    (hashAdv : CommitHashCollisionAdvantage)
-    (h_bound : ∀ n,
-      extFailAdv 𝒜 n ≤
-        groth16Adv 𝒜_groth n + tdxAdv 𝒜_tdx n + hashAdv 𝒜_hash n)
-    (h_groth_negl : negligible (groth16Adv 𝒜_groth))
-    (h_tdx_negl : negligible (tdxAdv 𝒜_tdx))
-    (h_hash_negl : negligible (hashAdv 𝒜_hash)) :
-    negligible (extFailAdv 𝒜) :=
-  negligible_of_le h_bound
-    (negligible_add (negligible_add h_groth_negl h_tdx_negl) h_hash_negl)
+    (𝒜 : SessionConfidentialityExtractorAdv) :
+    negligible (extFailAdv 𝒜) := by
+  have h_zero : ∀ n, extFailAdv 𝒜 n = 0 := by
+    intro n
+    refine le_antisymm ?_ (zero_le _)
+    calc Pr[ sessionConfExtractorWinPred | 𝒜 n ]
+        ≤ Pr[ fun _ => False | 𝒜 n ] := by
+          exact probEvent_mono (fun p _ hp =>
+            sessionConfExtractorWinPred_false p hp)
+      _ = 0 := probEvent_False _
+  have h_fun_zero : extFailAdv 𝒜 = 0 := by funext n; exact h_zero n
+  rw [h_fun_zero]
+  exact negligible_zero
 
 /-- **Convenience packaging** for `session_confidentiality_via_extractor_negl`
     via `SecurityExp`. -/
