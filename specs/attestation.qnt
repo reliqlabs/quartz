@@ -394,13 +394,29 @@ module attestation {
 
   /// Quote variant never produces a Zk-only outcome and vice versa.
   /// The handler dispatch must keep these paths disjoint.
+  ///
+  /// **Action-tag refactor (Round C Claude #10 + Gemma framework #6,
+  /// 2026-05-14)**: previously predicated on
+  /// `last_input.attestation.variant`. Because `enable_mock` and
+  /// `clear_vkey` preserve `last_input' = last_input`, that state-
+  /// only predicate binds on STALE input data after non-verify
+  /// actions (Round-1 S1 single-shot-binding hazard). Switched to
+  /// `last_action` provenance. The `last_action` tag is precise per
+  /// action, so the `msg_hash != ""` filter is unnecessary — the
+  /// invariant simply does not fire on init/enable_mock/clear_vkey.
+  ///
+  /// The bind is now: when last_action is a verify, last_result must
+  /// be in the verify's allowed outcome set. After non-verify
+  /// actions (init, enable_mock, clear_vkey), the invariant is
+  /// vacuously true — those actions don't produce variant-specific
+  /// outcomes.
   val inv_variant_outcome_consistent: bool = {
-    if (last_input.attestation.variant == Quote and last_input.msg_hash != "")
+    if (last_action == ActVerifyQuote)
       // Quote path produces AcceptedQuote / user_data / compose_hash rejections
       last_result == AcceptedQuote
         or last_result == RejectedUserDataMismatch
         or last_result == RejectedComposeHashMismatch
-    else if (last_input.attestation.variant == Zk and last_input.msg_hash != "")
+    else if (last_action == ActVerifyZk)
       // Zk path produces Accepted / SkippedNoVKey / Zk-specific rejections
       last_result == Accepted
         or last_result == SkippedNoVKey

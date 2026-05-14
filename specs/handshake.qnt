@@ -813,6 +813,68 @@ module handshake {
     else true
   }
 
+  // ── Temporal mirrors of state-only transition invariants ─────────
+  //
+  // Per Round C 2026-05-14 (Claude #6 + Round-1 carryover): the
+  // state-only invariants P8–P13 below predicate on `last_result ==
+  // Ok and last_action == ActX`. That pattern binds the property for
+  // exactly one transition (the just-completed one); after any other
+  // action runs, `last_action` changes and the antecedent becomes
+  // false, making the invariant vacuously true. Round-1's
+  // `temporal_zk_accept_requires_vkey` settled the equivalent fix in
+  // `attestation.qnt`: promote each transition-property to a
+  // temporal `always(next-action-X implies next-property)` form.
+  //
+  // The state-only forms below are retained as fast Apalache state
+  // checks; the temporal forms below give the refactor-robust binding
+  // semantics that future actions cannot silently bypass.
+
+  /// Temporal mirror of P8 (`inv_user_data_checked`).
+  temporal temporal_user_data_checked = always(
+    ((next(last_result) == Ok) and
+     ((next(last_action) == ActSessionCreate) or
+      (next(last_action) == ActSetPubkey) or
+      (next(last_action) == ActAttestedMsg)))
+    implies next(last_msg_hash) == next(last_att_user_data)
+  )
+
+  /// Temporal mirror of P9 (`inv_compose_hash_checked`).
+  temporal temporal_compose_hash_checked = always(
+    ((next(last_result) == Ok) and
+     ((next(last_action) == ActSessionCreate) or
+      (next(last_action) == ActSetPubkey) or
+      (next(last_action) == ActAttestedMsg)))
+    implies next(last_att_compose_hash) == next(prev_config_mr_enclave)
+  )
+
+  /// Temporal mirror of P10 (`inv_contract_addr_validated`).
+  temporal temporal_contract_addr_validated = always(
+    ((next(last_result) == Ok) and
+     (next(last_action) == ActSessionCreate))
+    implies next(last_msg_contract) == next(contract.contract_addr)
+  )
+
+  /// Temporal mirror of P11 (`inv_set_pubkey_requires_created`).
+  temporal temporal_set_pubkey_requires_created = always(
+    ((next(last_result) == Ok) and
+     (next(last_action) == ActSetPubkey))
+    implies next(prev_session) == SessionCreated
+  )
+
+  /// Temporal mirror of P12 (`inv_set_pubkey_nonce_match`).
+  temporal temporal_set_pubkey_nonce_match = always(
+    ((next(last_result) == Ok) and
+     (next(last_action) == ActSetPubkey))
+    implies next(last_nonce) == next(prev_session_nonce)
+  )
+
+  /// Temporal mirror of P13 (`inv_pubkey_set_once`).
+  temporal temporal_pubkey_set_once = always(
+    ((next(last_result) == Ok) and
+     (next(last_action) == ActSetPubkey))
+    implies next(prev_session_pubkey) == ""
+  )
+
   // ── Composite ──────────────────────────────────────────────────
 
   val all_invariants: bool = {
