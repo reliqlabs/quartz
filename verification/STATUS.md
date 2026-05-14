@@ -14,7 +14,13 @@ Last refreshed by maintainer at the same time as the latest CI run.
 
 Trust-boundary axioms in Lean: **26 named, bucketed** (down from 40; -35%). Bucket split per `.colosseum/ledger.md`: 3 (a) named-constants, ~9 (c) genuine carrier/bridge axioms, 4 (d) bundle axioms, plus 14 abstract carriers and miscellaneous (b) demotables already discharged. Classical chain preserved via `_classical` corollaries.
 
-**Content-phase status [2026-05-14]**: 8 `_negl` lifts exist in `ProtocolVCVio*.lean` and type-check with zero `sorry`, but Round A adversarial review (`.colosseum/attacks/lean-negl-lifts-2026-05-14/synthesis.md`) found they are structurally content-free — each binds its protocol-fail advantage as a free `ℝ≥0∞` function symbol and proves only the closure properties of `negligible`. The lifts have the *shape* of parametric security reductions but not the *content*. They are scaffolding pending the def-tying refactor scoped at `.colosseum/refactor-plan-vcvio-content.md`. The 40 → 26 axiom reduction itself is durable and the classical chain is unaffected.
+**Content-phase status [2026-05-14, post-cycle-6.4–6.11]**: 8 `_negl` lifts def-tied across cycles 6.4–6.11 (8 commits, all `lake build` green at 2667 jobs). Round A's structural critique addressed: each lift now has a `Pr[…]`-based content-bearing `def` for its failure advantage, a concrete reduction to the underlying cryptographic-assumption adversary, and a proven (not assumed) pointwise bound via `probEvent_mono` + `probEvent_bind_pure_comp`. Round A attacks #1, #2, #3, #4 (partial), #11 are structurally closed across all 8 lifts. Per-cycle change records at `.colosseum/changes/2026-05-14T*-cycle-6.{4..11}-*.md`.
+
+**Methodology meta-finding**: 7 of 8 lifts were over-bundled in the original Step 6.0–6.3 work — the union-bound shape was inflated relative to each classical proof's actual probabilistic-failure modes. Six lifts have a single surviving Groth16-soundness failure mode; two are degenerate-zero (deterministic-only). The terminal lift's 5-summand union bound was over-bundled by factor 5. Worth back-porting to colosseum v0.2: bundle-count derivation must come from per-conjunct failure-mode analysis of the classical proof, not from a static axiom-count classifier.
+
+**Remaining Round A attacks** (require deeper refactors than def-tying): #5 (`IsPPT := True` vacuity), #6 (`ProtocolSpec` unused / no oracle access), #8 (Option-(b) framing for `commitHashE`). Queued as cycles 6.12–6.14.
+
+The 40 → 26 axiom reduction itself is durable and the classical chain is unaffected.
 
 All CI workflows green: `.github/workflows/{kani,quint,verus,lean}.yml`.
 
