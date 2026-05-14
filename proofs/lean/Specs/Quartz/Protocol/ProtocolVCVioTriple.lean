@@ -741,31 +741,84 @@ theorem cross_component_transfers_conservation_classical
     conservationInvariant b' :=
   cross_component_transfers_conservation h acc req h_raw b hInv b' hApp
 
-/-- **Probabilistic form (Step 6.2 triple-bundle lift)**:
-    `cross_component_transfers_conservation_negl`.
+/-! ### Cycle-6.9 framing
 
-    Three-summand union bound substituting
-    `CommitHashBytesCollisionAdvantage` for the third summand
-    (relative to theorems 1–3). The shape is otherwise identical.
--/
+Single-bundle (Groth16-only) lift. The classical proof's two
+conclusion parts:
+
+  * **Part 1** (`∃ q signed ∧ mrEnclaveOf q = some h.expectedMr ∧
+    userDataOf q = some (userDataOfTransferRequest req)`):
+    failure event is a Groth16-soundness break (the same shape as
+    `handshake_sound`'s, modulo the h_raw rewrite substituting
+    `userDataOfTransferRequest req` for `h.msgUserData`).
+  * **Part 2** (`conservationInvariant b'`): unconditional via
+    `applyTransferRequest_preserves_conservation` (a derived
+    theorem, no axiom).
+
+Adversary output is `(HandshakeCheck × TransferRequest)` — the `b`,
+`b'`, `hInv`, `hApp` of the classical theorem are universally
+quantified inside the win predicate and elided from the win event
+because Part 2 cannot fail. Reduction is identical in shape to
+cycle 6.6's `reduce_binds_to_groth`. -/
+
+/-- **Win predicate**: contract accepts and msgUserData binds to the
+    transfer-request user_data, but no signed quote witnesses the
+    binding. Part 2 (conservation) is omitted from the win event
+    because it cannot fail. -/
+def transfersConsWinPred
+    (p : HandshakeCheck × TransferRequest) : Prop :=
+  let (h, req) := p
+  Accepted h ∧
+  h.msgUserData = userDataOfTransferRequest req ∧
+  ¬ ∃ q : TdxQuote,
+      was_signed_by_dstack q ∧
+      mrEnclaveOf q = some h.expectedMr ∧
+      userDataOf q  = some (userDataOfTransferRequest req)
+
+/-- **Reduction** to Groth16-soundness adversary by projecting
+    `(h.proof, h.inputs)`. -/
+def reduce_transfers_to_groth
+    (𝒜 : TransfersConservationAdv) : Groth16SoundAdv :=
+  fun n => do let p ← 𝒜 n; pure (p.1.proof, p.1.inputs)
+
+/-- **Content-bearing failure advantage**. -/
+noncomputable def consFailAdv
+    (𝒜 : TransfersConservationAdv) (n : ℕ) : ℝ≥0∞ :=
+  Pr[ transfersConsWinPred | 𝒜 n ]
+
+/-- Forward implication: a transfers-conservation win on `(h, req)`
+    implies a Groth16-soundness win on the projected
+    `(h.proof, h.inputs)`. -/
+theorem transfersConsWinPred_imp_groth16SoundnessWinPred_projected
+    (p : HandshakeCheck × TransferRequest)
+    (hp : transfersConsWinPred p) :
+    groth16SoundnessWinPred (p.1.proof, p.1.inputs) := by
+  obtain ⟨⟨hZk, hMr, hUd⟩, h_raw, h_neg⟩ := hp
+  refine ⟨hZk, ?_⟩
+  intro h_signed
+  apply h_neg
+  refine ⟨inputs_to_quote p.1.inputs, h_signed, hMr, ?_⟩
+  rw [hUd, h_raw]
+
+/-- **Probabilistic form (Step 6.2 lift, Cycle-6.9-corrected)**:
+    `cross_component_transfers_conservation_negl`. -/
 theorem cross_component_transfers_conservation_negl
     (𝒜 : TransfersConservationAdv)
-    (𝒜_groth : Groth16SoundAdv)
-    (𝒜_tdx : TdxVerifierSoundAdv)
-    (𝒜_hashB : CommitHashBytesCollisionAdv)
-    (consFailAdv : TransfersConservationAdv → ℕ → ℝ≥0∞)
-    (groth16Adv : Groth16SoundAdvantage)
-    (tdxAdv : TdxVerifierSoundAdvantage)
-    (hashBAdv : CommitHashBytesCollisionAdvantage)
-    (h_bound : ∀ n,
-      consFailAdv 𝒜 n ≤
-        groth16Adv 𝒜_groth n + tdxAdv 𝒜_tdx n + hashBAdv 𝒜_hashB n)
-    (h_groth_negl : negligible (groth16Adv 𝒜_groth))
-    (h_tdx_negl : negligible (tdxAdv 𝒜_tdx))
-    (h_hashB_negl : negligible (hashBAdv 𝒜_hashB)) :
-    negligible (consFailAdv 𝒜) :=
-  negligible_of_le h_bound
-    (negligible_add (negligible_add h_groth_negl h_tdx_negl) h_hashB_negl)
+    (h_groth_negl :
+      negligible (groth16SoundnessAdv (reduce_transfers_to_groth 𝒜))) :
+    negligible (consFailAdv 𝒜) := by
+  refine negligible_of_le ?_ h_groth_negl
+  intro n
+  show Pr[ transfersConsWinPred | 𝒜 n ] ≤
+       Pr[ groth16SoundnessWinPred | reduce_transfers_to_groth 𝒜 n ]
+  rw [show reduce_transfers_to_groth 𝒜 n
+        = 𝒜 n >>= pure ∘
+            (fun p : HandshakeCheck × TransferRequest =>
+              (p.1.proof, p.1.inputs))
+        from rfl,
+      probEvent_bind_pure_comp]
+  exact probEvent_mono (fun p _ hp =>
+    transfersConsWinPred_imp_groth16SoundnessWinPred_projected p hp)
 
 /-- **Convenience packaging** for `cross_component_transfers_conservation_negl`
     via `SecurityExp`. -/
@@ -834,29 +887,79 @@ theorem cross_component_auction_winner_determinism_classical
         userDataOf q  = some (userDataOfResolveMessage claimed)) :=
   cross_component_auction_winner_determinism h acc round claimed h_raw h_round h_canon
 
-/-- **Probabilistic form (Step 6.2 triple-bundle lift)**:
-    `cross_component_auction_winner_determinism_negl`.
+/-! ### Cycle-6.10 framing
 
-    Three-summand union bound identical to the conservation theorem
-    (theorem 4), with `commitHashBytesE` as the third summand. -/
+Single-bundle (Groth16-only). Conclusion parts:
+
+  * Parts 1 & 2 (`winner = (resolveAuction round).winner`, `price =
+    ...`): unconditional via `h_canon : claimed = resolveAuction round`
+    (by congruence — derived facts, no axiom).
+  * Part 3 (`∃ q signed ∧ ...`): Groth16-soundness failure mode.
+
+Same shape as cycle 6.9. -/
+
+/-- **Win predicate**: hypotheses hold but the conclusion fails. -/
+def auctionDetermWinPred
+    (p : HandshakeCheck × AuctionRound × ResolveMessage) : Prop :=
+  let (h, round, claimed) := p
+  Accepted h ∧
+  h.msgUserData = userDataOfResolveMessage claimed ∧
+  claimed.roundId = round.roundId ∧
+  claimed = resolveAuction round ∧
+  ¬ ( claimed.winner = (resolveAuction round).winner ∧
+      claimed.price  = (resolveAuction round).price ∧
+      ∃ q : TdxQuote,
+        was_signed_by_dstack q ∧
+        mrEnclaveOf q = some h.expectedMr ∧
+        userDataOf q  = some (userDataOfResolveMessage claimed) )
+
+/-- **Reduction** to Groth16-soundness adversary. -/
+def reduce_auctionDeterm_to_groth
+    (𝒜 : AuctionDeterminismAdv) : Groth16SoundAdv :=
+  fun n => do let p ← 𝒜 n; pure (p.1.proof, p.1.inputs)
+
+/-- **Content-bearing failure advantage**. -/
+noncomputable def auctFailAdv
+    (𝒜 : AuctionDeterminismAdv) (n : ℕ) : ℝ≥0∞ :=
+  Pr[ auctionDetermWinPred | 𝒜 n ]
+
+/-- Forward implication: hypotheses + ¬conclusion implies a
+    Groth16-soundness break on the projected `(h.proof, h.inputs)`.
+    Parts 1 & 2 of the conclusion are forced by `h_canon`; the only
+    real failure mode is Part 3. -/
+theorem auctionDetermWinPred_imp_groth16SoundnessWinPred_projected
+    (p : HandshakeCheck × AuctionRound × ResolveMessage)
+    (hp : auctionDetermWinPred p) :
+    groth16SoundnessWinPred (p.1.proof, p.1.inputs) := by
+  obtain ⟨⟨hZk, hMr, hUd⟩, h_raw, _, h_canon, h_neg⟩ := hp
+  refine ⟨hZk, ?_⟩
+  intro h_signed
+  apply h_neg
+  refine ⟨?_, ?_, ?_⟩
+  · rw [h_canon]
+  · rw [h_canon]
+  · refine ⟨inputs_to_quote p.1.inputs, h_signed, hMr, ?_⟩
+    rw [hUd, h_raw]
+
+/-- **Probabilistic form (Step 6.2 lift, Cycle-6.10-corrected)**:
+    `cross_component_auction_winner_determinism_negl`. -/
 theorem cross_component_auction_winner_determinism_negl
     (𝒜 : AuctionDeterminismAdv)
-    (𝒜_groth : Groth16SoundAdv)
-    (𝒜_tdx : TdxVerifierSoundAdv)
-    (𝒜_hashB : CommitHashBytesCollisionAdv)
-    (auctFailAdv : AuctionDeterminismAdv → ℕ → ℝ≥0∞)
-    (groth16Adv : Groth16SoundAdvantage)
-    (tdxAdv : TdxVerifierSoundAdvantage)
-    (hashBAdv : CommitHashBytesCollisionAdvantage)
-    (h_bound : ∀ n,
-      auctFailAdv 𝒜 n ≤
-        groth16Adv 𝒜_groth n + tdxAdv 𝒜_tdx n + hashBAdv 𝒜_hashB n)
-    (h_groth_negl : negligible (groth16Adv 𝒜_groth))
-    (h_tdx_negl : negligible (tdxAdv 𝒜_tdx))
-    (h_hashB_negl : negligible (hashBAdv 𝒜_hashB)) :
-    negligible (auctFailAdv 𝒜) :=
-  negligible_of_le h_bound
-    (negligible_add (negligible_add h_groth_negl h_tdx_negl) h_hashB_negl)
+    (h_groth_negl :
+      negligible (groth16SoundnessAdv (reduce_auctionDeterm_to_groth 𝒜))) :
+    negligible (auctFailAdv 𝒜) := by
+  refine negligible_of_le ?_ h_groth_negl
+  intro n
+  show Pr[ auctionDetermWinPred | 𝒜 n ] ≤
+       Pr[ groth16SoundnessWinPred | reduce_auctionDeterm_to_groth 𝒜 n ]
+  rw [show reduce_auctionDeterm_to_groth 𝒜 n
+        = 𝒜 n >>= pure ∘
+            (fun p : HandshakeCheck × AuctionRound × ResolveMessage =>
+              (p.1.proof, p.1.inputs))
+        from rfl,
+      probEvent_bind_pure_comp]
+  exact probEvent_mono (fun p _ hp =>
+    auctionDetermWinPred_imp_groth16SoundnessWinPred_projected p hp)
 
 /-- **Convenience packaging** for
     `cross_component_auction_winner_determinism_negl` via `SecurityExp`. -/
