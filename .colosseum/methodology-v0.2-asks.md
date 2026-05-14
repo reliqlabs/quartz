@@ -225,6 +225,10 @@ The lift's bundle count is the count of `probabilistic-failure mode` rows, NOT t
 
 **Enforced form** (deferred): compose programmatically asks `lean_verify` for the closure of each conjunct and matches against a methodology rule for "is this conjunct a `theorem`, an `axiom`, or a `projection`?" Same executable-layer dependency as the other asks.
 
+**Placement (colosseum-agent recommendation 2026-05-14)**: in `skills/colosseum-compose/SKILL.md` Step 3, as a sub-step **before** the existing "Bundle cardinality: " line. The cardinality N must be derivable from the per-conjunct table; if the table has K probabilistic-failure rows, the bundle cardinality is K — not a free number pulled from axiom-closure size. The colosseum agent's existing drift-detection (Step 6.1's `bundle_drift` line) catches the symptom of over-bundling only after the corrected count lands; Ask 6 closes the upstream gap by requiring the cardinality to have a defensible derivation at the moment it's chosen.
+
+**Cross-project evidence (verified-rcv)**: the colosseum agent confirmed the methodology-level claim with a second-project instance — verified-rcv's bundle B9 went from 5 → 4 summands during the revision pass, driven by attack analysis (KMS-leakage = confidentiality, image-registration = operational-fault). The reduction was correct but ad-hoc; Ask 6's table would have surfaced both at setup.
+
 ### Ask 7 — degenerate-zero-advantage cycles must declare intent
 
 **Symptom**: cycles 6.7 and 6.8 produced lifts whose failure advantage is **identically zero** — the classical proof has *no* probabilistic-failure event under the current spec abstraction. The conclusion follows unconditionally from the hypotheses (`roundtrip` is a derived theorem in `Ecies.lean`, not a separately-named axiom; `pkOfUserData_commitHash` is a theorem derived from `commitHash_inj`).
@@ -245,6 +249,15 @@ For session_confidentiality the answer is (a). Without this discipline, an audit
 **Documented form** (lands in this PR): extend `crucible-compose`'s prose with an "(a)/(b) declaration" requirement for any cycle whose `failAdv` proves identically zero. The declaration is a short prose statement in the change record naming the specific spec-abstraction limitation that makes the lift degenerate, plus the refactor that would lift it from (a) to a real (non-zero) cryptographic claim.
 
 **Enforced form** (deferred): compose programmatically detects `confFailAdv 𝒜 n = 0` proof structures and gates the cycle exit on a (a)/(b) declaration being present in the change record. Same executable-layer dependency.
+
+**Placement (colosseum-agent recommendation 2026-05-14)**: add an optional `Cycle-outcome intent` field to the change-record schema at `skills/colosseum-change/SKILL.md:146-168` (the existing Step 8 record-fields list: name / classification / description / affected verification surface / adversarial review / ledger delta / outstanding follow-ups). The new field's enumerated values:
+
+  1. `probabilistic-failure-modelled` (default — the lift bounds a real probabilistic event)
+  2. `degenerate-by-design — scope excludes the failure event` (the spec is intentionally not modelling the relevant probabilistic phenomenon; e.g. session_confidentiality_negl models deterministic correctness, not CPA security)
+  3. `degenerate-by-accident — abstraction collapsed the failure event` (the lift is structurally trivial because the carrier model elided the event; refactor needed to restore it)
+  4. `follow-up to add it` (the lift ships now as (2) or (3) but a tracked follow-up cycle will add the probabilistic claim)
+
+The discrete enum (vs. free-form prose) is the auditability win — auditors can grep change records for `Cycle-outcome intent: degenerate-by-accident` and surface all instances at once. For Quartz cycles 6.7 and 6.8 the value is `degenerate-by-design — scope excludes the failure event` (ECIES IND-CPA is out of the current spec abstraction's scope).
 
 ---
 
