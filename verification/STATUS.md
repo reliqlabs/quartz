@@ -18,7 +18,7 @@ Trust-boundary axioms in Lean: **26 named, bucketed** (down from 40; -35%). Buck
 
 **Methodology meta-finding**: 7 of 8 lifts were over-bundled in the original Step 6.0–6.3 work — the union-bound shape was inflated relative to each classical proof's actual probabilistic-failure modes. Six lifts have a single surviving Groth16-soundness failure mode; two are degenerate-zero (deterministic-only). The terminal lift's 5-summand union bound was over-bundled by factor 5. Worth back-porting to colosseum v0.2: bundle-count derivation must come from per-conjunct failure-mode analysis of the classical proof, not from a static axiom-count classifier.
 
-**Remaining Round A attacks** (require deeper refactors than def-tying): #5 (`IsPPT := True` vacuity), #6 (`ProtocolSpec` unused / no oracle access), #8 (Option-(b) framing for `commitHashE`). Queued as cycles 6.12–6.14.
+**Remaining Round A attacks** (require deeper refactors than def-tying): #5 (`IsPPT := True` vacuity), #6 (`ProtocolSpec` unused / no oracle access), #8 (Option-(b) framing for `commitHashE`). **Cycle 6.12 (2026-05-14) closes #5 surface-side via Option (b)**: the 7 `*Game_secure_of_*_bundle_secure` packagings renamed to `*_AGAINST_UNBOUNDED_ADVERSARIES` so the placeholder gap is visible at every call site. The substantive Option-(a) closure (`IsPPT := PolyQueries`) is queued as cycle 6.14 once cycle 6.13 (#6, `OracleComp ProtocolSpec` adversaries) lands as prereq.
 
 The 40 → 26 axiom reduction itself is durable and the classical chain is unaffected.
 

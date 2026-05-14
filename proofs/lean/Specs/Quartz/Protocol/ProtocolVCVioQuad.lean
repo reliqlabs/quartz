@@ -457,8 +457,8 @@ theorem crossSessionBindFail_secure_of_quad_bundle_secure
       h_hashB_secure)
     h_bound
 
-/-- **Security-game reduction form** for
-    `cross_component_session_bind_negl`: the quadruple-bundle
+/-- **Security-game reduction form (unbounded-adversary statement)**
+    for `cross_component_session_bind_negl`: the quadruple-bundle
     (five-summand) reduction expressed via
     `SecurityGame.secureAgainst` with the project-standard `IsPPT`
     filter.
@@ -473,10 +473,17 @@ theorem crossSessionBindFail_secure_of_quad_bundle_secure
     implies security of the cross-component-session-bind game
     (against `IsPPT`).
 
+    **IsPPT placeholder gap (cycle 6.12 rename)**: with `IsPPT`
+    currently `True`-placeholder, `secureAgainst IsPPT` ranges
+    over all adversaries. The `_AGAINST_UNBOUNDED_ADVERSARIES`
+    suffix surfaces this gap at the call site. See
+    `handshakeSoundnessGame_secure_of_dual_bundle_secure_AGAINST_UNBOUNDED_ADVERSARIES`
+    in `ProtocolVCVioDual.lean` for the full rationale.
+
     The proof composes four `negligible_add` applications around
     five `secure A` invocations, then closes via `negligible_of_le`.
     Same shape as the Step 6.1 / 6.2 game-form packagings, scaled. -/
-theorem crossSessionBindGame_secure_of_quad_bundle_secure
+theorem crossSessionBindGame_secure_of_quad_bundle_secure_AGAINST_UNBOUNDED_ADVERSARIES
     {bindGame    : SecurityGame CrossSessionBindAdv}
     {groth16KSGame' : SecurityGame Groth16KSAdv}
     {circuitEqGame' : SecurityGame CircuitEqAdv}

@@ -206,11 +206,11 @@ downstream lifts that DO consume `tdxVerifier.complete`, but is no
 longer threaded through this lift's hypotheses.
 
 The `handshakeFail_secure_of_dual_bundle_secure` and
-`handshakeSoundnessGame_secure_of_dual_bundle_secure` packagings below
-remain dual-bundle in shape because they are generic over arbitrary
-`SecurityExp` / `SecurityGame` summand decompositions — a caller who
-wants to bound `handshakeFailExp.advantage` by a sum of two terms can
-still do so, the second summand being optionally zero.
+`handshakeSoundnessGame_secure_of_dual_bundle_secure_AGAINST_UNBOUNDED_ADVERSARIES`
+packagings below remain dual-bundle in shape because they are generic
+over arbitrary `SecurityExp` / `SecurityGame` summand decompositions —
+a caller who wants to bound `handshakeFailExp.advantage` by a sum of
+two terms can still do so, the second summand being optionally zero.
 -/
 
 /-- **Win predicate for the handshake-soundness game**: the contract
@@ -351,8 +351,9 @@ theorem handshakeFail_secure_of_dual_bundle_secure
     (negligible_add h_groth_secure h_tdx_secure)
     h_bound
 
-/-- **Security-game reduction form**: the dual-bundle reduction
-    expressed via `SecurityGame.secureAgainst`.
+/-- **Security-game reduction form (unbounded-adversary statement)**:
+    the dual-bundle reduction expressed via
+    `SecurityGame.secureAgainst`.
 
     Given a fixed reduction `reduce : HandshakeSoundAdv →
     Groth16SoundAdv × TdxVerifierSoundAdv` that preserves the
@@ -360,13 +361,25 @@ theorem handshakeFail_secure_of_dual_bundle_secure
     component games (against `IsPPT`) implies security of the
     handshake-soundness game (against `IsPPT`).
 
-    This is the standard reduction-with-game-hopping shape that
-    Steps 6.2 / 6.3 will compose into the triple- and
-    quadruple-bundle bounds.
+    **IsPPT placeholder gap (cycle 6.12 rename)**: the
+    `IsPPT` predicate is currently `def IsPPT := fun _ => True`
+    (see `ProtocolVCVio.lean`'s placeholder section). Until that
+    placeholder is replaced by `PolyQueries`, `secureAgainst IsPPT`
+    quantifies over **all** adversaries — bounded and unbounded
+    alike — and the conclusion is therefore stronger than the
+    intended "computationally bounded adversaries" claim. The
+    `_AGAINST_UNBOUNDED_ADVERSARIES` suffix surfaces this gap at
+    the call site so callers cannot mistake it for the PPT
+    statement.
+
+    Replacing this placeholder requires cycle 6.13 (wiring
+    `OracleComp ProtocolSpec` into adversary types so a query
+    bound is well-defined) and cycle 6.14 (instantiating
+    `IsPPT := PolyQueries`).
 
     The proof is a direct invocation of `negligible_of_le` +
     `negligible_add`, generalised over the adversary class. -/
-theorem handshakeSoundnessGame_secure_of_dual_bundle_secure
+theorem handshakeSoundnessGame_secure_of_dual_bundle_secure_AGAINST_UNBOUNDED_ADVERSARIES
     {handshakeGame : SecurityGame HandshakeSoundAdv}
     {groth16Game : SecurityGame Groth16SoundAdv}
     {tdxGame : SecurityGame TdxVerifierSoundAdv}

@@ -443,11 +443,18 @@ theorem handshakeBindsFail_secure_of_triple_bundle_secure
       h_hash_secure)
     h_bound
 
-/-- **Security-game reduction form** for
-    `handshake_binds_ecies_key_negl`: the triple-bundle reduction
-    expressed via `SecurityGame.secureAgainst` with the project-
-    standard `IsPPT` filter. -/
-theorem handshakeBindsGame_secure_of_triple_bundle_secure
+/-- **Security-game reduction form (unbounded-adversary statement)**
+    for `handshake_binds_ecies_key_negl`: the triple-bundle
+    reduction expressed via `SecurityGame.secureAgainst` with the
+    project-standard `IsPPT` filter.
+
+    **IsPPT placeholder gap (cycle 6.12 rename)**: with `IsPPT`
+    currently `True`-placeholder, `secureAgainst IsPPT` ranges
+    over all adversaries. The `_AGAINST_UNBOUNDED_ADVERSARIES`
+    suffix surfaces this gap at the call site. See
+    `handshakeSoundnessGame_secure_of_dual_bundle_secure_AGAINST_UNBOUNDED_ADVERSARIES`
+    in `ProtocolVCVioDual.lean` for the full rationale. -/
+theorem handshakeBindsGame_secure_of_triple_bundle_secure_AGAINST_UNBOUNDED_ADVERSARIES
     {bindsGame   : SecurityGame HandshakeBindsAdv}
     {groth16Game : SecurityGame Groth16SoundAdv}
     {tdxGame     : SecurityGame TdxVerifierSoundAdv}
@@ -575,8 +582,22 @@ theorem sessionConfFail_secure_of_triple_bundle_secure
       h_hash_secure)
     h_bound
 
-/-- **Security-game reduction form** for `session_confidentiality_negl`. -/
-theorem sessionConfGame_secure_of_triple_bundle_secure
+/-- **Security-game reduction form (unbounded-adversary statement)**
+    for `session_confidentiality_negl`.
+
+    **IsPPT placeholder gap (cycle 6.12 rename)**: with `IsPPT`
+    currently `True`-placeholder, `secureAgainst IsPPT` ranges
+    over all adversaries. The `_AGAINST_UNBOUNDED_ADVERSARIES`
+    suffix surfaces this gap at the call site. See
+    `handshakeSoundnessGame_secure_of_dual_bundle_secure_AGAINST_UNBOUNDED_ADVERSARIES`
+    in `ProtocolVCVioDual.lean` for the full rationale.
+
+    Note: the underlying `session_confidentiality_negl` is
+    a *degenerate-zero* lift (advantage is identically zero),
+    so the conclusion of this packaging is trivially stronger
+    than even the PPT statement would be — see
+    cycle-6.7's framing for that separate honesty point. -/
+theorem sessionConfGame_secure_of_triple_bundle_secure_AGAINST_UNBOUNDED_ADVERSARIES
     {confGame    : SecurityGame SessionConfidentialityAdv}
     {groth16Game : SecurityGame Groth16SoundAdv}
     {tdxGame     : SecurityGame TdxVerifierSoundAdv}
@@ -692,8 +713,19 @@ theorem sessionConfExtractorFail_secure_of_triple_bundle_secure
       h_hash_secure)
     h_bound
 
-/-- **Security-game reduction form** for `session_confidentiality_via_extractor_negl`. -/
-theorem sessionConfExtractorGame_secure_of_triple_bundle_secure
+/-- **Security-game reduction form (unbounded-adversary statement)**
+    for `session_confidentiality_via_extractor_negl`.
+
+    **IsPPT placeholder gap (cycle 6.12 rename)**: with `IsPPT`
+    currently `True`-placeholder, `secureAgainst IsPPT` ranges
+    over all adversaries. The `_AGAINST_UNBOUNDED_ADVERSARIES`
+    suffix surfaces this gap at the call site. See
+    `handshakeSoundnessGame_secure_of_dual_bundle_secure_AGAINST_UNBOUNDED_ADVERSARIES`
+    in `ProtocolVCVioDual.lean` for the full rationale.
+
+    Note: degenerate-zero lift (same as cycle 6.7); see
+    cycle-6.8's framing for that separate honesty point. -/
+theorem sessionConfExtractorGame_secure_of_triple_bundle_secure_AGAINST_UNBOUNDED_ADVERSARIES
     {extGame     : SecurityGame SessionConfidentialityExtractorAdv}
     {groth16Game : SecurityGame Groth16SoundAdv}
     {tdxGame     : SecurityGame TdxVerifierSoundAdv}
@@ -843,9 +875,16 @@ theorem transfersConsFail_secure_of_triple_bundle_secure
       h_hashB_secure)
     h_bound
 
-/-- **Security-game reduction form** for
-    `cross_component_transfers_conservation_negl`. -/
-theorem transfersConsGame_secure_of_triple_bundle_secure
+/-- **Security-game reduction form (unbounded-adversary statement)**
+    for `cross_component_transfers_conservation_negl`.
+
+    **IsPPT placeholder gap (cycle 6.12 rename)**: with `IsPPT`
+    currently `True`-placeholder, `secureAgainst IsPPT` ranges
+    over all adversaries. The `_AGAINST_UNBOUNDED_ADVERSARIES`
+    suffix surfaces this gap at the call site. See
+    `handshakeSoundnessGame_secure_of_dual_bundle_secure_AGAINST_UNBOUNDED_ADVERSARIES`
+    in `ProtocolVCVioDual.lean` for the full rationale. -/
+theorem transfersConsGame_secure_of_triple_bundle_secure_AGAINST_UNBOUNDED_ADVERSARIES
     {consGame    : SecurityGame TransfersConservationAdv}
     {groth16Game : SecurityGame Groth16SoundAdv}
     {tdxGame     : SecurityGame TdxVerifierSoundAdv}
@@ -984,9 +1023,16 @@ theorem auctionDetermFail_secure_of_triple_bundle_secure
       h_hashB_secure)
     h_bound
 
-/-- **Security-game reduction form** for
-    `cross_component_auction_winner_determinism_negl`. -/
-theorem auctionDetermGame_secure_of_triple_bundle_secure
+/-- **Security-game reduction form (unbounded-adversary statement)**
+    for `cross_component_auction_winner_determinism_negl`.
+
+    **IsPPT placeholder gap (cycle 6.12 rename)**: with `IsPPT`
+    currently `True`-placeholder, `secureAgainst IsPPT` ranges
+    over all adversaries. The `_AGAINST_UNBOUNDED_ADVERSARIES`
+    suffix surfaces this gap at the call site. See
+    `handshakeSoundnessGame_secure_of_dual_bundle_secure_AGAINST_UNBOUNDED_ADVERSARIES`
+    in `ProtocolVCVioDual.lean` for the full rationale. -/
+theorem auctionDetermGame_secure_of_triple_bundle_secure_AGAINST_UNBOUNDED_ADVERSARIES
     {auctGame    : SecurityGame AuctionDeterminismAdv}
     {groth16Game : SecurityGame Groth16SoundAdv}
     {tdxGame     : SecurityGame TdxVerifierSoundAdv}

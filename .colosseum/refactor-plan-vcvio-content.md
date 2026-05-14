@@ -52,23 +52,56 @@ Each is one cycle. Order recommended by complexity ascending: `handshake_binds_e
 - This is the load-bearing fix per the ledger and the most consequential single piece of work in the plan
 - Stop condition: the terminal lift's `h_bound` follows from the four `reduce_*_correct` lemmas, not from a free `h_bound` hypothesis supplied by the user
 
-### Cycle 6.12 — Packaging fixes
+### Packaging fixes — folded into cycles 6.4–6.11 (done)
 
-24 downstream `*_secure_of_*_bundle_secure` and `*Game_secure_of_*_bundle_secure` theorems inherit the root cause. Once 6.4–6.11 land, the packagings need a parallel pass to update their references. Mostly mechanical.
+The original plan called for a separate cycle for the 24 downstream
+`*_secure_of_*_bundle_secure` and `*Game_secure_of_*_bundle_secure`
+packagings. In practice, each lift's packagings were updated alongside
+the lift itself across cycles 6.4–6.11. No standalone packaging cycle
+was needed.
 
-### Cycle 6.13 — `IsPPT` placeholder discharge or rename
+### Cycle 6.12 — `IsPPT` placeholder rename (done 2026-05-14)
 
-Two options per Round A attack #5:
-- (a) Adopt VCV-io's `PolyQueries` as the `IsPPT` body. Requires adversaries to gain `OracleComp ProtocolSpec` access (which is also Round A attack #6's remediation, so the two cycles can be combined).
-- (b) Rename the `*Game_secure_of_*_bundle_secure` packagings to `*_AGAINST_UNBOUNDED_ADVERSARIES` to make the placeholder gap visible at the call site. Cheaper short-term move.
+Round A attack #5: `IsPPT := True` makes `secureAgainst IsPPT`
+statements vacuous (quantifies over all adversaries, not PPT
+adversaries). Two options per attack #5's "Suggested defense":
 
-Recommendation: (a) as the substantive fix. (b) as the interim if (a) blocks.
+- (a) Adopt VCV-io's `PolyQueries` as the `IsPPT` body. Requires
+  adversaries to gain `OracleComp ProtocolSpec` access (which is
+  also Round A attack #6's remediation — see cycle 6.13).
+- (b) Rename the `*Game_secure_of_*_bundle_secure` packagings to
+  `*_AGAINST_UNBOUNDED_ADVERSARIES` to make the placeholder gap
+  visible at the call site. Cheaper short-term move.
 
-### Cycle 6.14 — `ProtocolSpec` adversary-type integration
+**Cycle 6.12 picked (b)** because (a) requires cycle 6.13 as
+prereq. The seven packagings now carry the suffix; each docstring
+forward-references cycles 6.13/6.14 for the proper PolyQueries
+adoption. Change record:
+`.colosseum/changes/2026-05-14T20-30-00Z-cycle-6.12-ispptrename.md`.
 
-Currently `ProtocolSpec` is defined at `ProtocolVCVio.lean:200-202` but never used in any adversary type. Adversaries are `ℕ → ProbComp X`, not `ℕ → OracleComp ProtocolSpec X`. Per Round A attack #6, the framework upgrade to oracle-access adversaries is required before any composition reduction is honest.
+### Cycle 6.13 — `OracleComp ProtocolSpec` adversary-type integration (queued)
 
-If cycle 6.13 picks option (a), this cycle is largely a continuation of it.
+Currently `ProtocolSpec` is defined at `ProtocolVCVio.lean:200-202`
+but never used in any adversary type. Adversaries are
+`ℕ → ProbComp X`, not `ℕ → OracleComp ProtocolSpec X`. Per Round A
+attack #6, the framework upgrade to oracle-access adversaries is
+required before any composition reduction is honest — and is a
+prereq for instantiating `IsPPT := PolyQueries` (which closes
+cycle 6.12's Option-(a) properly).
+
+Multi-day refactor across every adversary type in the protocol
+layer. Build-breaking churn; needs careful sequencing.
+
+### Cycle 6.14 — `commitHashE` Option-(b) framing (queued)
+
+Round A attack #8. Replace `pkOfUserData_commitHash`'s reliance on
+`commitHash_inj` with a probabilistic collision-resistance
+hypothesis. Would surface a real second bundle in the terminal
+lift (Groth16 + commitHashE-CR), correcting the cycle-6.11
+"single-bundle Groth16-only" framing once `commitHashE` is no
+longer consumed unconditionally.
+
+Independent of cycle 6.13 — can run in parallel.
 
 ## Stop condition for the plan
 

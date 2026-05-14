@@ -4,7 +4,7 @@
 >
 > **UPDATE 2026-05-14 (post-cycle-6.4–6.11)**: Round A's structural critique has been substantially addressed. Cycles 6.4–6.11 (8 commits) replaced every `_negl` lift's free-symbol advantage with a `Pr[…]`-based `def`, replaced caller-supplied bounds with proven bounds via `probEvent_mono` + `probEvent_bind_pure_comp`, and made the bundle structure honest about which axioms are probabilistic-failure modes vs. unconditional carrier-substrate. Round A attacks #1 (free-symbol tautology), #2 (Trojan h_bound), #3 (no reduction relation), #4 (disjunction-decomposition cosmetic at terminal), and #11 (over-quantified signature) are structurally closed.
 >
-> Round A attacks #5 (`IsPPT := True` vacuity), #6 (`ProtocolSpec` unused), #8 (Option-(b) for `commitHashE`) remain open — they require deeper refactors than def-tying (substituting classical axioms with probabilistic hypotheses), and are queued as cycles 6.12–6.14.
+> Round A attacks #5 (`IsPPT := True` vacuity), #6 (`ProtocolSpec` unused), #8 (Option-(b) for `commitHashE`) remain open. **Cycle 6.12 (2026-05-14) closes #5 surface-side via Option (b)**: the seven `*Game_secure_of_*_bundle_secure` packagings were renamed to `*_AGAINST_UNBOUNDED_ADVERSARIES` with explicit docstrings about the placeholder gap (change record `.colosseum/changes/2026-05-14T20-30-00Z-cycle-6.12-ispptrename.md`). The substantive Option-(a) fix (`IsPPT := PolyQueries`) is queued as cycle 6.14 and requires cycle 6.13 (`OracleComp ProtocolSpec` adversary wiring, closes #6) as prereq.
 >
 > **New methodology finding (cycle-6.4–6.11 sequence)**: 7 of 8 lifts were over-bundled in the original Step 6.0–6.3 work. The original plan classified lifts by the union-bound shape implied by an axiom count; the actual probabilistic-failure modes in each classical proof are fewer than the axiom count suggests. The terminal lift (5-summand union bound in the original) has only one probabilistic-failure mode (Groth16-soundness) under the current carrier model — the other 4 axioms are consumed unconditionally in the classical proof and do not lift to probabilistic hypotheses. Worth back-porting to colosseum methodology v0.2 as a new ask: **bundle-count derivation must come from per-conjunct failure-mode analysis of the classical proof, not from a static axiom-count classifier**.
 >
@@ -87,7 +87,7 @@ Categories: **(a)** demotable-to-def-or-dead · **(b)** demotable-to-derived-the
 
 **Invariant across all 8 lifts**: the `_negl` form's axiom closure contains **only carriers + standard logic** (`propext`, `Classical.choice`, `Quot.sound`) — *no bundle axioms*. Bundles enter through parametric hypotheses, not closure. The `_classical` corollary preserves the original bundle dependency unchanged for downstream consumers that still want the classical form.
 
-Each lifted theorem comes in four packagings: `_classical` (corollary), `_negl` (raw `negligible` form), `_secure_of_*_bundle_secure` (`SecurityExp`), `*Game_secure_of_*_bundle_secure` (`SecurityGame` with `IsPPT` filter, body `True`).
+Each lifted theorem comes in four packagings: `_classical` (corollary), `_negl` (raw `negligible` form), `_secure_of_*_bundle_secure` (`SecurityExp`), `*Game_secure_of_*_bundle_secure_AGAINST_UNBOUNDED_ADVERSARIES` (`SecurityGame` with `IsPPT` filter, body still `True` as a placeholder — name made honest in cycle 6.12).
 
 ## Cross-bundle composition map → `cross_component_session_bind_negl`
 
@@ -312,9 +312,9 @@ Cycle-6.4-through-6.11 sequence complete. All 8 `_negl` lifts def-tied with cont
 **Open work**:
 
 1. **Cycles 6.12–6.14** (deeper refactors than def-tying):
-   - 6.12: replace `IsPPT := True` placeholder with VCV-io's `PolyQueries` — closes Round A attack #5.
-   - 6.13: wire `OracleComp ProtocolSpec` into adversary types instead of `ProbComp` — closes Round A attack #6.
-   - 6.14: replace `pkOfUserData_commitHash`'s reliance on `commitHash_inj` with a probabilistic collision-resistance hypothesis — closes Round A attack #8 and surfaces a real second bundle at the terminal lift.
+   - 6.12 **(done 2026-05-14, Option-(b))**: 7 `*Game_secure_of_*_bundle_secure` packagings renamed to `*_AGAINST_UNBOUNDED_ADVERSARIES` to surface the `IsPPT := True` placeholder gap at every call site. This is the cheap surface-side closure of Round A attack #5; the substantive Option-(a) closure (`IsPPT := PolyQueries`) is queued as part of cycle 6.14 below and requires cycle 6.13 as prereq.
+   - 6.13 (queued): wire `OracleComp ProtocolSpec` into adversary types instead of `ProbComp` — closes Round A attack #6 and unblocks the Option-(a) `PolyQueries` instantiation.
+   - 6.14 (queued): replace `pkOfUserData_commitHash`'s reliance on `commitHash_inj` with a probabilistic collision-resistance hypothesis — closes Round A attack #8 and surfaces a real second bundle at the terminal lift.
 
 2. **Methodology v0.2 back-port**: send the **over-bundling meta-finding** to the colosseum agent — bundle-count derivation must come from per-conjunct failure-mode analysis of the classical proof, not from a static axiom-count classifier. Also send the **degenerate-zero-advantage sub-kind** observation from cycles 6.7/6.8 — when a lift's advantage proves identically zero, the cycle should explicitly state whether the spec is intentionally not modelling the relevant probabilistic phenomenon (yes/no).
 
