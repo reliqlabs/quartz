@@ -177,7 +177,82 @@ No Quartz-side change required. Validation: replay Steps 1–6 of the Quartz ref
 
 ## Suggested PR shape
 
-Single PR titled `methodology: v0.2 — back-port 4 asks from Quartz VCVio refactor`, 4 commits (one per ask). Each commit touches: schema (plan front matter), one skill (`crucible-compose`), one agent prompt (`crucible-failure-classifier`).
+Single PR titled `methodology: v0.2 — back-port 7 asks from Quartz VCVio refactor + Round A adversarial review`, 7 commits (one per ask). Each commit touches: schema (plan front matter), one skill (`crucible-compose`), one agent prompt (`crucible-failure-classifier`).
+
+(Originally 4 asks; expanded to 5 after the Round A strengthening review, then to 7 after the cycle-6.4-through-6.11 implementation revealed two further methodology-level findings — see Asks 6 and 7 below.)
+
+---
+
+## Asks 6 and 7 — added 2026-05-14 from the cycle-6.4-through-6.11 implementation
+
+After the strengthened criteria in Asks 1–5 were drafted, the Quartz Lean tree implemented the def-tying refactor across all 8 protocol-layer `_negl` lifts (cycles 6.4 through 6.11; 8 commits at `/Users/mvid/Development/reliq/quartz/.colosseum/changes/2026-05-14T*-cycle-6.{4..11}-*.md`). The implementation surfaced two new methodology-level findings.
+
+### Ask 6 — per-conjunct failure-mode analysis as source of bundle count
+
+**Symptom**: the cycle-6.4-through-6.11 sequence found that **7 of 8 lifts were over-bundled** in the original Step 6.0–6.3 work:
+
+| Lift | Original classification | Actual probabilistic-failure mode count |
+|---|---|---|
+| verifyGroth16_yields_decoded_negl | single | 1 (Groth16) |
+| handshake_sound_negl | dual | 1 (Groth16) |
+| handshake_binds_ecies_key_negl | triple | 1 (Groth16) |
+| session_confidentiality_negl | triple | 0 (deterministic-only) |
+| session_confidentiality_via_extractor_negl | triple | 0 (deterministic-only) |
+| cross_component_transfers_conservation_negl | triple | 1 (Groth16) |
+| cross_component_auction_winner_determinism_negl | triple | 1 (Groth16) |
+| cross_component_session_bind_negl (terminal) | quad (5-summand) | 1 (Groth16) |
+
+The original plan classified each lift by the union-bound shape implied by an *axiom count*: how many axioms appear in the classical-proof closure. The actual probabilistic-failure-mode count is determined by which of those axioms have an actual probabilistic-failure event vs. which are consumed unconditionally (derived theorems, equalities, definitional rewrites).
+
+The terminal lift `cross_component_session_bind_negl` is the most extreme example: 5-summand → single. Its classical proof's 5-conjunct conclusion has only one probabilistic-failure mode (Groth16-soundness via `handshake_sound`); the other 4 conjuncts are unconditional theorems in the current carrier model (`pkOfUserData_commitHash` consumes `commitHashE` but has no probabilistic-failure event; `roundtrip` is a derived theorem).
+
+**Provenance**:
+- Most extreme single instance: `/Users/mvid/Development/reliq/quartz/.colosseum/changes/2026-05-14T20-13-44Z-cycle-6.11-terminal-lift-deftie.md`
+- Combined sequence summary in the same file under "Pattern summary".
+- Every cycle 6.4–6.11 change record contains its own per-conjunct analysis.
+
+**Proposed change**: `crucible-compose` skill prose must require, for each lifted theorem, a per-conjunct table:
+
+| Conjunct | Status | Source |
+|---|---|---|
+| Pᵢ | probabilistic-failure mode (needs negligibility hypothesis) | underlying primitive |
+| Pⱼ | unconditional theorem | derived theorem name |
+| Pₖ | derived from `Accepted` / hypotheses | projection name |
+
+The lift's bundle count is the count of `probabilistic-failure mode` rows, NOT the count of axioms in the closure.
+
+**Documented form** (lands in this PR): extend `crucible-compose`'s prose with a "per-conjunct failure-mode classification" step at lift-cycle setup. The executing agent fills in the table; the change record references it.
+
+**Enforced form** (deferred): compose programmatically asks `lean_verify` for the closure of each conjunct and matches against a methodology rule for "is this conjunct a `theorem`, an `axiom`, or a `projection`?" Same executable-layer dependency as the other asks.
+
+### Ask 7 — degenerate-zero-advantage cycles must declare intent
+
+**Symptom**: cycles 6.7 and 6.8 produced lifts whose failure advantage is **identically zero** — the classical proof has *no* probabilistic-failure event under the current spec abstraction. The conclusion follows unconditionally from the hypotheses (`roundtrip` is a derived theorem in `Ecies.lean`, not a separately-named axiom; `pkOfUserData_commitHash` is a theorem derived from `commitHash_inj`).
+
+These lifts are valid but underwhelming — they prove "the spec's deterministic-only failure event has probability zero," not a cryptographic claim. A real cryptographic claim (e.g., ECIES IND-CPA) would require a separate refactor to introduce a probabilistic encryption scheme + a CPA game + an IND-CPA hypothesis.
+
+**Provenance**:
+- `/Users/mvid/Development/reliq/quartz/.colosseum/changes/2026-05-14T20-03-06Z-cycle-6.7-session-confidentiality-deftie.md` (first instance)
+- `/Users/mvid/Development/reliq/quartz/.colosseum/changes/2026-05-14T20-05-22Z-cycle-6.8-session-extractor-deftie.md` (second instance)
+
+**Proposed change**: when a cycle's lift has `failAdv 𝒜 n = 0` proven identically, the change record must explicitly state whether:
+
+- **(a) intentional non-modelling**: the spec is not modelling the relevant probabilistic phenomenon (the lift is honest within the spec's scope; e.g. session_confidentiality_negl models deterministic correctness, not CPA security); OR
+- **(b) genuine vacuity**: the lift is structurally trivial and the underlying theorem should not be called a "security lemma" without further refactor.
+
+For session_confidentiality the answer is (a). Without this discipline, an auditor reading a zero-advantage lift could mistake (a) for (b) or vice-versa.
+
+**Documented form** (lands in this PR): extend `crucible-compose`'s prose with an "(a)/(b) declaration" requirement for any cycle whose `failAdv` proves identically zero. The declaration is a short prose statement in the change record naming the specific spec-abstraction limitation that makes the lift degenerate, plus the refactor that would lift it from (a) to a real (non-zero) cryptographic claim.
+
+**Enforced form** (deferred): compose programmatically detects `confFailAdv 𝒜 n = 0` proof structures and gates the cycle exit on a (a)/(b) declaration being present in the change record. Same executable-layer dependency.
+
+---
+
+## Methodology validation evidence (cycle-6.4-through-6.11)
+
+A positive observation for the methodology: the cycle 6.4 def-tying pattern — `Pr[…]`-based advantage `def`, concrete reduction `def`, `probEvent_mono` + `probEvent_bind_pure_comp` proof — applied **mechanically across 8 different lift shapes** (single-bundle, dual, triple, quad; single-conjunct, multi-conjunct, with-existential, all-unconditional). All 8 cycles compiled first-try after the first one (modulo two orphan-docstring cleanups). No new VCV-io infrastructure was needed.
+
+This means: when the colosseum agent runs `crucible-compose` on a new project's lift sequence, the cycle 6.4 def-tying recipe is **the** known-working pattern. The recipe replicates and the cycle plan can confidently set per-cycle effort estimates based on it.
 
 ---
 
