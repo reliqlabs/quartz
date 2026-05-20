@@ -27,6 +27,14 @@ VCV-io OracleComp refactor done. Cumulative: **40 → 26 axioms (-14, ~35%)**; 8
   - Upstream PR for the refactor: ready to draft; ledger paragraph is the spine of the PR description.
 - **Background**: `.colosseum/attacks/temporal_zk_accept_requires_vkey-multimodel-2026-05-12T16-38-48Z/synthesis.md` — Quint adversarial review (closed loop, action-tag rewrite landed pre-VCVio)
 
+### Methodology updates from verified-rcv Round 3a (2026-05-20)
+
+Three things the Colosseum agent here may not be aware of yet. If a fresh spec-authoring or adversarial cycle starts (new spec, IsPPT hardening, axiom (a)-bucket demotion that requires a re-verify pass), prefer these patterns over the pre-Round-3a single-shot flow.
+
+- **v0.4 methodology asks O–T** at `/Users/mvid/Development/reliq/colosseum/methodology-v0.4-candidates.md`: cross-critique as standard post-fan-out step (Ask O), defense round with defend/concede/third-option protocol (Ask P), intent-tightening on encoding-discipline as the convergence lever (Ask Q), re-cross-critique after any canonical revision touching load-bearing predicates (Ask R), ghost-variable plus state-invariant encoding for action-guard-only safety properties (Ask S), `--variant high` reasoning-effort flag as the default for spec-class adversarial dispatch (Ask T). All have direct Round 3a dogfood evidence; SKILL codification pending.
+- **Dispatch infrastructure**: agents distribute as canonical-body plus per-harness wrappers. `colosseum/agents/{spec-adversary,quint-spec-generator}-body.md` is the single source of truth; per-harness wrappers live in `colosseum/agents/` (Claude Code) and `colosseum/agents/opencode/` (OpenCode); rebuild via `colosseum/scripts/install-agents.py build`. Multi-voice fan-out via opencode is the standard shape for spec-class adversarial work. Reference dispatch scripts at `verified-rcv/.colosseum/scripts/*_dispatch.py` cover fan-out, cross-critique, defense, and re-cross-critique on both Quint and Lean layers.
+- **Intent-first patches**: when a finding could be fixed at intent OR spec level, patch the intent first. Downstream specs derive from it; spec-only patches let the intent rot.
+
 ## Current product priority (Quartz agent)
 
 **Open product blockers (in approximate order of urgency):**
