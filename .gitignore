@@ -39,3 +39,13 @@ _apalache-out/
 
 # Lean build output
 .lake/
+
+# Verus invocation artifacts: when `verus path/to/foo.rs` is run from the
+# repo root, it drops a Mach-O binary at ./foo alongside the .rs source.
+# These are build artifacts and must not be committed.
+/attested
+/encryption
+/instantiate
+/key_manager
+/session_create
+/session_set_pub_key
