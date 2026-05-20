@@ -94,18 +94,35 @@ mod verification {
         assert_eq!(p, pub_key);
     }
 
-    /// RawSessionSetPubKey ↔ SessionSetPubKey preserves nonce when
-    /// the HexBinary nonce is exactly 32 bytes.
+    /// RawSessionSetPubKey ↔ SessionSetPubKey preserves both the
+    /// nonce AND the pub_key bytes when the HexBinary nonce is
+    /// exactly 32 bytes.
+    ///
+    /// **Round E 2026-05-20 strengthening (GPT-5.5 #2 sibling)**: the
+    /// prior version unpacked only the nonce from the round-tripped
+    /// message, leaving the pub_key bytes unchecked. A regression in
+    /// `RawSessionSetPubKey::from(SessionSetPubKey)` that truncated or
+    /// re-encoded the pub_key would have passed.
     #[kani::proof]
     #[kani::unwind(40)]
     fn session_set_pub_key_raw_roundtrip() {
         let nonce: Nonce = kani::any();
         let pub_key = vec![0x04u8; 33];
-        let original = SessionSetPubKey::new(nonce, pub_key);
+        let original = SessionSetPubKey::new(nonce, pub_key.clone());
         let raw: RawSessionSetPubKey = original.clone().into();
         let back = SessionSetPubKey::try_from(raw)
             .expect("32-byte nonce roundtrips");
-        let (n, _) = back.into_tuple();
-        assert_eq!(n, nonce);
+        let (n, p) = back.into_tuple();
+        assert_eq!(n, nonce, "nonce must survive roundtrip");
+        assert_eq!(p, pub_key, "pub_key bytes must survive roundtrip");
     }
+
+    // **Round E 2026-05-20 attempted addition (Kimi #5), withdrawn**:
+    // a `session_set_pub_key_user_data_deterministic` harness was
+    // drafted matching the `session_create.rs` counterpart, but
+    // intractable for the same reason — SHA-256 + serde_json path
+    // explosion under any reasonable unwind bound. See the analogous
+    // commentary block in `session_create.rs`'s verification module
+    // for the full rationale and the three options the Quartz agent
+    // could pursue. Gap documented; harness not landed.
 }

@@ -250,20 +250,21 @@ impl Session {
 mod verification {
     use super::*;
 
-    /// Session::with_pub_key never panics for any input combination.
-    /// Proves: the function is total (always returns Some or None).
-    #[kani::proof]
-    fn session_with_pub_key_no_panic() {
-        let create_nonce: Nonce = kani::any();
-        let check_nonce: Nonce = kani::any();
-        // Bound pub_key length to keep verification tractable
-        let pk_len: usize = kani::any_where(|&n: &usize| n <= 64);
-        let pub_key: Vec<u8> = vec![0u8; pk_len];
-
-        let session = Session::create(create_nonce);
-        // This must not panic — it returns Option
-        let _result = session.with_pub_key(check_nonce, pub_key);
-    }
+    // Round E 2026-05-20: `session_with_pub_key_no_panic` removed.
+    // The harness asserted only that `Session::with_pub_key` does not
+    // panic; the function body contains a nonce comparison, an
+    // `is_none()` check, and an `Option` return, with no panic source
+    // (no indexing, no unwrap, no division). The non-panic property
+    // was vacuously true and the harness did not exercise any
+    // functional property of the production code. Kimi #4 and
+    // Nemotron #1 in the Round E cross-family review flagged this
+    // independently; both other voices included it in their
+    // "tautological" pattern count. The remaining `session_with_pub_key_guards`
+    // harness covers the functional property (nonce-matching guard
+    // behavior); the dropped harness was strictly redundant.
+    //
+    // See .colosseum/attacks/kani-2026-05-20/synthesis.md for the
+    // cross-voice analysis.
 
     /// Session::with_pub_key returns Some only when nonce matches
     /// and pub_key was None.

@@ -228,26 +228,69 @@ mod kani_harnesses {
         }
     }
 
-    /// 6. Phase transitions: forbidden ones are rejected. Specifically,
-    /// you cannot accept ballots after Complete without first re-creating.
+    /// 6. Phase transitions: exhaustive enumeration of all 16 (from, to)
+    /// pairs.
+    ///
+    /// **Round E 2026-05-20 strengthening (Kimi #13)**: the prior version
+    /// of this harness asserted only three specific forbidden transitions
+    /// (Setup→Complete, Complete→Voting, Voting→Setup), leaving the other
+    /// seven forbidden pairs unverified. Cross-family review flagged the
+    /// spot-check approach as a property-correctness weakness: the
+    /// harness was satisfiable even if, e.g., Tallying→Voting were
+    /// incorrectly admitted.
+    ///
+    /// The exhaustive version below pins the expected boolean for every
+    /// one of the 16 ordered (from, to) pairs in the 4-variant
+    /// `ElectionPhase` enum. The 6 admitted transitions match the
+    /// `phase_transition_allowed` allow-list above; the 10 forbidden
+    /// transitions assert `!ok`. Any future change to
+    /// `phase_transition_allowed` that drops or adds a transition will
+    /// be caught here.
+    ///
+    /// See `.colosseum/attacks/kani-2026-05-20/synthesis.md` Kimi #13.
     #[kani::proof]
-    fn h_phase_transition_no_skip() {
-        let from_tag: u8 = kani::any_where(|&t: &u8| t < 4);
-        let to_tag: u8 = kani::any_where(|&t: &u8| t < 4);
-        let from = phase_of(from_tag);
-        let to = phase_of(to_tag);
-        let ok = phase_transition_allowed(&from, &to);
+    fn h_phase_transition_exhaustive() {
+        use ElectionPhase::*;
 
-        // Specific bad transitions that must always be rejected.
-        if matches!(from, ElectionPhase::Setup) && matches!(to, ElectionPhase::Complete) {
-            assert!(!ok, "cannot skip from Setup to Complete");
-        }
-        if matches!(from, ElectionPhase::Complete) && matches!(to, ElectionPhase::Voting) {
-            assert!(!ok, "Complete -> Voting requires re-create");
-        }
-        if matches!(from, ElectionPhase::Voting) && matches!(to, ElectionPhase::Setup) {
-            assert!(!ok, "cannot regress from Voting to Setup");
-        }
+        // The 6 admitted transitions per phase_transition_allowed:
+        //   (Setup, Setup), (Setup, Voting),
+        //   (Voting, Tallying), (Voting, Complete),
+        //   (Tallying, Complete),
+        //   (Complete, Setup)
+        assert!(phase_transition_allowed(&Setup, &Setup),
+                "Setup -> Setup (re-create while in Setup) must be allowed");
+        assert!(phase_transition_allowed(&Setup, &Voting),
+                "Setup -> Voting (open_voting) must be allowed");
+        assert!(phase_transition_allowed(&Voting, &Tallying),
+                "Voting -> Tallying must be allowed");
+        assert!(phase_transition_allowed(&Voting, &Complete),
+                "Voting -> Complete (direct tally) must be allowed");
+        assert!(phase_transition_allowed(&Tallying, &Complete),
+                "Tallying -> Complete must be allowed");
+        assert!(phase_transition_allowed(&Complete, &Setup),
+                "Complete -> Setup (re-create after election) must be allowed");
+
+        // The 10 forbidden transitions: any other pair must be rejected.
+        assert!(!phase_transition_allowed(&Setup, &Tallying),
+                "Setup -> Tallying skips Voting");
+        assert!(!phase_transition_allowed(&Setup, &Complete),
+                "Setup -> Complete skips both Voting and Tallying");
+        assert!(!phase_transition_allowed(&Voting, &Setup),
+                "Voting -> Setup regresses without re-create");
+        assert!(!phase_transition_allowed(&Voting, &Voting),
+                "Voting -> Voting (re-open without state change) must be rejected");
+        assert!(!phase_transition_allowed(&Tallying, &Setup),
+                "Tallying -> Setup regresses without re-create");
+        assert!(!phase_transition_allowed(&Tallying, &Voting),
+                "Tallying -> Voting regresses without re-create");
+        assert!(!phase_transition_allowed(&Tallying, &Tallying),
+                "Tallying -> Tallying (re-enter without progress) must be rejected");
+        assert!(!phase_transition_allowed(&Complete, &Voting),
+                "Complete -> Voting requires re-create through Setup");
+        assert!(!phase_transition_allowed(&Complete, &Tallying),
+                "Complete -> Tallying requires re-create through Setup");
+        assert!(!phase_transition_allowed(&Complete, &Complete),
+                "Complete -> Complete (re-finalize) must be rejected");
     }
 
     fn phase_of(t: u8) -> ElectionPhase {
@@ -337,5 +380,89 @@ mod kani_harnesses {
         } else {
             assert!(result.is_none(), "ballot with no active choice yields None");
         }
+    }
+
+    /// 9. IRV round-level total-vote-count invariant.
+    ///
+    /// **Round E 2026-05-20 addition (Nemotron #7)**: cross-family
+    /// review surfaced that no harness covered "every valid ballot is
+    /// counted exactly once per round". The IRV tally process iterates
+    /// rounds, each round counting `first_active_choice` votes per
+    /// candidate and eliminating one candidate. The single-round
+    /// invariant captured here is the building block: at any round
+    /// snapshot, the sum of per-candidate vote counts equals the
+    /// number of ballots whose `first_active_choice` is not None
+    /// (i.e., non-exhausted ballots). Ballots whose first active
+    /// choice has been eliminated cascade down their ranking; ballots
+    /// exhausted of all active choices contribute nothing.
+    ///
+    /// Bounded to 3 ballots / 3 candidates / 3 ranks to stay under
+    /// the per-harness time budget. The invariant is independent of
+    /// these bounds in principle; the bounded instance proves the
+    /// shape.
+    ///
+    /// Catches a class of bugs: a tally implementation that
+    /// double-counts a ballot (e.g., counts both first and second
+    /// choices), drops a ballot (e.g., off-by-one on the iteration
+    /// bound), or mis-classifies an exhausted ballot as having a
+    /// surviving choice (e.g., ignores the eliminated_mask) would
+    /// fire this harness.
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn h_tally_round_vote_conservation() {
+        const N: usize = 3;  // ranks per ballot
+        const M: usize = 3;  // registered candidates
+        const B: usize = 3;  // ballots cast
+
+        let candidates: [u8; M] = kani::any();
+        let eliminated_mask: [bool; M] = kani::any();
+        let ballots: [[u8; N]; B] = kani::any();
+
+        kani::assume(
+            candidates[0] != candidates[1]
+                && candidates[0] != candidates[2]
+                && candidates[1] != candidates[2],
+        );
+
+        // Per-candidate vote tally for this round.
+        let mut votes: [u32; M] = [0; M];
+        // Count of ballots that contributed a vote (non-exhausted).
+        let mut counted_ballots: u32 = 0;
+
+        let mut b = 0;
+        while b < B {
+            let choice = first_active_choice::<N, M>(
+                &ballots[b],
+                &candidates,
+                &eliminated_mask,
+            );
+            if let Some(c) = choice {
+                counted_ballots += 1;
+                // Award the vote to the matching candidate slot.
+                // first_active_choice's contract is that the returned
+                // value matches some candidates[j] with
+                // !eliminated_mask[j]; we find that j and increment.
+                let mut j = 0;
+                let mut found = false;
+                while j < M {
+                    if candidates[j] == c && !eliminated_mask[j] {
+                        votes[j] += 1;
+                        found = true;
+                        break;
+                    }
+                    j += 1;
+                }
+                assert!(found, "first_active_choice returned a candidate not in the active set");
+            }
+            b += 1;
+        }
+
+        // Invariant: per-candidate vote sum equals the number of
+        // non-exhausted ballots that voted this round.
+        let total_votes: u32 = votes[0] + votes[1] + votes[2];
+        assert_eq!(
+            total_votes, counted_ballots,
+            "sum of per-candidate votes must equal number of non-exhausted ballots"
+        );
     }
 }

@@ -9,23 +9,48 @@ pub const REQUESTS: Item<Vec<Request>> = Item::new(REQUESTS_KEY);
 pub const DENOM: Item<String> = Item::new("donation_denom");
 pub const BALANCES: Map<&str, HexBinary> = Map::new("balances");
 
-// ── Kani verification harnesses ────────────────────────────────────
+// ── Kani spec harnesses (post-Round-E remediation) ─────────────────
 //
-// The transfers contract is a privacy-preserving balance tracker:
-// the contract holds encrypted state and a queue of pending Request
-// values; the enclave processes the queue and emits a UpdateMsg that
-// (a) replaces the encrypted state and (b) drains exactly `quantity`
-// requests off the front and (c) emits a list of plaintext
-// withdrawal `BankMsg::Send`s.
+// **Round E 2026-05-20 framing correction**: cross-family review of
+// this module (Claude #2 critical, Kimi #6 serious, gpt-5.5 verdict
+// BREAKS on transfers/state.rs) surfaced that every harness in this
+// module verifies a pure helper function (`safe_drain_len`,
+// `checked_sum_withdrawals`, `next_seq`) that exists ONLY inside
+// this `#[cfg(kani)]` module. Production `contract.rs::execute::update`
+// does not invoke any of them. Concretely:
 //
-// The verification targets here are the pure, arithmetic-and-bounds
-// pieces of `contract.rs::execute::update` and the Request queue
-// discipline. We mirror those pieces as pure helper functions so Kani
-// can reason about them without dragging the cosmwasm storage machinery
-// or serde monomorphisations into the proof obligation set.
+//   - Production `update` (`contract.rs:194`) does
+//     `requests.drain(0..msg.quantity as usize)` with no bounds
+//     guard. If `msg.quantity > requests.len()`, the drain panics.
+//     `safe_drain_len` documents the missing guard but does not
+//     enforce it.
+//   - Production never sums withdrawals or accumulates a global
+//     deposit total. `checked_sum_withdrawals` and the H7/H8
+//     deposit-accumulator pattern document a defensive
+//     implementation the production code does not have.
+//
+// The harnesses still have documentary value: they capture the
+// safety specification of a defensive `update` handler the Quartz
+// agent could land in production. They are NOT verification of the
+// currently-deployed contract behavior. Round E synthesis recommends
+// either re-hosting the helpers as production code (Quartz-agent
+// scope) or deleting this module entirely. Pending that decision,
+// the module is preserved here under the explicit `spec_harnesses`
+// framing so that the CI-reported "verified" count is honestly
+// labelled.
+//
+// Round C #17 (single-vs-drain divergence between Quint spec and
+// Rust contract) is the same finding as Claude #2 here; both rounds
+// converge on "the contract needs a quantity-vs-prefix consistency
+// check before draining". The Verus prototype's
+// `crates/contracts/core/verus-prototype/session_set_pub_key.rs`
+// Critical 2 fix from Round D landed the SEQUENCE_NUM reset; the
+// matching defensive update guard for transfers is queued.
+//
+// See `.colosseum/attacks/kani-2026-05-20/synthesis.md` Critical 2.
 
 #[cfg(kani)]
-mod verification {
+mod spec_harnesses {
     use cosmwasm_std::{Addr, Uint128};
 
     /// Pure mirror of the drain-bounds guard in
