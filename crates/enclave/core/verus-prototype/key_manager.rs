@@ -175,23 +175,28 @@ pub fn import_sk(bytes: &Vec<u8>) -> (r: Result<SigningKey, KmError>)
 
 // ── Theorems ───────────────────────────────────────────────────────────────
 
-/// THEOREM 1 — `pub_key_matches_sk`: the core binding invariant.
-///
-/// For any DefaultKeyManager `km`, `pub_key(&km).0` is exactly the verifying
-/// key derived from `km.sk`. The enclave cannot publish a VerifyingKey whose
-/// private counterpart it does not hold — there is exactly one path from
-/// `km.sk` to the published value, namely `verifying_key_spec(km.sk)`.
-pub proof fn pub_key_matches_sk(km: DefaultKeyManager)
-    ensures
-        // The `pub_key` exec fn's postcondition already pins this. We restate
-        // it at the spec level so the binding invariant is named and callable.
-        forall |k: DefaultKeyManager| #[trigger] verifying_key_spec(k.sk)
-            == verifying_key_spec(k.sk),
-{
-    // The proof is by the `ensures` clause of `pub_key`: any call returns a
-    // PubKey whose .0 is verifying_key_spec(km.sk). Verus discharges this
-    // structurally from the exec wrapper's postcondition.
-}
+// The original prototype carried a `pub proof fn pub_key_matches_sk` here
+// whose `ensures` clause was the propositional tautology
+//     forall |k: DefaultKeyManager| verifying_key_spec(k.sk) == verifying_key_spec(k.sk)
+// (Round D claude.md attack #17; cross-critique 2026-05-20 confirmed via
+// GPT-5.5 and Kimi independently). It claimed to be "the core binding
+// invariant" but was structurally `x == x` and added nothing.
+//
+// The actual snapshot binding contract is the `pub_key` exec function's
+// `ensures r.0 == verifying_key_spec(km.sk)` at lines 122-126 above. Any
+// caller that reads `pub_key`'s return value already has that postcondition
+// in scope.
+//
+// The temporal binding contract — that the contract-published pub_key
+// stays in sync with the enclave-held km.sk across `Import::import`
+// mutations and KMS-fallback key changes in DstackKeyManager — is NOT
+// proved by this prototype. The cross-critique synthesis at
+// .colosseum/attacks/verus-prototype-cross-critique-2026-05-20/synthesis.md
+// records the refined Critical 5 remediation: (a) model DefaultKeyManager
+// import as a mutation, (b) model DstackKeyManager (currently unmodeled),
+// (c) add a session-lifecycle ghost layer with a contract_pub_key field
+// and invariants tying it to km.sk across state transitions, (d) decide
+// the production key-rotation policy. That work is a follow-up cycle.
 
 /// THEOREM 2 — `import_export_roundtrip`: exporting then importing
 /// recovers a SigningKey with the same public key.

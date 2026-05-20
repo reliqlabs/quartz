@@ -386,10 +386,31 @@ pub fn attested_handle_with_fallible_att(
 // gRPC querier is modelled as an external_body function returning the verified
 // bool. encode/decode failures are folded into a single nondeterministic
 // failure path (an Err Result from the stub).
+//
+// Round D Critical 4 fix (2026-05-20, cross-critique ratified 5-of-5 DEFEND):
+// the prior prototype carried only the proof and public_inputs as opaque
+// blobs, and its Ok postcondition terminated at "the verifier said yes on
+// these inputs". The wrapper's user_data and compose_hash pre-checks
+// validate self-declared fields on the attestation, not values extracted
+// from the proof; the production handler at
+// crates/contracts/core/src/handler/execute/attested.rs:94-99 forwards the
+// proof and public_inputs verbatim to ProofVerifyGnark without any
+// equality check binding the public inputs back to the self-declared
+// fields. The Verus side now models this binding requirement explicitly
+// via a new uninterpreted predicate `proof_journal_binds` and a new
+// external_body verification step `verify_proof_journal_binds` that is
+// called after the gnark verifier confirms the proof. The production
+// side must implement the binding check (decoding zkdcap_public_inputs
+// or zkdcap_journal and verify-equaling the encoded report_data and
+// compose_hash against the message's self-declared fields) before this
+// Verus spec corresponds to deployed behavior. The production hook is
+// flagged in the ledger as a Quartz-agent follow-up.
 
 pub struct DstackZkAttestation {
     pub zkdcap_proof: u64,         // opaque blob; only encoded, not inspected
-    pub zkdcap_public_inputs: u64, // ditto
+    pub zkdcap_public_inputs: u64, // public inputs to the gnark verifier
+    pub user_data: UserData,       // self-declared; wrapper pre-checks bind this
+    pub compose_hash: MrEnclave,   // self-declared; wrapper pre-checks bind this
 }
 
 // Spec-level uninterpreted predicate for "the verifier said yes on these
@@ -398,6 +419,19 @@ pub uninterp spec fn zk_query_verify_succeeded(
     proof: u64,
     public_inputs: u64,
     vkey: u64,
+) -> bool;
+
+// Spec-level uninterpreted predicate for "the proof's public inputs encode
+// the expected user_data and compose_hash." This is the binding the
+// production handler must enforce by decoding zkdcap_public_inputs (or
+// zkdcap_journal) and verify-equaling the encoded values against the
+// message's self-declared `user_data` and `compose_hash`. Round D
+// Critical 4 fix.
+pub uninterp spec fn proof_journal_binds(
+    proof: u64,
+    public_inputs: u64,
+    expected_compose_hash: MrEnclave,
+    expected_user_data: UserData,
 ) -> bool;
 
 // External-body stub for the gRPC query + decode pipeline. Returns:
@@ -422,6 +456,28 @@ pub fn zk_query_verify(
     unimplemented!()
 }
 
+// External-body stub for the public-inputs / journal decoding +
+// verify-equal step. Returns Ok iff the proof's encoded report_data and
+// compose_hash match the supplied expected values. Production
+// implementation lives at crates/contracts/core/src/handler/execute/attested.rs
+// and is flagged in .colosseum/ledger.md as the Quartz-agent follow-up
+// for Round D Critical 4.
+#[verifier::external_body]
+pub fn verify_proof_journal_binds(
+    proof: u64,
+    public_inputs: u64,
+    expected_compose_hash: MrEnclave,
+    expected_user_data: UserData,
+) -> (r: Result<(), Error>)
+    ensures
+        match r {
+            Ok(()) => proof_journal_binds(proof, public_inputs, expected_compose_hash, expected_user_data),
+            Err(_) => true,
+        },
+{
+    unimplemented!()
+}
+
 pub fn dstack_zk_handle(
     msg: DstackZkAttestation,
     storage: &mut Storage,
@@ -429,14 +485,18 @@ pub fn dstack_zk_handle(
     ensures
         match r {
             Ok(_) => {
-                // Either the vkey was unset (skipped) or it was set and the
-                // verifier said yes.
+                // Either the vkey was unset (skipped) or the vkey was set AND
+                // the verifier said yes AND the proof's public inputs bind
+                // back to the wrapper-validated user_data and compose_hash.
+                // The binding clause is the Round D Critical 4 fix.
                 &&& old(storage).config matches Some(raw)
                 &&& (raw.zkdcap_vkey == 0
-                     || zk_query_verify_succeeded(msg.zkdcap_proof, msg.zkdcap_public_inputs, raw.zkdcap_vkey))
+                     || (zk_query_verify_succeeded(msg.zkdcap_proof, msg.zkdcap_public_inputs, raw.zkdcap_vkey)
+                         && proof_journal_binds(msg.zkdcap_proof, msg.zkdcap_public_inputs, msg.compose_hash, msg.user_data)))
             }
             Err(Error::ZkdcapVerificationFailed) => {
-                // Vkey was set AND (verifier said no OR encode/decode failed).
+                // Vkey was set AND (verifier said no OR encode/decode failed
+                // OR the binding check failed).
                 &&& old(storage).config matches Some(raw)
                 &&& raw.zkdcap_vkey != 0
             }
@@ -454,9 +514,26 @@ pub fn dstack_zk_handle(
         None => return Ok(Response::new().add_attribute("action", "zkdcap_verify_skipped")),
     };
 
+    // First gate: the gnark verifier accepts the proof against the supplied
+    // public inputs.
     match zk_query_verify(msg.zkdcap_proof, msg.zkdcap_public_inputs, vkey) {
-        Ok(true) => Ok(Response::new().add_attribute("action", "zkdcap_verified")),
-        Ok(false) => Err(Error::ZkdcapVerificationFailed),
+        Ok(true) => {}
+        Ok(false) => return Err(Error::ZkdcapVerificationFailed),
+        Err(_) => return Err(Error::ZkdcapVerificationFailed),
+    }
+
+    // Second gate (Round D Critical 4 fix): the proof's public inputs must
+    // encode the wrapper-validated user_data and compose_hash. Without this
+    // check, an attacker can submit a valid proof for a different enclave
+    // while self-declaring user_data and compose_hash that match the
+    // wrapper's expectations.
+    match verify_proof_journal_binds(
+        msg.zkdcap_proof,
+        msg.zkdcap_public_inputs,
+        msg.compose_hash,
+        msg.user_data,
+    ) {
+        Ok(()) => Ok(Response::new().add_attribute("action", "zkdcap_verified")),
         Err(_) => Err(Error::ZkdcapVerificationFailed),
     }
 }
