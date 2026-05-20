@@ -361,17 +361,39 @@ impl DstackKeyManager {
 //     already set, so it cannot rotate. A new handler is required
 //     for this variant.
 //
-// **Production policy recommendation (this prototype documents but
-// does not enforce)**: implement `import_with_invalidate` semantics
-// at the production layer by either (i) removing the
-// `Import` impls on `DefaultKeyManager` and `DstackKeyManager`
-// entirely (force re-init on key change, no rotation path), OR (ii)
-// keeping the Import impls but adding a contract-side message that
-// resets session state when invoked. Option (i) is cheaper and safer
-// against a class of bugs where the rotation message is forgotten;
-// option (ii) is more flexible operationally. The Quartz agent
-// decides; this prototype proves both variants preserve the
-// invariant so either decision is sound.
+// **Production policy decision (recorded 2026-05-20): Option A,
+// `import_with_invalidate` semantics, implemented by removing the
+// `Import` impls from production entirely**.
+//
+// The decision: production removes the `impl Import for
+// DefaultKeyManager` and `impl Import for DstackKeyManager` blocks
+// at `crates/enclave/core/src/key_manager/{default,dstack}.rs`,
+// along with the `try_restore` path at
+// `crates/enclave/core/src/lib.rs:317-338` that invokes them. If
+// the enclave key needs to change, the contract is re-deployed
+// from scratch. No live-rotation path exists in the deployed code.
+//
+// Rationale: the Quartz product roadmap does not currently require
+// live key rotation; "re-init from scratch via contract redeploy"
+// is the standard Cosmos contract operational pattern; the
+// deletion surface is small while the alternative (a
+// `session_rotate_pub_key` contract message) would expand the
+// attack surface meaningfully. Forward migration is intact —
+// rotation can be added later if a roadmap item requires it.
+//
+// The `import_with_rotate` variant in `DefaultKeyManagerLifecycle`
+// and `DstackKeyManagerLifecycle` below is **retained as a
+// documentary counterfactual**: the prototype proves that if a
+// `session_rotate_pub_key` message were added in the future, an
+// atomic update of `contract_pub_key` would preserve the binding
+// invariant. The variant is not the current production policy.
+//
+// This prototype enforces only what production should enforce
+// under Option A: any path that changes `km.sk` either does not
+// exist (the deleted `Import` impls) or, if exposed for testing /
+// migration via the `*Lifecycle::import_with_invalidate` method,
+// must clear `contract_pub_key` to force re-handshake. The
+// `binding_holds` invariant is preserved in both cases.
 
 /// Wraps a `DefaultKeyManager` with a ghost `contract_pub_key` field
 /// tracking what the contract currently believes the enclave's
