@@ -62,6 +62,20 @@ pub struct DefaultKeyManager { pub sk: SigningKey }
 /// computes this function.
 pub uninterp spec fn verifying_key_spec(sk: SigningKey) -> VerifyingKey;
 
+/// Spec-level mirror of `signing_key_to_bytes`. Uninterpreted; the
+/// `signing_key_to_bytes` exec wrapper's `ensures` clause pins its
+/// observable result to this function. Naming this spec function lets the
+/// roundtrip axiom express a non-trivial precondition that ties the bytes
+/// to a specific `SigningKey`.
+pub uninterp spec fn signing_key_to_bytes_spec(sk: SigningKey) -> Seq<u8>;
+
+/// Spec-level mirror of `signing_key_from_slice`. Uninterpreted; the
+/// `signing_key_from_slice` exec wrapper's `ensures` clause pins its
+/// observable result to this function. The roundtrip axiom witnesses
+/// that this function returns `Ok(decoded)` on the precise byte sequence
+/// produced by `signing_key_to_bytes_spec(sk)`.
+pub uninterp spec fn signing_key_from_slice_spec(b: Seq<u8>) -> Result<SigningKey, KmError>;
+
 // ── External-body wrappers (trust boundary) ────────────────────────────────
 
 /// Mirrors `VerifyingKey::from(&SigningKey)` (the `.into()` in pub_key()).
@@ -71,13 +85,25 @@ pub fn verifying_key_exec(sk: &SigningKey) -> (r: VerifyingKey)
 { unimplemented!() }
 
 /// Mirrors `SigningKey::to_bytes().to_vec()` (the Export operation).
+/// The `ensures` clause links the observable byte output to the
+/// uninterpreted spec function. Round D Critical 1 fix (2026-05-20):
+/// without this ensures, the roundtrip axiom below had no way to assert
+/// that its `bytes` parameter actually came from `to_bytes(sk)`, which
+/// admitted `requires true` and made the axiom usable as an unsound
+/// premise at any call site.
 #[verifier::external_body]
 pub fn signing_key_to_bytes(sk: &SigningKey) -> (r: Vec<u8>)
+    ensures r@ == signing_key_to_bytes_spec(*sk),
 { unimplemented!() }
 
 /// Mirrors `SigningKey::from_slice(&data)` (the Import operation).
+/// The `ensures` clause links the observable Result to the uninterpreted
+/// spec function. Same Round D Critical 1 motivation as
+/// `signing_key_to_bytes`: needed to give the axiom non-trivial
+/// preconditions that the caller can actually witness.
 #[verifier::external_body]
 pub fn signing_key_from_slice(b: &Vec<u8>) -> (r: Result<SigningKey, KmError>)
+    ensures r == signing_key_from_slice_spec(b@),
 { unimplemented!() }
 
 // ── Trust-boundary roundtrip axiom ─────────────────────────────────────────
@@ -86,20 +112,22 @@ pub fn signing_key_from_slice(b: &Vec<u8>) -> (r: Result<SigningKey, KmError>)
 /// 32-byte scalar representation and decoding produces the same key.
 /// This is the k256 library's contract; we name it explicitly here.
 ///
-/// The axiom is stated at the spec level on a ghost link between
-/// `signing_key_to_bytes` and `signing_key_from_slice`. Since both exec
-/// fns are external_body without ensures clauses, we use a spec-level
-/// axiom that links them via `verifying_key_spec`: any bytes produced by
-/// to_bytes(sk) can be decoded back into a key with the same public key.
+/// **Round D Critical 1 fix (2026-05-20, three voices agreed)**: the
+/// axiom previously had `requires true` and was applied at
+/// `import_export_roundtrip` with bare unbound parameters, concluding
+/// `verifying_key_spec(decoded) == verifying_key_spec(sk)` for any
+/// `(sk, bytes, decoded)` triple. That admitted the derivation of
+/// `false` (pick `decoded` and `sk` whose pub keys differ; the axiom
+/// asserted they are equal). The fix is to tie the parameters via the
+/// new spec functions: the axiom now only applies when the caller has
+/// witnessed that `bytes` is the encoding of `sk` AND `from_slice(bytes)`
+/// returned `Ok(decoded)`. The axiom is then the honest cryptographic
+/// claim: decoding the encoding recovers a key with the same public key.
 #[verifier::external_body]
 pub proof fn signing_key_bytes_roundtrip_axiom(sk: SigningKey, bytes: Seq<u8>, decoded: SigningKey)
     requires
-        // ghost premise: `bytes` came from to_bytes(sk) and `decoded` came
-        // from from_slice(bytes). In a fuller model we would tie these via
-        // spec functions on the exec wrappers; here we accept them as
-        // hypotheses of the axiom and discharge them at the call site via
-        // an additional axiom on the exec wrappers (below).
-        true,
+        bytes == signing_key_to_bytes_spec(sk),
+        signing_key_from_slice_spec(bytes) == Result::<SigningKey, KmError>::Ok(decoded),
     ensures
         verifying_key_spec(decoded) == verifying_key_spec(sk),
 {}
@@ -174,11 +202,23 @@ pub proof fn pub_key_matches_sk(km: DefaultKeyManager)
 /// This is exactly the KMS-roundtrip property: a re-keyed enclave (one that
 /// restored its sk from the KMS-stored bytes) publishes the same pub_key as
 /// the original. Discharged by `signing_key_bytes_roundtrip_axiom`.
-pub proof fn import_export_roundtrip(km: DefaultKeyManager, decoded: SigningKey, bytes: Seq<u8>)
+///
+/// **Round D Critical 1 fix (2026-05-20)**: previously took `decoded` and
+/// `bytes` as free parameters and concluded the public-key equality for any
+/// triple, propositionally equivalent to `∀ a b. f(a) == f(b)` (i.e., `f`
+/// constant). The fix tightens the theorem to apply only when the caller
+/// has witnessed that `bytes` is the export of `km.sk` AND `from_slice(bytes)`
+/// returned `Ok(decoded)`. With these preconditions, the equality reflects
+/// the real k256 contract and the axiom can no longer be used to derive
+/// `false`.
+pub proof fn import_export_roundtrip(km: DefaultKeyManager, decoded: SigningKey)
+    requires
+        signing_key_from_slice_spec(signing_key_to_bytes_spec(km.sk))
+            == Result::<SigningKey, KmError>::Ok(decoded),
     ensures
         verifying_key_spec(decoded) == verifying_key_spec(km.sk),
 {
-    signing_key_bytes_roundtrip_axiom(km.sk, bytes, decoded);
+    signing_key_bytes_roundtrip_axiom(km.sk, signing_key_to_bytes_spec(km.sk), decoded);
 }
 
 } // verus!
