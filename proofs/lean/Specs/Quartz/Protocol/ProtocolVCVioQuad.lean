@@ -205,7 +205,7 @@ the Step 5 (d)-bucket "doubled-negligibility" finding.
     becomes provable from a reduction to BN254 generic-group-model
     bounds. -/
 def Groth16KSAdv : Type :=
-  ℕ → ProbComp (VKey × Groth16Proof × PublicInputs)
+  ℕ → OracleComp ProtocolSpec (VKey × Groth16Proof × PublicInputs)
 
 /-- The advantage of a Groth16 knowledge-soundness adversary. -/
 abbrev Groth16KSAdvantage : Type := Groth16KSAdv → ℕ → ℝ≥0∞
@@ -226,7 +226,7 @@ def groth16KSGame (adv : Groth16KSAdvantage) :
     matching formal model, this adversary's negligibility becomes
     provable from a circuit-equivalence theorem. -/
 def CircuitEqAdv : Type :=
-  ℕ → ProbComp PublicInputs
+  ℕ → OracleComp ProtocolSpec PublicInputs
 
 /-- The advantage of a zkdcap circuit-equivalence adversary. -/
 abbrev CircuitEqAdvantage : Type := CircuitEqAdv → ℕ → ℝ≥0∞
@@ -254,7 +254,7 @@ def circuitEqGame (adv : CircuitEqAdvantage) :
     union-bound decomposition below maps each conjunct failure to a
     bundle break. -/
 def CrossSessionBindAdv : Type :=
-  ℕ → ProbComp (HandshakeCheck × RawSessionSetPubKey × PrivKey × Plaintext)
+  ℕ → OracleComp ProtocolSpec (HandshakeCheck × RawSessionSetPubKey × PrivKey × Plaintext)
 
 /-- The advantage of a `cross_component_session_bind`-attack
     adversary. Parametric on an opaque bound for the same
@@ -353,12 +353,14 @@ def crossSessionBindWinPred
 /-- **Reduction** to Groth16-soundness adversary. -/
 def reduce_crossSessionBind_to_groth
     (𝒜 : CrossSessionBindAdv) : Groth16SoundAdv :=
-  fun n => do let p ← 𝒜 n; pure (p.1.proof, p.1.inputs)
+  fun n => do
+    let p : HandshakeCheck × RawSessionSetPubKey × PrivKey × Plaintext ← 𝒜 n
+    pure (p.1.proof, p.1.inputs)
 
 /-- **Content-bearing failure advantage**. -/
 noncomputable def bindFailAdv
     (𝒜 : CrossSessionBindAdv) (n : ℕ) : ℝ≥0∞ :=
-  Pr[ crossSessionBindWinPred | 𝒜 n ]
+  Pr[ crossSessionBindWinPred | simulateQ protocolSpecHonestSim (𝒜 n) ]
 
 /-- Forward implication: a cross-component-bind win implies a Groth16
     soundness break on the projected `(h.proof, h.inputs)`. The proof
@@ -405,14 +407,14 @@ theorem cross_component_session_bind_negl
     negligible (bindFailAdv 𝒜) := by
   refine negligible_of_le ?_ h_groth_negl
   intro n
-  show Pr[ crossSessionBindWinPred | 𝒜 n ] ≤
-       Pr[ groth16SoundnessWinPred | reduce_crossSessionBind_to_groth 𝒜 n ]
+  show Pr[ crossSessionBindWinPred | simulateQ protocolSpecHonestSim (𝒜 n) ] ≤
+       Pr[ groth16SoundnessWinPred | simulateQ protocolSpecHonestSim (reduce_crossSessionBind_to_groth 𝒜 n) ]
   rw [show reduce_crossSessionBind_to_groth 𝒜 n
         = 𝒜 n >>= pure ∘
             (fun p : HandshakeCheck × RawSessionSetPubKey × PrivKey × Plaintext =>
               (p.1.proof, p.1.inputs))
-        from rfl,
-      probEvent_bind_pure_comp]
+        from rfl]
+  simp only [← map_eq_bind_pure_comp, simulateQ_map, probEvent_map]
   exact probEvent_mono (fun p _ hp =>
     crossSessionBindWinPred_imp_groth16SoundnessWinPred_projected p hp)
 

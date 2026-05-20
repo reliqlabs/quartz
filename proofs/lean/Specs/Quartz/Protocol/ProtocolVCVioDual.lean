@@ -124,13 +124,12 @@ open Specs.Quartz.Protocol.ProtocolVCVio
     that `verifyTdxQuote q = some (mr, ud)` for some `mr`, `ud`
     AND `¬ was_signed_by_dstack q`.
 
-    Mirrors the Step 6.0 `Groth16SoundAdv` shape. The adversary is
-    currently no-oracle-access (a `ProbComp` producer indexed by
-    `n`); when carrier-refinement work lands and adversaries gain
-    `OracleComp ProtocolSpec` access, this type will be lifted to
-    an `OracleComp`-valued one and the placeholder `IsPPT`
-    swapped for `PolyQueries`. -/
-def TdxVerifierSoundAdv : Type := ℕ → ProbComp TdxQuote
+    Mirrors the Step 6.0 `Groth16SoundAdv` shape. **Cycle 6.13**:
+    lifted from `ℕ → ProbComp TdxQuote` to
+    `ℕ → OracleComp ProtocolSpec TdxQuote`; the four protocol
+    oracles are available at query time and interpreted by
+    `protocolSpecHonestSim` when computing the advantage. -/
+def TdxVerifierSoundAdv : Type := ℕ → OracleComp ProtocolSpec TdxQuote
 
 /-- The advantage of a TDX-verifier soundness adversary at security
     parameter `n`, parametrised on an opaque bound.
@@ -169,8 +168,10 @@ TDX attack witness.
     `n`, outputs a candidate `HandshakeCheck`. The "win" condition
     is that `Accepted h` holds but there is no dstack-signed quote
     with `userDataOf q = some h.msgUserData` and `mrEnclaveOf q =
-    some h.expectedMr`. -/
-def HandshakeSoundAdv : Type := ℕ → ProbComp HandshakeCheck
+    some h.expectedMr`.
+
+    **Cycle 6.13**: lifted to `ℕ → OracleComp ProtocolSpec`-valued. -/
+def HandshakeSoundAdv : Type := ℕ → OracleComp ProtocolSpec HandshakeCheck
 
 /-- The advantage of a handshake-soundness adversary at security
     parameter `n`, parametrised on an opaque bound.
@@ -227,15 +228,22 @@ def handshakeSoundnessWinPred (h : HandshakeCheck) : Prop :=
     Groth16-soundness adversary by projecting the candidate
     `HandshakeCheck`'s `(proof, inputs)` pair. The classical proof of
     `handshake_sound` shows this projection witnesses a Groth16
-    soundness break whenever the handshake-soundness adversary wins. -/
+    soundness break whenever the handshake-soundness adversary wins.
+
+    **Cycle 6.13**: both source and target adversary types are now
+    `OracleComp ProtocolSpec`-valued; the do-block reuses the
+    `OracleComp` monad structure. -/
 def reduce_handshake_to_groth (𝒜 : HandshakeSoundAdv) : Groth16SoundAdv :=
-  fun n => do let h ← 𝒜 n; pure (h.proof, h.inputs)
+  fun n => do let h : HandshakeCheck ← 𝒜 n; pure (h.proof, h.inputs)
 
 /-- **Content-bearing advantage** for the handshake-soundness game: the
     probability that the adversary's `HandshakeCheck` output causes the
-    contract to accept under a quote that is not dstack-signed. -/
+    contract to accept under a quote that is not dstack-signed.
+
+    **Cycle 6.13**: routes the OracleComp adversary through
+    `simulateQ protocolSpecHonestSim` before measuring. -/
 noncomputable def handshakeFailAdv (𝒜 : HandshakeSoundAdv) (n : ℕ) : ℝ≥0∞ :=
-  Pr[ handshakeSoundnessWinPred | 𝒜 n ]
+  Pr[ handshakeSoundnessWinPred | simulateQ protocolSpecHonestSim (𝒜 n) ]
 
 /-- Forward implication: a handshake-soundness win on `h` implies a
     Groth16-soundness win on the projected `(h.proof, h.inputs)`. -/
@@ -301,18 +309,26 @@ theorem handshake_sound_negl
     negligible (handshakeFailAdv 𝒜) := by
   refine negligible_of_le ?_ h_groth_negl
   intro n
-  -- Goal: handshakeFailAdv 𝒜 n ≤ groth16SoundnessAdv (reduce_handshake_to_groth 𝒜) n
-  -- Unfold both sides to Pr[…]; the RHS equals the LHS-projected probability
-  -- via `probEvent_bind_pure_comp`.
-  show Pr[ handshakeSoundnessWinPred | 𝒜 n ] ≤
-       Pr[ groth16SoundnessWinPred | reduce_handshake_to_groth 𝒜 n ]
-  -- Rewrite the RHS using probEvent_bind_pure_comp:
-  --   reduce_handshake_to_groth 𝒜 n = 𝒜 n >>= pure ∘ (fun h => (h.proof, h.inputs))
-  -- so Pr[g | rhs] = Pr[g ∘ (fun h => (h.proof, h.inputs)) | 𝒜 n].
+  -- Goal (post-cycle-6.13): handshakeFailAdv 𝒜 n ≤
+  --   groth16SoundnessAdv (reduce_handshake_to_groth 𝒜) n
+  -- where both advantages route through `simulateQ protocolSpecHonestSim`.
+  show Pr[ handshakeSoundnessWinPred |
+              simulateQ protocolSpecHonestSim (𝒜 n) ] ≤
+       Pr[ groth16SoundnessWinPred |
+              simulateQ protocolSpecHonestSim
+                (reduce_handshake_to_groth 𝒜 n) ]
+  -- Unfold the reduction, then push `simulateQ` through `bind`/`pure`
+  -- so the RHS reduces to `Pr[winPred ∘ proj | simulateQ sim (𝒜 n)]`
+  -- via `probEvent_bind_pure_comp` at the ProbComp level.
   rw [show reduce_handshake_to_groth 𝒜 n
         = 𝒜 n >>= pure ∘ (fun h : HandshakeCheck => (h.proof, h.inputs))
-        from rfl,
-      probEvent_bind_pure_comp]
+        from rfl]
+  -- `simulateQ` is a monad morphism, so it distributes through
+  -- `bind`/`pure`; pre-simp the reduction already exposes the
+  -- `<$>`/`map` form (via `← map_eq_bind_pure_comp`). After
+  -- `simulateQ_map` + `probEvent_map`, the RHS becomes
+  -- `Pr[winPred ∘ proj | simulateQ sim (𝒜 n)]`.
+  simp only [← map_eq_bind_pure_comp, simulateQ_map, probEvent_map]
   -- LHS ≤ RHS by probEvent_mono using the forward implication.
   exact probEvent_mono (fun h _ hp =>
     handshakeSoundnessWinPred_imp_groth16SoundnessWinPred_projected h hp)

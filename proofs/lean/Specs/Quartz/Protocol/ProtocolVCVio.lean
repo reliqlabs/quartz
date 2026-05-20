@@ -151,6 +151,7 @@
 
 import VCVio.CryptoFoundations.Asymptotics.Security
 import VCVio.OracleComp.QueryTracking.QueryBound
+import VCVio.OracleComp.SimSemantics.Append
 import Specs.Quartz.Crypto.EciesVCVio
 import Specs.Quartz.Crypto.UserDataCommitVCVio
 import Specs.Quartz.Crypto.RawMessagesVCVio
@@ -200,6 +201,129 @@ open Specs.Quartz.Protocol.Handshake
 def ProtocolSpec : OracleSpec
     (((UserDataCommit ⊕ ByteSeq) ⊕ TdxQuote) ⊕ VerifyGroth16Query) :=
   ((CommitHashSpec + CommitHashBytesSpec) + VerifyTdxQuoteSpec) + VerifyGroth16Spec
+
+/-! ## Honest deterministic simulator for `ProtocolSpec` (Cycle 6.13)
+
+Round A attack #6 noted `ProtocolSpec` was defined but never *used*:
+adversary types were `ℕ → ProbComp T` (no oracle access), so the
+spec was structural scaffolding only and downstream lifts could not
+distinguish a query-bounded adversary from a computationally
+unbounded one.
+
+Cycle 6.13 wires `OracleComp ProtocolSpec` into the adversary types.
+The semantics for `Pr[...]` over an `OracleComp` with non-empty spec
+require a `QueryImpl` that interprets each oracle query in a target
+monad. We use the **honest deterministic interpretation**: each
+query returns, via `pure`, exactly the value that the classical
+specification function would return on the same input.
+
+### Why "honest deterministic" is the right baseline
+
+Each of the four component `OracleSpec`s wraps a classical-Prop
+function from the underlying companion module:
+
+* `CommitHashSpec` ↔ `commitHash : UserDataCommit → UserData`
+* `CommitHashBytesSpec` ↔ `commitHashBytes : ByteSeq → UserData`
+* `VerifyTdxQuoteSpec` ↔ `verifyTdxQuote : TdxQuote → Option (...)`
+* `VerifyGroth16Spec` ↔ `verifyGroth16 : VKey → ... → Bool`
+
+These functions are deterministic projections (or `Function.invFun`
+applications) of the bundled record axioms. The "honest" simulator
+responds to each query with `pure (f x)` where `f` is the
+corresponding classical function. This is the canonical
+*deterministic-oracle* model: the oracle's randomness is empty;
+the adversary's only source of randomness is its own `unifSpec`
+coin flips after `simulateQ`-routing.
+
+This makes the upgraded lifts **strictly stronger than the no-
+oracle-access form**: the adversary can now query the four
+oracles, observe their (deterministic) responses, and produce its
+candidate output. The win predicate is still applied to that
+output, and the cryptographic-assumption layer (the
+`negligible (groth16SoundnessAdv 𝒜)` hypothesis et al.) is now
+parametric over a richer adversary class.
+
+### Why not a *randomised* simulator?
+
+A randomised handler (e.g. `randomOracle` from
+`VCVio/OracleComp/QueryTracking/RandomOracle.lean`) is the
+*right* model when the underlying primitive is a random oracle —
+e.g. `commitHash` modelled as a uniform-random function from
+`UserDataCommit` to `UserData`. Adopting it requires
+`[Fintype UserData]` (and `[Fintype UserDataCommit]` for the
+two-sided birthday bound), which are blocked on the carrier-
+refinement work queued from Steps 2–5.
+
+Until those carriers refine to concrete byte-list / `BitVec n`
+representations, the honest-deterministic baseline is the
+strongest we can state: it gives the adversary oracle access
+*at the type level* (so `IsPPT := PolyQueries` becomes
+meaningful) without smuggling in unverified `Fintype` content.
+
+### Downstream consequence
+
+After cycle 6.13, the lift theorems read:
+
+    Pr[ winPred | simulateQ protocolSpecHonestSim (𝒜 n) ]
+
+for `𝒜 n : OracleComp ProtocolSpec T`. For an adversary that
+makes no oracle queries, `simulateQ` reduces to the identity on
+`OracleComp ∅ T = ProbComp T`, so the probability is the same as
+the pre-cycle form. For an adversary that *does* query, the
+simulator threads the classical-function responses through; the
+probability is over the adversary's own coin flips alone.
+
+The shape change unblocks cycle 6.14: `IsPPT` can now be
+specialised to VCV-io's `PolyQueries` (security-parameter-indexed
+polynomial query bound) because the adversary type is now an
+`OracleComp` over a non-empty `OracleSpec`.
+-/
+
+/-- Honest deterministic responder for `CommitHashSpec`.
+    Each `commitHash`-oracle query returns the classical
+    `commitHash` value via `pure`. -/
+noncomputable def commitHashHonestSim : QueryImpl CommitHashSpec ProbComp :=
+  fun uc => (pure (commitHash uc) : ProbComp UserData)
+
+/-- Honest deterministic responder for `CommitHashBytesSpec`.
+    Each `commitHashBytes`-oracle query returns the classical
+    `commitHashBytes` value via `pure`. -/
+noncomputable def commitHashBytesHonestSim :
+    QueryImpl CommitHashBytesSpec ProbComp :=
+  fun b => (pure (commitHashBytes b) : ProbComp UserData)
+
+/-- Honest deterministic responder for `VerifyTdxQuoteSpec`.
+    Each `verifyTdxQuote`-oracle query returns the classical
+    `verifyTdxQuote` value via `pure`. -/
+noncomputable def verifyTdxQuoteHonestSim :
+    QueryImpl VerifyTdxQuoteSpec ProbComp :=
+  fun q => (pure (verifyTdxQuote q) : ProbComp (Option (MrEnclave × UserData)))
+
+/-- Honest deterministic responder for `VerifyGroth16Spec`.
+    Each `verifyGroth16`-oracle query returns the classical
+    `verifyGroth16` value via `pure`. The query index is the
+    triple `(vkey, proof, inputs)`. -/
+noncomputable def verifyGroth16HonestSim :
+    QueryImpl VerifyGroth16Spec ProbComp :=
+  fun q => (pure (verifyGroth16 q.1 q.2.1 q.2.2) : ProbComp Bool)
+
+/-- Combined honest deterministic simulator for `ProtocolSpec`.
+
+    Routes each query through the corresponding companion-module
+    responder via VCV-io's `QueryImpl.add` (`+`), preserving the
+    nested-sum index structure of `ProtocolSpec`:
+
+    * `inl (inl (inl uc))` → `commitHashHonestSim uc`
+    * `inl (inl (inr b))`  → `commitHashBytesHonestSim b`
+    * `inl (inr q)`        → `verifyTdxQuoteHonestSim q`
+    * `inr (vkey, p, ins)` → `verifyGroth16HonestSim (vkey, p, ins)`
+
+    Used by every cycle-6.13+ lift to convert
+    `𝒜 n : OracleComp ProtocolSpec T` into a `ProbComp T` over
+    which `Pr[winPred | ...]` is well-defined. -/
+noncomputable def protocolSpecHonestSim : QueryImpl ProtocolSpec ProbComp :=
+  ((commitHashHonestSim + commitHashBytesHonestSim) + verifyTdxQuoteHonestSim)
+    + verifyGroth16HonestSim
 
 /-! ## Adversary efficiency class (resolves Step 6.0 finding 1)
 
@@ -421,12 +545,21 @@ is what ArkLib (cryptographic side) and a reference DCAP verifier
     is that `verifyGroth16 zkdcapVKey proof inputs = true` AND
     `¬ was_signed_by_dstack (inputs_to_quote inputs)`.
 
-    Currently abstract — we do not yet model the adversary's oracle
-    access (it would query `ProtocolSpec` in the full formulation).
-    Step 6.N will lift this to an oracle-querying adversary; at
-    Step 6.0 the no-oracle-access version suffices for the lift
-    pattern. -/
-def Groth16SoundAdv : Type := ℕ → ProbComp (Groth16Proof × PublicInputs)
+    **Cycle 6.13**: the adversary is now an `OracleComp ProtocolSpec`-
+    valued function rather than a `ProbComp`-valued one. The four
+    component oracles (`CommitHashSpec`, `CommitHashBytesSpec`,
+    `VerifyTdxQuoteSpec`, `VerifyGroth16Spec`) are available to the
+    adversary at query time; the adversary's own internal randomness
+    is still drawn from `unifSpec` (the universal-uniform oracle
+    that `OracleComp` exposes via `OracleComp.lift` of `ProbComp`
+    primitives).
+
+    The advantage definition (`groth16SoundnessAdv`) routes
+    `simulateQ protocolSpecHonestSim` over the adversary before
+    measuring the win-probability, so the four protocol oracles
+    are interpreted by the honest-deterministic responder defined
+    above. -/
+def Groth16SoundAdv : Type := ℕ → OracleComp ProtocolSpec (Groth16Proof × PublicInputs)
 
 /-- The advantage of a Groth16 soundness adversary at security
     parameter `n`, parametrised on an opaque bound.
@@ -505,15 +638,26 @@ def verifyGroth16FailPred (p : Groth16Proof × PublicInputs) : Prop :=
     verifier to accept on an un-signed quote. This is a `def`, not a
     `Type`-only alias — the body mentions `verifyGroth16`, `zkdcapVKey`,
     `was_signed_by_dstack`, and `inputs_to_quote`, so an external auditor
-    can read off exactly which cryptographic event is being bounded. -/
+    can read off exactly which cryptographic event is being bounded.
+
+    **Cycle 6.13**: the adversary is now an `OracleComp ProtocolSpec`-
+    valued function, so we apply `simulateQ protocolSpecHonestSim` to
+    interpret the four protocol oracles deterministically before
+    measuring the win-probability. For a no-oracle-access adversary
+    (one whose `OracleComp` body is constructed entirely via `pure`
+    / `unifSpec` queries with no `ProtocolSpec` queries) the
+    simulation is the identity, so this advantage agrees with the
+    pre-cycle-6.13 `Pr[winPred | 𝒜 n]` form. -/
 noncomputable def groth16SoundnessAdv (𝒜 : Groth16SoundAdv) (n : ℕ) : ℝ≥0∞ :=
-  Pr[ groth16SoundnessWinPred | 𝒜 n ]
+  Pr[ groth16SoundnessWinPred | simulateQ protocolSpecHonestSim (𝒜 n) ]
 
 /-- **Content-bearing advantage** for the protocol-fail event: the
     probability that the adversary's `(proof, inputs)` output causes the
-    verifier to accept on a quote that does not decode. -/
+    verifier to accept on a quote that does not decode.
+
+    **Cycle 6.13**: same simulator-wrapping as `groth16SoundnessAdv`. -/
 noncomputable def verifyGroth16FailAdv (𝒜 : Groth16SoundAdv) (n : ℕ) : ℝ≥0∞ :=
-  Pr[ verifyGroth16FailPred | 𝒜 n ]
+  Pr[ verifyGroth16FailPred | simulateQ protocolSpecHonestSim (𝒜 n) ]
 
 /-- The protocol-fail event implies the Groth16 soundness-win event:
     if the verifier accepts but no `(mr, ud)` is decoded, then the quote

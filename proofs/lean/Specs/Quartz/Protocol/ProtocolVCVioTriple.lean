@@ -191,7 +191,7 @@ collision (`x₁ ≠ x₂ ∧ H x₁ = H x₂`).
     `OracleComp`-valued adversary and the placeholder `IsPPT`
     swapped for `PolyQueries`. -/
 def CommitHashCollisionAdv : Type :=
-  ℕ → ProbComp (UserDataCommit × UserDataCommit)
+  ℕ → OracleComp ProtocolSpec (UserDataCommit × UserDataCommit)
 
 /-- The advantage of a `commitHash` collision-finder at security
     parameter `n`, parametrised on an opaque bound.
@@ -219,7 +219,7 @@ def commitHashCollisionGame (adv : CommitHashCollisionAdvantage) :
     "win" condition is that the pair is a collision under the
     byte-domain hash. -/
 def CommitHashBytesCollisionAdv : Type :=
-  ℕ → ProbComp (ByteSeq × ByteSeq)
+  ℕ → OracleComp ProtocolSpec (ByteSeq × ByteSeq)
 
 /-- The advantage of a `commitHashBytes` collision-finder at security
     parameter `n`. Parametric on an opaque bound for the same
@@ -241,7 +241,7 @@ def commitHashBytesCollisionGame (adv : CommitHashBytesCollisionAdvantage) :
     (signed-quote-existence ∧ pubkey-extraction ∧ ECIES roundtrip)
     fails. -/
 def HandshakeBindsAdv : Type :=
-  ℕ → ProbComp (HandshakeCheck × UserDataCommit × PrivKey × Plaintext)
+  ℕ → OracleComp ProtocolSpec (HandshakeCheck × UserDataCommit × PrivKey × Plaintext)
 
 /-- The advantage of a `handshake_binds_ecies_key`-attack adversary. -/
 abbrev HandshakeBindsAdvantage : Type :=
@@ -253,7 +253,7 @@ abbrev HandshakeBindsAdvantage : Type :=
     that the contract accepts but ECIES decryption fails to
     recover the plaintext. -/
 def SessionConfidentialityAdv : Type :=
-  ℕ → ProbComp (HandshakeCheck × UserDataCommit × PrivKey × Plaintext)
+  ℕ → OracleComp ProtocolSpec (HandshakeCheck × UserDataCommit × PrivKey × Plaintext)
 
 /-- The advantage of a `session_confidentiality`-attack adversary. -/
 abbrev SessionConfidentialityAdvantage : Type :=
@@ -263,7 +263,7 @@ abbrev SessionConfidentialityAdvantage : Type :=
     shape as `SessionConfidentialityAdv`; the difference is the
     win-condition formulation (extractor-mediated). -/
 def SessionConfidentialityExtractorAdv : Type :=
-  ℕ → ProbComp (HandshakeCheck × UserDataCommit × PrivKey × Plaintext)
+  ℕ → OracleComp ProtocolSpec (HandshakeCheck × UserDataCommit × PrivKey × Plaintext)
 
 /-- The advantage of a `session_confidentiality_via_extractor`-attack
     adversary. -/
@@ -275,7 +275,7 @@ abbrev SessionConfidentialityExtractorAdvantage : Type :=
     `(HandshakeCheck × TransferRequest)` such that the contract
     accepts but the conservation invariant fails to propagate. -/
 def TransfersConservationAdv : Type :=
-  ℕ → ProbComp (HandshakeCheck × TransferRequest)
+  ℕ → OracleComp ProtocolSpec (HandshakeCheck × TransferRequest)
 
 /-- The advantage of a `cross_component_transfers_conservation`-attack
     adversary. -/
@@ -288,7 +288,7 @@ abbrev TransfersConservationAdvantage : Type :=
     contract accepts but the claimed winner does not match the
     canonical Vickrey resolution. -/
 def AuctionDeterminismAdv : Type :=
-  ℕ → ProbComp (HandshakeCheck × AuctionRound × ResolveMessage)
+  ℕ → OracleComp ProtocolSpec (HandshakeCheck × AuctionRound × ResolveMessage)
 
 /-- The advantage of a `cross_component_auction_winner_determinism`-
     attack adversary. -/
@@ -343,11 +343,13 @@ def handshakeBindsWinPred
     Groth16-soundness adversary by projecting the candidate's
     `(proof, inputs)` pair. -/
 def reduce_binds_to_groth (𝒜 : HandshakeBindsAdv) : Groth16SoundAdv :=
-  fun n => do let p ← 𝒜 n; pure (p.1.proof, p.1.inputs)
+  fun n => do
+    let p : HandshakeCheck × UserDataCommit × PrivKey × Plaintext ← 𝒜 n
+    pure (p.1.proof, p.1.inputs)
 
 /-- **Content-bearing advantage** for the handshake-binds game. -/
 noncomputable def bindsFailAdv (𝒜 : HandshakeBindsAdv) (n : ℕ) : ℝ≥0∞ :=
-  Pr[ handshakeBindsWinPred | 𝒜 n ]
+  Pr[ handshakeBindsWinPred | simulateQ protocolSpecHonestSim (𝒜 n) ]
 
 /-- Forward implication: a binds-attack win on `(h, c, sk, pt)` implies
     a Groth16-soundness win on the projected `(h.proof, h.inputs)`.
@@ -409,14 +411,14 @@ theorem handshake_binds_ecies_key_negl
     negligible (bindsFailAdv 𝒜) := by
   refine negligible_of_le ?_ h_groth_negl
   intro n
-  show Pr[ handshakeBindsWinPred | 𝒜 n ] ≤
-       Pr[ groth16SoundnessWinPred | reduce_binds_to_groth 𝒜 n ]
+  show Pr[ handshakeBindsWinPred | simulateQ protocolSpecHonestSim (𝒜 n) ] ≤
+       Pr[ groth16SoundnessWinPred | simulateQ protocolSpecHonestSim (reduce_binds_to_groth 𝒜 n) ]
   rw [show reduce_binds_to_groth 𝒜 n
         = 𝒜 n >>= pure ∘
             (fun p : HandshakeCheck × UserDataCommit × PrivKey × Plaintext =>
               (p.1.proof, p.1.inputs))
-        from rfl,
-      probEvent_bind_pure_comp]
+        from rfl]
+  simp only [← map_eq_bind_pure_comp, simulateQ_map, probEvent_map]
   exact probEvent_mono (fun p _ hp =>
     handshakeBindsWinPred_imp_groth16SoundnessWinPred_projected p hp)
 
@@ -531,7 +533,7 @@ theorem sessionConfWinPred_false
     game. Identically zero under the current spec abstraction. -/
 noncomputable def confFailAdv
     (𝒜 : SessionConfidentialityAdv) (n : ℕ) : ℝ≥0∞ :=
-  Pr[ sessionConfWinPred | 𝒜 n ]
+  Pr[ sessionConfWinPred | simulateQ protocolSpecHonestSim (𝒜 n) ]
 
 /-- **Probabilistic form (Step 6.2 lift, Cycle-6.7-corrected)**:
     `session_confidentiality_negl`.
@@ -546,12 +548,12 @@ noncomputable def confFailAdv
 theorem session_confidentiality_negl
     (𝒜 : SessionConfidentialityAdv) :
     negligible (confFailAdv 𝒜) := by
-  -- `confFailAdv 𝒜 n ≤ Pr[ fun _ => False | 𝒜 n ] = 0`
+  -- `confFailAdv 𝒜 n ≤ Pr[ fun _ => False | simulateQ protocolSpecHonestSim (𝒜 n) ] = 0`
   have h_zero : ∀ n, confFailAdv 𝒜 n = 0 := by
     intro n
     refine le_antisymm ?_ (zero_le _)
-    calc Pr[ sessionConfWinPred | 𝒜 n ]
-        ≤ Pr[ fun _ => False | 𝒜 n ] := by
+    calc Pr[ sessionConfWinPred | simulateQ protocolSpecHonestSim (𝒜 n) ]
+        ≤ Pr[ fun _ => False | simulateQ protocolSpecHonestSim (𝒜 n) ] := by
           exact probEvent_mono (fun p _ hp => sessionConfWinPred_false p hp)
       _ = 0 := probEvent_False _
   have h_fun_zero : confFailAdv 𝒜 = 0 := by
@@ -670,7 +672,7 @@ theorem sessionConfExtractorWinPred_false
 /-- **Content-bearing failure advantage**, identically zero. -/
 noncomputable def extFailAdv
     (𝒜 : SessionConfidentialityExtractorAdv) (n : ℕ) : ℝ≥0∞ :=
-  Pr[ sessionConfExtractorWinPred | 𝒜 n ]
+  Pr[ sessionConfExtractorWinPred | simulateQ protocolSpecHonestSim (𝒜 n) ]
 
 /-- **Probabilistic form (Step 6.2 lift, Cycle-6.8-corrected)**:
     `session_confidentiality_via_extractor_negl`. Degenerate
@@ -681,8 +683,8 @@ theorem session_confidentiality_via_extractor_negl
   have h_zero : ∀ n, extFailAdv 𝒜 n = 0 := by
     intro n
     refine le_antisymm ?_ (zero_le _)
-    calc Pr[ sessionConfExtractorWinPred | 𝒜 n ]
-        ≤ Pr[ fun _ => False | 𝒜 n ] := by
+    calc Pr[ sessionConfExtractorWinPred | simulateQ protocolSpecHonestSim (𝒜 n) ]
+        ≤ Pr[ fun _ => False | simulateQ protocolSpecHonestSim (𝒜 n) ] := by
           exact probEvent_mono (fun p _ hp =>
             sessionConfExtractorWinPred_false p hp)
       _ = 0 := probEvent_False _
@@ -811,12 +813,14 @@ def transfersConsWinPred
     `(h.proof, h.inputs)`. -/
 def reduce_transfers_to_groth
     (𝒜 : TransfersConservationAdv) : Groth16SoundAdv :=
-  fun n => do let p ← 𝒜 n; pure (p.1.proof, p.1.inputs)
+  fun n => do
+    let p : HandshakeCheck × TransferRequest ← 𝒜 n
+    pure (p.1.proof, p.1.inputs)
 
 /-- **Content-bearing failure advantage**. -/
 noncomputable def consFailAdv
     (𝒜 : TransfersConservationAdv) (n : ℕ) : ℝ≥0∞ :=
-  Pr[ transfersConsWinPred | 𝒜 n ]
+  Pr[ transfersConsWinPred | simulateQ protocolSpecHonestSim (𝒜 n) ]
 
 /-- Forward implication: a transfers-conservation win on `(h, req)`
     implies a Groth16-soundness win on the projected
@@ -841,14 +845,14 @@ theorem cross_component_transfers_conservation_negl
     negligible (consFailAdv 𝒜) := by
   refine negligible_of_le ?_ h_groth_negl
   intro n
-  show Pr[ transfersConsWinPred | 𝒜 n ] ≤
-       Pr[ groth16SoundnessWinPred | reduce_transfers_to_groth 𝒜 n ]
+  show Pr[ transfersConsWinPred | simulateQ protocolSpecHonestSim (𝒜 n) ] ≤
+       Pr[ groth16SoundnessWinPred | simulateQ protocolSpecHonestSim (reduce_transfers_to_groth 𝒜 n) ]
   rw [show reduce_transfers_to_groth 𝒜 n
         = 𝒜 n >>= pure ∘
             (fun p : HandshakeCheck × TransferRequest =>
               (p.1.proof, p.1.inputs))
-        from rfl,
-      probEvent_bind_pure_comp]
+        from rfl]
+  simp only [← map_eq_bind_pure_comp, simulateQ_map, probEvent_map]
   exact probEvent_mono (fun p _ hp =>
     transfersConsWinPred_imp_groth16SoundnessWinPred_projected p hp)
 
@@ -955,12 +959,14 @@ def auctionDetermWinPred
 /-- **Reduction** to Groth16-soundness adversary. -/
 def reduce_auctionDeterm_to_groth
     (𝒜 : AuctionDeterminismAdv) : Groth16SoundAdv :=
-  fun n => do let p ← 𝒜 n; pure (p.1.proof, p.1.inputs)
+  fun n => do
+    let p : HandshakeCheck × AuctionRound × ResolveMessage ← 𝒜 n
+    pure (p.1.proof, p.1.inputs)
 
 /-- **Content-bearing failure advantage**. -/
 noncomputable def auctFailAdv
     (𝒜 : AuctionDeterminismAdv) (n : ℕ) : ℝ≥0∞ :=
-  Pr[ auctionDetermWinPred | 𝒜 n ]
+  Pr[ auctionDetermWinPred | simulateQ protocolSpecHonestSim (𝒜 n) ]
 
 /-- Forward implication: hypotheses + ¬conclusion implies a
     Groth16-soundness break on the projected `(h.proof, h.inputs)`.
@@ -989,14 +995,14 @@ theorem cross_component_auction_winner_determinism_negl
     negligible (auctFailAdv 𝒜) := by
   refine negligible_of_le ?_ h_groth_negl
   intro n
-  show Pr[ auctionDetermWinPred | 𝒜 n ] ≤
-       Pr[ groth16SoundnessWinPred | reduce_auctionDeterm_to_groth 𝒜 n ]
+  show Pr[ auctionDetermWinPred | simulateQ protocolSpecHonestSim (𝒜 n) ] ≤
+       Pr[ groth16SoundnessWinPred | simulateQ protocolSpecHonestSim (reduce_auctionDeterm_to_groth 𝒜 n) ]
   rw [show reduce_auctionDeterm_to_groth 𝒜 n
         = 𝒜 n >>= pure ∘
             (fun p : HandshakeCheck × AuctionRound × ResolveMessage =>
               (p.1.proof, p.1.inputs))
-        from rfl,
-      probEvent_bind_pure_comp]
+        from rfl]
+  simp only [← map_eq_bind_pure_comp, simulateQ_map, probEvent_map]
   exact probEvent_mono (fun p _ hp =>
     auctionDetermWinPred_imp_groth16SoundnessWinPred_projected p hp)
 
