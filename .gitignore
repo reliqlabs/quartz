@@ -10,6 +10,8 @@
 target/
 artifacts/
 .secrets/
+.env
+.env.*
 **/.env.local
 
 #cli

@@ -21,10 +21,10 @@ VCV-io OracleComp refactor done. Cumulative: **40 → 26 axioms (-14, ~35%)**; 8
 - **Plan archive**: `.colosseum/refactor-plan-vcvio.md` (executed)
 - **Change records**: `.colosseum/changes/2026-05-13T*.md` (10 records spanning Steps 1-7)
 - **What's open**:
-  - External discharge of (d)-bucket axioms — ArkLib Groth16-KS reduction, reference DCAP verifier in Lean, concrete bytes/userdata hash specs. All upstream-blocked or substantial separate work.
+  - External discharge of (d)-bucket axioms: ArkLib Groth16-KS reduction, reference DCAP verifier in Lean, concrete bytes/userdata hash specs. All upstream-blocked or substantial separate work.
   - 3 (a)-bucket named-constant axioms could be demoted to `def` after carrier refinement (one of the few near-term Quartz-side wins).
   - `IsPPT` predicate is currently `True`-placeholder; hardening required if/when adversaries gain oracle access.
-  - Upstream PR for the refactor: ready to draft; ledger paragraph is the spine of the PR description.
+  - This fork is the canonical destination for the verification surface. The original informalsystems/cycles-quartz upstream is unmaintained and does not carry the dstack TDX / zkdcap / Xion changes that motivate the refactor. Work lands here; no upstream contribution is planned.
 - **Background**: `.colosseum/attacks/temporal_zk_accept_requires_vkey-multimodel-2026-05-12T16-38-48Z/synthesis.md` — Quint adversarial review (closed loop, action-tag rewrite landed pre-VCVio)
 
 ### Methodology updates from verified-rcv Round 3a (2026-05-20)
