@@ -40,9 +40,25 @@
 //   `mr_enclave` field, with no other state. Their `.handle()` functions are
 //   stubbed as total `Ok`-returning (this matches MockAttestation / Noop in
 //   the production code — the two concrete A's whose handlers don't touch
-//   storage). Trade-off: we lose the ability to prove that an inner-handler
-//   error propagates to the wrapper. We compensate by adding an `external_body`
-//   fallible variant `concrete_att_handle_maybe_err` for one of the proofs.
+//   storage).
+//
+// Round D Critical 3 fix (2026-05-20): the original prototype's docstring
+// claimed a compensating `concrete_att_handle_maybe_err` external_body
+// variant for inner-handler error propagation, but the variant did not
+// exist in the file. Six voices flagged this as docstring dishonesty.
+// The fix adds:
+//   - `ConcreteAtt::handle_maybe_err` — external_body fallible variant
+//     whose spec allows both Ok and Err outcomes, modelling production
+//     attestation handlers that can return Err(Std) or
+//     Err(ZkdcapVerificationFailed) (e.g. DstackZkAttestation before its
+//     placeholder phase).
+//   - `attested_handle_with_fallible_att` — a wrapper variant that calls
+//     handle_maybe_err in place of handle. Verus's acceptance of this
+//     wrapper IS the propagation theorem: under the fallible-inner spec,
+//     the wrapper's Err return paths are sound, which is the inner-error
+//     propagation property the original docstring promised. Both wrappers
+//     also now tighten the catch-all Err(_) branch to witness that the
+//     user_data pre-check held.
 //
 // Invoke: /tmp/verus-install/verus-arm64-macos/verus attested.rs
 
@@ -188,6 +204,24 @@ impl ConcreteAtt {
     pub fn handle(self, _storage: &mut Storage) -> (r: Result<Response, Error>)
         ensures r is Ok,
     { Ok(Response::default()) }
+
+    // Round D Critical 3 (2026-05-20): the compensating fallible variant
+    // promised by the original docstring. Models a production attestation
+    // handler that can return Err (e.g. DstackZkAttestation's gRPC path,
+    // or a future A whose body touches storage and can fail). The ensures
+    // clause constrains the Err to be a non-wrapper-specific variant
+    // because production attestation handlers (DstackAttestation,
+    // MockAttestation, DstackZkAttestation, Noop) cannot return
+    // UserDataMismatch or MrEnclaveMismatch (those are constructed only
+    // by the Attested wrapper itself, not by inner handlers).
+    #[verifier::external_body]
+    pub fn handle_maybe_err(self, _storage: &mut Storage) -> (r: Result<Response, Error>)
+        ensures
+            match r {
+                Ok(_) => true,
+                Err(e) => !(e is UserDataMismatch) && !(e is MrEnclaveMismatch),
+            },
+    { unimplemented!() }
 }
 
 // ── Attested<M,A> wrapper, monomorphised ───────────────────────────────────
@@ -246,7 +280,12 @@ pub fn attested_handle(
                 &&& old(storage).config matches Some(raw)
                 &&& raw.mr_enclave != wrapper.spec_att_mr_enclave()
             }
-            Err(_) => true,
+            // Round D Critical 3 (2026-05-20): catch-all tightened to
+            // witness that the user_data pre-check held. The only path
+            // to this arm in the total-Ok-inner-handler version is
+            // CONFIG.may_load returning Err(Std), which happens after
+            // the user_data check passes.
+            Err(_) => wrapper.spec_msg_user_data() == wrapper.spec_att_user_data(),
         },
 {
     if wrapper.msg.user_data() != wrapper.attestation.user_data() {
@@ -265,13 +304,77 @@ pub fn attested_handle(
 
     // Production: `msg.handle(deps.branch(), env, info)?` then
     // `attestation.handle(deps, env, info)?`. Our concrete handlers are total
-    // Ok so the ? operators never fire; the spec for inner-error propagation
-    // is therefore vacuous in this monomorphisation.
+    // Ok so the ? operators never fire; the inner-error propagation property
+    // is witnessed by the *fallible* variant
+    // `attested_handle_with_fallible_att` below.
     let _r1 = match wrapper.msg.handle(storage) {
         Ok(r) => r,
         Err(e) => return Err(e),
     };
     let _r2 = match wrapper.attestation.handle(storage) {
+        Ok(r) => r,
+        Err(e) => return Err(e),
+    };
+    Ok(Response::new())
+}
+
+// ── Wrapper variant with fallible inner attestation (Critical 3 fix) ───────
+//
+// Identical control flow to `attested_handle`, but calls
+// `ConcreteAtt::handle_maybe_err` in place of `ConcreteAtt::handle`. The
+// fallible variant's spec leaves both Ok and Err reachable, so the
+// `Err(e) => return Err(e)` propagation arm of the inner match is now
+// live. Verus's verification of this function under the fallible-inner
+// spec is the inner-handler error propagation theorem the original
+// prototype's docstring promised but did not deliver.
+pub fn attested_handle_with_fallible_att(
+    wrapper: Attested,
+    storage: &mut Storage,
+) -> (r: Result<Response, Error>)
+    ensures
+        match r {
+            Ok(_) => {
+                &&& wrapper.spec_msg_user_data() == wrapper.spec_att_user_data()
+                &&& attested_ok_storage_disc(old(storage).config, wrapper.spec_att_mr_enclave())
+            }
+            Err(Error::UserDataMismatch) => {
+                wrapper.spec_msg_user_data() != wrapper.spec_att_user_data()
+            }
+            Err(Error::MrEnclaveMismatch) => {
+                &&& old(storage).config matches Some(raw)
+                &&& raw.mr_enclave != wrapper.spec_att_mr_enclave()
+            }
+            // Inner-handler error propagation arm. The user_data pre-check
+            // passed (otherwise we'd have hit Err(UserDataMismatch) above).
+            // The Err originated from CONFIG.may_load OR from
+            // wrapper.attestation.handle_maybe_err returning Err. In either
+            // case the pre-check witness holds.
+            Err(_) => wrapper.spec_msg_user_data() == wrapper.spec_att_user_data(),
+        },
+{
+    if wrapper.msg.user_data() != wrapper.attestation.user_data() {
+        return Err(Error::UserDataMismatch);
+    }
+
+    match CONFIG.may_load(storage) {
+        Ok(Some(config)) => {
+            if config.mr_enclave() != wrapper.attestation.mr_enclave() {
+                return Err(Error::MrEnclaveMismatch);
+            }
+        }
+        Ok(None) => {}
+        Err(e) => return Err(e),
+    }
+
+    let _r1 = match wrapper.msg.handle(storage) {
+        Ok(r) => r,
+        Err(e) => return Err(e),
+    };
+    // Live Err arm: the fallible variant can return Err, and the
+    // wrapper's `?`-equivalent propagation pattern handles it. Verus
+    // verifies that the propagated Err satisfies the wrapper's Err(_)
+    // postcondition, which is the propagation theorem.
+    let _r2 = match wrapper.attestation.handle_maybe_err(storage) {
         Ok(r) => r,
         Err(e) => return Err(e),
     };
