@@ -400,15 +400,21 @@ scope here.
 
 /-- Project-standard efficiency predicate on adversaries.
 
-    Currently a placeholder (`True`) because our adversary types
-    are no-oracle-access `ProbComp` producers. The standard PPT
-    constraint for such adversaries is trivial.
+    **Placeholder** (`True`) for the existing `*_AGAINST_UNBOUNDED_ADVERSARIES`
+    packagings: it makes the adversary-class qualifier
+    *machine-checkable at the call site* (every `secureAgainst IsPPT`
+    instance is honestly a `secureAgainst (fun _ => True)` statement)
+    without claiming the substantive PPT filter holds.
 
-    When adversary types gain oracle access (in future
-    carrier-refinement work), swap this body for VCV-io's
-    `PolyQueries` predicate. The signature `Adv → Prop` is the
-    shape `SecurityGame.secureAgainst` expects, so the swap is
-    purely internal to this `def`. -/
+    **Cycle 6.14**: the substantive PPT predicate now lives at
+    `IsPPT_proper` below, instantiating VCV-io's `PolyQueries`. The
+    placeholder `IsPPT` is retained for backwards-compatibility with
+    the existing `_AGAINST_UNBOUNDED_ADVERSARIES` packagings, which
+    continue to honestly state the "all-adversaries" reading. A
+    parallel set of `_AGAINST_PPT_ADVERSARIES` packagings consuming
+    `IsPPT_proper` is queued as cycle 6.15 — those require a
+    per-reduction `IsPPT_proper`-preservation lemma showing the
+    reduction's `bind/pure ∘ proj` shape adds no oracle queries. -/
 def IsPPT {Adv : Type} (_ : Adv) : Prop := True
 
 /-- The placeholder is trivially satisfied by every adversary.
@@ -416,6 +422,115 @@ def IsPPT {Adv : Type} (_ : Adv) : Prop := True
     `SecurityGame.secureAgainst` invocations during the current
     no-oracle-access lift phase. -/
 @[simp] theorem IsPPT_trivial {Adv : Type} (A : Adv) : IsPPT A := trivial
+
+/-! ## Substantive PPT predicate via `PolyQueries` (Cycle 6.14)
+
+Cycle 6.13 wired `OracleComp ProtocolSpec` into adversary types so
+that VCV-io's `PolyQueries` shape (security-parameter-indexed
+polynomial query bound) becomes type-compatible. Cycle 6.14 takes
+the next step: define a substantive PPT predicate that *actually*
+constrains the adversary, rather than the cycle-6.12 placeholder.
+
+### Why a parallel predicate, not a body swap of `IsPPT`
+
+The body swap path (replace `IsPPT := True` with the
+`PolyQueries`-based body) would weaken the conclusion of every
+existing `*_AGAINST_UNBOUNDED_ADVERSARIES` packaging from
+"secure against all adversaries (bounded or not)" to "secure
+against PPT adversaries only". The packagings' naming would no
+longer match their conclusion.
+
+The cleaner end-state is to keep the placeholder `IsPPT` as the
+"all-adversaries" label (the existing packagings honestly state
+this) and introduce `IsPPT_proper` as a separate definition. A
+parallel set of `_AGAINST_PPT_ADVERSARIES` packagings consuming
+`IsPPT_proper` is queued as cycle 6.15; each needs a
+per-reduction lemma showing the reduction preserves
+`IsPPT_proper`.
+
+### `DecidableEq` instances
+
+`PolyQueries` requires `[DecidableEq ι]` on the OracleSpec's index
+type. Our `ProtocolSpec` index is the nested sum
+`(((UserDataCommit ⊕ ByteSeq) ⊕ TdxQuote) ⊕ VerifyGroth16Query)`,
+where the four atomic carriers are abstract types with no native
+`DecidableEq`. We supply `Classical.decEq` instances as
+`noncomputable local` declarations, matching the precedent set in
+the `was_signed_by_dstack` decidability section above
+(`Classical.propDecidable`).
+
+This is a non-constructive move: the instance asserts that any
+two carrier values are decidably equal under classical logic, but
+the underlying check is not computable. The pattern mirrors how
+the `Decidable` instance for `was_signed_by_dstack` was justified:
+the spec-layer adversary's *type* is well-defined under classical
+decidability, while concrete carrier refinement (cycles that
+substitute abstract carriers with `BitVec n` / byte-list
+representations) will replace these with computable instances.
+
+### `IsPPT_proper` shape
+
+`IsPPT_proper` is polymorphic in the adversary's result type `T`,
+specialised to our adversary shape `ℕ → OracleComp ProtocolSpec T`:
+
+    def IsPPT_proper {T : Type} (𝒜 : ℕ → OracleComp ProtocolSpec T) : Prop :=
+      Nonempty (PolyQueries
+        (ι := ...) (spec := fun _ => ProtocolSpec)
+        (α := fun _ => PUnit) (β := fun _ => T)
+        (fun n (_ : PUnit) => 𝒜 n))
+
+The `PUnit` α-type is a token: our adversaries take no input
+beyond the security parameter `n`, and `PolyQueries`'s shape
+demands an `α n → OracleComp ...` form, so we adapt with a unit
+argument.
+
+`Nonempty` (rather than `Exists`) is the standard `Prop` shape for
+"there exists a witness with the given structure", because
+`PolyQueries` is a structure (carrying the polynomial bound), not
+a `Prop`. -/
+
+/-- Classical decidability for the four abstract carrier types
+    underlying `ProtocolSpec`'s index. Local instances —
+    `noncomputable` and confined to this module — supplied via
+    `Classical.decEq` to satisfy `PolyQueries`'s `[DecidableEq ι]`
+    requirement. -/
+noncomputable local instance instDecidableEqUserDataCommit :
+    DecidableEq UserDataCommit := Classical.decEq _
+
+noncomputable local instance instDecidableEqByteSeq :
+    DecidableEq ByteSeq := Classical.decEq _
+
+noncomputable local instance instDecidableEqTdxQuote :
+    DecidableEq TdxQuote := Classical.decEq _
+
+noncomputable local instance instDecidableEqVerifyGroth16Query :
+    DecidableEq VerifyGroth16Query := Classical.decEq _
+
+/-- **Substantive PPT predicate** (Cycle 6.14): an adversary
+    `𝒜 : ℕ → OracleComp ProtocolSpec T` is PPT iff there exists a
+    polynomial bound on its per-index query count, as a function
+    of the security parameter `n`.
+
+    This is the substantive Round A attack #5 closure on the
+    content side: where the cycle-6.12 placeholder `IsPPT := True`
+    was a documentary rename surfacing the gap at every call site,
+    `IsPPT_proper` is a *real* PPT filter — adversaries with
+    super-polynomially-many queries do not satisfy it.
+
+    `IsPPT_proper` is polymorphic over the adversary's result type
+    `T`; existing call sites unfold `XAdv = ℕ → OracleComp ProtocolSpec T`
+    so the predicate specialises naturally.
+
+    Currently consumed only by `IsPPT_proper.*` documentation
+    (no `*_AGAINST_PPT_ADVERSARIES` packagings yet) — those land
+    in cycle 6.15 along with per-reduction preservation lemmas. -/
+noncomputable def IsPPT_proper {T : Type}
+    (𝒜 : ℕ → OracleComp ProtocolSpec T) : Prop :=
+  Nonempty (PolyQueries
+    (ι := (((UserDataCommit ⊕ ByteSeq) ⊕ TdxQuote) ⊕ VerifyGroth16Query))
+    (spec := fun _ : ℕ => ProtocolSpec)
+    (α := fun _ : ℕ => PUnit) (β := fun _ : ℕ => T)
+    (fun n (_ : PUnit) => 𝒜 n))
 
 /-! ## Decidable Bool/Prop bridges (resolves Step 6.0 finding 2)
 
