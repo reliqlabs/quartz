@@ -232,6 +232,76 @@ def commitHashBytesCollisionGame (adv : CommitHashBytesCollisionAdvantage) :
     SecurityGame CommitHashBytesCollisionAdv where
   advantage := adv
 
+/-! ## Content-bearing collision-resistance advantage defs (Cycle 6.15)
+
+Round A attack #8 noted that `CommitHashCollisionAdvantage` and
+`CommitHashBytesCollisionAdvantage` were `Type`-only `abbrev`s with
+no tie to the actual hash functions (`commitHash`,
+`commitHashBytes`) they purport to bound the collision probability
+of. A caller could instantiate the advantage to `fun _ _ => 0` and
+get a vacuous "negligibility" conclusion, exactly as cycle 6.4
+addressed for `Groth16SoundAdvantage`.
+
+Cycle 6.15 def-ties both: the win predicate is
+`p.1 ≠ p.2 ∧ hash p.1 = hash p.2`, and the advantage is the
+`Pr[…]` event over the adversary's `OracleComp ProtocolSpec`
+output (interpreted by `protocolSpecHonestSim`, consistent with
+cycle 6.13).
+
+The `Type`-only `abbrev`s (`CommitHashCollisionAdvantage`,
+`CommitHashBytesCollisionAdvantage`) are retained for
+backwards-compatibility with the existing `_AGAINST_UNBOUNDED_ADVERSARIES`
+and cycle-6.14.c `_AGAINST_PPT_ADVERSARIES` packagings, which
+parametrise over a caller-supplied advantage function. Future
+cycles can switch those packagings to consume the content-bearing
+`commitHashCollisionAdv` directly, mirroring how cycle-6.4
+`groth16SoundnessAdv` replaced the Type-only
+`Groth16SoundAdvantage` in the lift theorems.
+
+### Honesty caveat
+
+The advantages are well-typed and content-bearing, but the
+underlying axiom `commitHashE : UserDataCommit ↪ UserData` is
+mathematically impossible (pigeonhole on a fixed-width codomain).
+The collision probability is therefore "1 minus an impossible
+zero" in any concrete realisation; the def-tying surfaces the
+*intended* event without claiming the impossible axiom is sound.
+
+Carrier refinement (`[Fintype UserData]` + `randomOracle` birthday
+bound) would replace the impossible axiom with a concrete random
+oracle, at which point `commitHashCollisionAdv` becomes a real
+cryptographic advantage. This is the externally-deferred
+discharge path documented in the (d-pigeonhole-impossible)
+sub-bucket of the ledger. -/
+
+/-- **Win predicate for the `commitHash` collision-resistance game**:
+    the adversary's output pair `(uc₁, uc₂)` is a genuine collision —
+    distinct inputs with equal hashes. -/
+def commitHashCollisionWinPred (p : UserDataCommit × UserDataCommit) : Prop :=
+  p.1 ≠ p.2 ∧ commitHash p.1 = commitHash p.2
+
+/-- **Content-bearing advantage** for the `commitHash` collision-
+    resistance game (Cycle 6.15). Replaces the `Type`-only
+    `CommitHashCollisionAdvantage` abbrev with a `Pr[…]`-based def
+    over the adversary's `OracleComp ProtocolSpec` output. -/
+noncomputable def commitHashCollisionAdv
+    (𝒜 : CommitHashCollisionAdv) (n : ℕ) : ℝ≥0∞ :=
+  Pr[ commitHashCollisionWinPred |
+      simulateQ protocolSpecHonestSim (𝒜 n) ]
+
+/-- **Win predicate for the `commitHashBytes` collision-resistance
+    game**: same shape as `commitHashCollisionWinPred`, with the
+    byte-domain hash. -/
+def commitHashBytesCollisionWinPred (p : ByteSeq × ByteSeq) : Prop :=
+  p.1 ≠ p.2 ∧ commitHashBytes p.1 = commitHashBytes p.2
+
+/-- **Content-bearing advantage** for the `commitHashBytes`
+    collision-resistance game (Cycle 6.15). -/
+noncomputable def commitHashBytesCollisionAdv
+    (𝒜 : CommitHashBytesCollisionAdv) (n : ℕ) : ℝ≥0∞ :=
+  Pr[ commitHashBytesCollisionWinPred |
+      simulateQ protocolSpecHonestSim (𝒜 n) ]
+
 /-! ## Composite triple-bundle adversaries -/
 
 /-- A `handshake_binds_ecies_key`-attack adversary: at each security
