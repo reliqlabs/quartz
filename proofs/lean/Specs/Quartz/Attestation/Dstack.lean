@@ -135,8 +135,13 @@
 namespace Specs.Quartz.Attestation.Dstack
 
 /-- An abstract TDX quote. In wire format this is the
-    DCAP-quote-v4 byte blob produced by dstack. -/
-axiom TdxQuote : Type
+    DCAP-quote-v4 byte blob produced by dstack.
+
+    **Cycle 6.21 (carrier refinement, 2026-05-20)**: refined to
+    `List UInt8` (variable-length byte sequence). Typical DCAP
+    quote v4 blobs are ~5000 bytes but the exact length depends
+    on the PCK certificate chain inlined in the quote. -/
+abbrev TdxQuote : Type := List UInt8
 
 /-- The measurement of the enclave image (MRTD / RTMR composition).
     Used in `state.rs::Config::mr_enclave`.

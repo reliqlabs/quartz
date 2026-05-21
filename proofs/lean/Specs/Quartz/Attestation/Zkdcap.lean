@@ -167,17 +167,36 @@ namespace Specs.Quartz.Attestation.Zkdcap
 
 open Specs.Quartz.Attestation.Dstack
 
-/-- A Groth16 proof over BN254 (gnark-native encoding). -/
-axiom Groth16Proof : Type
+/-- A Groth16 proof over BN254 (gnark-native encoding).
+
+    **Cycle 6.21 (carrier refinement, 2026-05-20)**: refined to
+    `List UInt8`. The gnark-native BN254 Groth16 proof serialisation
+    is fixed-length (192 bytes for a 3-element G1×G2 proof structure)
+    but we model it as variable-length here to avoid pinning the
+    Lean spec to a specific serialisation convention; future cycles
+    can tighten to `Vector UInt8 192` if the wire format stabilises. -/
+abbrev Groth16Proof : Type := List UInt8
 
 /-- The public inputs to the zkdcap circuit: concatenated 32-byte
     big-endian `fr.Element` values. Corresponds to the `public_inputs`
-    field of `QueryVerifyGnarkRequest` in `attested.rs`. -/
-axiom PublicInputs : Type
+    field of `QueryVerifyGnarkRequest` in `attested.rs`.
+
+    **Cycle 6.21 (carrier refinement, 2026-05-20)**: refined to
+    `List UInt8` (the concatenated fr.Element bytes). The number of
+    field elements depends on the specific zkdcap circuit; modelling
+    as a flat byte sequence avoids pinning that count at the spec
+    layer. -/
+abbrev PublicInputs : Type := List UInt8
 
 /-- A Groth16 verification key, identified on-chain by `vkey_name`
-    (and optionally `vkey_id`) in `QueryVerifyGnarkRequest`. -/
-axiom VKey : Type
+    (and optionally `vkey_id`) in `QueryVerifyGnarkRequest`.
+
+    **Cycle 6.21 (carrier refinement, 2026-05-20)**: refined to
+    `List UInt8`. The gnark-native vkey serialisation length depends
+    on the circuit (number of public inputs); modelling as
+    variable-length leaves room for circuit refactors without
+    breaking the spec. -/
+abbrev VKey : Type := List UInt8
 
 /-- **Bundled trust-boundary record**: the zkdcap Groth16 verifier
     packaged with its canonical verification key, its
