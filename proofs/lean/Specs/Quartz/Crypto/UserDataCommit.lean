@@ -103,8 +103,24 @@ axiom DomainSep : Type
 axiom Addr : Type
 
 /-- A per-handshake nonce, chosen by the contract / chain (e.g. block
-    height + tx index) to prevent replay of stale `user_data`. -/
-axiom Nonce : Type
+    height + tx index) to prevent replay of stale `user_data`.
+
+    **Cycle 6.16 (carrier refinement, 2026-05-20)**: refined from
+    `axiom Nonce : Type` to a concrete `BitVec 256` (the standard
+    Lean model of a 32-byte / 256-bit value, mirroring the Rust
+    `[u8; 32]` representation). `BitVec n` automatically supplies
+    `Fintype`, `DecidableEq`, and `Inhabited` instances, which
+    unblocks several downstream concerns:
+
+    - The `commitHashE` / `commitHashBytesE` random-oracle discharge
+      requires `[Fintype]` on the index type of the OracleSpec.
+      `Nonce` appearing in `UserDataCommit` was one blocker for that
+      `[Fintype UserDataCommit]` — refining `Nonce` removes one
+      blocker (the others — `DomainSep`, `Addr`, `PubKey` — remain
+      abstract until their own carrier refinements land).
+    - `Nonce` leaves the closure of every classical and `_negl`
+      theorem because it is no longer an axiom. -/
+abbrev Nonce : Type := BitVec 256
 
 /-- The structured pre-image hashed into `user_data`.
 
