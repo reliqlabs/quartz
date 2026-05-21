@@ -236,6 +236,21 @@ def handshakeSoundnessWinPred (h : HandshakeCheck) : Prop :=
 def reduce_handshake_to_groth (𝒜 : HandshakeSoundAdv) : Groth16SoundAdv :=
   fun n => do let h : HandshakeCheck ← 𝒜 n; pure (h.proof, h.inputs)
 
+/-- **Cycle 6.14.b — `IsPPT_proper`-preservation under
+    `reduce_handshake_to_groth`**.
+
+    The reduction `fun n => 𝒜 n >>= pure ∘ (fun h => (h.proof, h.inputs))`
+    adds no oracle queries (the post-composition is pure), so the
+    source's polynomial query bound witnesses the reduced
+    adversary's `IsPPT_proper` directly. Discharges the
+    `IsPPT_proper (reduce_handshake_to_groth A)` side of the
+    queued `_AGAINST_PPT_ADVERSARIES` packaging (cycle 6.14.c). -/
+theorem reduce_handshake_to_groth_preserves_IsPPT_proper
+    (𝒜 : HandshakeSoundAdv) (h : IsPPT_proper 𝒜) :
+    IsPPT_proper (reduce_handshake_to_groth 𝒜) :=
+  IsPPT_proper_of_bind_pure_comp 𝒜
+    (fun h : HandshakeCheck => (h.proof, h.inputs)) h
+
 /-- **Content-bearing advantage** for the handshake-soundness game: the
     probability that the adversary's `HandshakeCheck` output causes the
     contract to accept under a quote that is not dstack-signed.
@@ -411,6 +426,47 @@ theorem handshakeSoundnessGame_secure_of_dual_bundle_secure_AGAINST_UNBOUNDED_AD
     (negligible_add
       (h_groth_secure (reduce A).1 (IsPPT_trivial _))
       (h_tdx_secure  (reduce A).2 (IsPPT_trivial _)))
+
+/-- **Security-game reduction form (PPT-adversary statement)** —
+    Cycle 6.14.c parallel to
+    `handshakeSoundnessGame_secure_of_dual_bundle_secure_AGAINST_UNBOUNDED_ADVERSARIES`.
+
+    Given a fixed reduction `reduce : HandshakeSoundAdv →
+    Groth16SoundAdv × TdxVerifierSoundAdv` that preserves the
+    substantive `IsPPT_proper` filter (the
+    `reduce_preserves_ppt` hypothesis), a pointwise sum bound, and
+    security of both component games against `IsPPT_proper`, the
+    handshake-soundness game is also secure against `IsPPT_proper`.
+
+    For the canonical reduction `reduce_handshake_to_groth`, the
+    `reduce_preserves_ppt` premise is discharged by
+    `reduce_handshake_to_groth_preserves_IsPPT_proper` (single-bundle
+    Groth16-only; the TDX summand of the pair is then trivially
+    derivable from any PPT TDX adversary).
+
+    Unlike the `_AGAINST_UNBOUNDED_ADVERSARIES` form, here the
+    conclusion really is the cryptographic PPT statement — modulo
+    the `Classical.decEq` instances on the four carrier types (see
+    the cycle-6.14.a docstring in `ProtocolVCVio.lean` for the
+    honesty caveat). -/
+theorem handshakeSoundnessGame_secure_of_dual_bundle_secure_AGAINST_PPT_ADVERSARIES
+    {handshakeGame : SecurityGame HandshakeSoundAdv}
+    {groth16Game : SecurityGame Groth16SoundAdv}
+    {tdxGame : SecurityGame TdxVerifierSoundAdv}
+    (reduce : HandshakeSoundAdv → Groth16SoundAdv × TdxVerifierSoundAdv)
+    (reduce_preserves_ppt : ∀ A, IsPPT_proper A →
+      IsPPT_proper (reduce A).1 ∧ IsPPT_proper (reduce A).2)
+    (h_bound : ∀ A n,
+      handshakeGame.advantage A n ≤
+        groth16Game.advantage (reduce A).1 n +
+        tdxGame.advantage  (reduce A).2 n)
+    (h_groth_secure : groth16Game.secureAgainst IsPPT_proper)
+    (h_tdx_secure : tdxGame.secureAgainst IsPPT_proper) :
+    handshakeGame.secureAgainst IsPPT_proper := fun A hA =>
+  negligible_of_le (h_bound A)
+    (negligible_add
+      (h_groth_secure (reduce A).1 (reduce_preserves_ppt A hA).1)
+      (h_tdx_secure  (reduce A).2 (reduce_preserves_ppt A hA).2))
 
 /-! ## Outstanding follow-ups (Step 6.2 / 6.3 work)
 

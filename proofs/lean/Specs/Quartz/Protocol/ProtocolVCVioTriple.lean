@@ -347,6 +347,16 @@ def reduce_binds_to_groth (𝒜 : HandshakeBindsAdv) : Groth16SoundAdv :=
     let p : HandshakeCheck × UserDataCommit × PrivKey × Plaintext ← 𝒜 n
     pure (p.1.proof, p.1.inputs)
 
+/-- **Cycle 6.14.b — `IsPPT_proper`-preservation under
+    `reduce_binds_to_groth`**. Same structure as
+    `reduce_handshake_to_groth_preserves_IsPPT_proper`. -/
+theorem reduce_binds_to_groth_preserves_IsPPT_proper
+    (𝒜 : HandshakeBindsAdv) (h : IsPPT_proper 𝒜) :
+    IsPPT_proper (reduce_binds_to_groth 𝒜) :=
+  IsPPT_proper_of_bind_pure_comp 𝒜
+    (fun p : HandshakeCheck × UserDataCommit × PrivKey × Plaintext =>
+      (p.1.proof, p.1.inputs)) h
+
 /-- **Content-bearing advantage** for the handshake-binds game. -/
 noncomputable def bindsFailAdv (𝒜 : HandshakeBindsAdv) (n : ℕ) : ℝ≥0∞ :=
   Pr[ handshakeBindsWinPred | simulateQ protocolSpecHonestSim (𝒜 n) ]
@@ -478,6 +488,35 @@ theorem handshakeBindsGame_secure_of_triple_bundle_secure_AGAINST_UNBOUNDED_ADVE
         (h_groth_secure (reduce A).1     (IsPPT_trivial _))
         (h_tdx_secure   (reduce A).2.1   (IsPPT_trivial _)))
       (h_hash_secure  (reduce A).2.2     (IsPPT_trivial _)))
+
+/-- **Cycle 6.14.c** parallel PPT-bounded packaging. See the
+    Dual file's `handshakeSoundnessGame_secure_of_dual_bundle_secure_AGAINST_PPT_ADVERSARIES`
+    for the design rationale and honesty caveat. -/
+theorem handshakeBindsGame_secure_of_triple_bundle_secure_AGAINST_PPT_ADVERSARIES
+    {bindsGame   : SecurityGame HandshakeBindsAdv}
+    {groth16Game : SecurityGame Groth16SoundAdv}
+    {tdxGame     : SecurityGame TdxVerifierSoundAdv}
+    {hashGame    : SecurityGame CommitHashCollisionAdv}
+    (reduce : HandshakeBindsAdv →
+      Groth16SoundAdv × TdxVerifierSoundAdv × CommitHashCollisionAdv)
+    (reduce_preserves_ppt : ∀ A, IsPPT_proper A →
+      IsPPT_proper (reduce A).1 ∧ IsPPT_proper (reduce A).2.1 ∧
+        IsPPT_proper (reduce A).2.2)
+    (h_bound : ∀ A n,
+      bindsGame.advantage A n ≤
+        groth16Game.advantage (reduce A).1 n +
+        tdxGame.advantage     (reduce A).2.1 n +
+        hashGame.advantage    (reduce A).2.2 n)
+    (h_groth_secure : groth16Game.secureAgainst IsPPT_proper)
+    (h_tdx_secure   : tdxGame.secureAgainst IsPPT_proper)
+    (h_hash_secure  : hashGame.secureAgainst IsPPT_proper) :
+    bindsGame.secureAgainst IsPPT_proper := fun A hA =>
+  negligible_of_le (h_bound A)
+    (negligible_add
+      (negligible_add
+        (h_groth_secure (reduce A).1     (reduce_preserves_ppt A hA).1)
+        (h_tdx_secure   (reduce A).2.1   (reduce_preserves_ppt A hA).2.1))
+      (h_hash_secure  (reduce A).2.2     (reduce_preserves_ppt A hA).2.2))
 
 /-! ## Triple-bundle lifted theorem 2: `session_confidentiality`
 
@@ -622,6 +661,33 @@ theorem sessionConfGame_secure_of_triple_bundle_secure_AGAINST_UNBOUNDED_ADVERSA
         (h_tdx_secure   (reduce A).2.1   (IsPPT_trivial _)))
       (h_hash_secure  (reduce A).2.2     (IsPPT_trivial _)))
 
+/-- **Cycle 6.14.c** parallel PPT-bounded packaging. -/
+theorem sessionConfGame_secure_of_triple_bundle_secure_AGAINST_PPT_ADVERSARIES
+    {confGame    : SecurityGame SessionConfidentialityAdv}
+    {groth16Game : SecurityGame Groth16SoundAdv}
+    {tdxGame     : SecurityGame TdxVerifierSoundAdv}
+    {hashGame    : SecurityGame CommitHashCollisionAdv}
+    (reduce : SessionConfidentialityAdv →
+      Groth16SoundAdv × TdxVerifierSoundAdv × CommitHashCollisionAdv)
+    (reduce_preserves_ppt : ∀ A, IsPPT_proper A →
+      IsPPT_proper (reduce A).1 ∧ IsPPT_proper (reduce A).2.1 ∧
+        IsPPT_proper (reduce A).2.2)
+    (h_bound : ∀ A n,
+      confGame.advantage A n ≤
+        groth16Game.advantage (reduce A).1 n +
+        tdxGame.advantage     (reduce A).2.1 n +
+        hashGame.advantage    (reduce A).2.2 n)
+    (h_groth_secure : groth16Game.secureAgainst IsPPT_proper)
+    (h_tdx_secure   : tdxGame.secureAgainst IsPPT_proper)
+    (h_hash_secure  : hashGame.secureAgainst IsPPT_proper) :
+    confGame.secureAgainst IsPPT_proper := fun A hA =>
+  negligible_of_le (h_bound A)
+    (negligible_add
+      (negligible_add
+        (h_groth_secure (reduce A).1     (reduce_preserves_ppt A hA).1)
+        (h_tdx_secure   (reduce A).2.1   (reduce_preserves_ppt A hA).2.1))
+      (h_hash_secure  (reduce A).2.2     (reduce_preserves_ppt A hA).2.2))
+
 /-! ## Triple-bundle lifted theorem 3: `session_confidentiality_via_extractor`
 
 **Cycle 6.8 framing**: same degenerate-zero-advantage pattern as
@@ -750,6 +816,33 @@ theorem sessionConfExtractorGame_secure_of_triple_bundle_secure_AGAINST_UNBOUNDE
         (h_tdx_secure   (reduce A).2.1   (IsPPT_trivial _)))
       (h_hash_secure  (reduce A).2.2     (IsPPT_trivial _)))
 
+/-- **Cycle 6.14.c** parallel PPT-bounded packaging. -/
+theorem sessionConfExtractorGame_secure_of_triple_bundle_secure_AGAINST_PPT_ADVERSARIES
+    {extGame     : SecurityGame SessionConfidentialityExtractorAdv}
+    {groth16Game : SecurityGame Groth16SoundAdv}
+    {tdxGame     : SecurityGame TdxVerifierSoundAdv}
+    {hashGame    : SecurityGame CommitHashCollisionAdv}
+    (reduce : SessionConfidentialityExtractorAdv →
+      Groth16SoundAdv × TdxVerifierSoundAdv × CommitHashCollisionAdv)
+    (reduce_preserves_ppt : ∀ A, IsPPT_proper A →
+      IsPPT_proper (reduce A).1 ∧ IsPPT_proper (reduce A).2.1 ∧
+        IsPPT_proper (reduce A).2.2)
+    (h_bound : ∀ A n,
+      extGame.advantage A n ≤
+        groth16Game.advantage (reduce A).1 n +
+        tdxGame.advantage     (reduce A).2.1 n +
+        hashGame.advantage    (reduce A).2.2 n)
+    (h_groth_secure : groth16Game.secureAgainst IsPPT_proper)
+    (h_tdx_secure   : tdxGame.secureAgainst IsPPT_proper)
+    (h_hash_secure  : hashGame.secureAgainst IsPPT_proper) :
+    extGame.secureAgainst IsPPT_proper := fun A hA =>
+  negligible_of_le (h_bound A)
+    (negligible_add
+      (negligible_add
+        (h_groth_secure (reduce A).1     (reduce_preserves_ppt A hA).1)
+        (h_tdx_secure   (reduce A).2.1   (reduce_preserves_ppt A hA).2.1))
+      (h_hash_secure  (reduce A).2.2     (reduce_preserves_ppt A hA).2.2))
+
 /-! ## Triple-bundle lifted theorem 4: `cross_component_transfers_conservation`
 
 The fourth and fifth theorems substitute `commitHashBytesE`
@@ -816,6 +909,14 @@ def reduce_transfers_to_groth
   fun n => do
     let p : HandshakeCheck × TransferRequest ← 𝒜 n
     pure (p.1.proof, p.1.inputs)
+
+/-- **Cycle 6.14.b — `IsPPT_proper`-preservation under
+    `reduce_transfers_to_groth`**. -/
+theorem reduce_transfers_to_groth_preserves_IsPPT_proper
+    (𝒜 : TransfersConservationAdv) (h : IsPPT_proper 𝒜) :
+    IsPPT_proper (reduce_transfers_to_groth 𝒜) :=
+  IsPPT_proper_of_bind_pure_comp 𝒜
+    (fun p : HandshakeCheck × TransferRequest => (p.1.proof, p.1.inputs)) h
 
 /-- **Content-bearing failure advantage**. -/
 noncomputable def consFailAdv
@@ -911,6 +1012,33 @@ theorem transfersConsGame_secure_of_triple_bundle_secure_AGAINST_UNBOUNDED_ADVER
         (h_tdx_secure   (reduce A).2.1   (IsPPT_trivial _)))
       (h_hashB_secure  (reduce A).2.2     (IsPPT_trivial _)))
 
+/-- **Cycle 6.14.c** parallel PPT-bounded packaging. -/
+theorem transfersConsGame_secure_of_triple_bundle_secure_AGAINST_PPT_ADVERSARIES
+    {consGame    : SecurityGame TransfersConservationAdv}
+    {groth16Game : SecurityGame Groth16SoundAdv}
+    {tdxGame     : SecurityGame TdxVerifierSoundAdv}
+    {hashBGame   : SecurityGame CommitHashBytesCollisionAdv}
+    (reduce : TransfersConservationAdv →
+      Groth16SoundAdv × TdxVerifierSoundAdv × CommitHashBytesCollisionAdv)
+    (reduce_preserves_ppt : ∀ A, IsPPT_proper A →
+      IsPPT_proper (reduce A).1 ∧ IsPPT_proper (reduce A).2.1 ∧
+        IsPPT_proper (reduce A).2.2)
+    (h_bound : ∀ A n,
+      consGame.advantage A n ≤
+        groth16Game.advantage (reduce A).1 n +
+        tdxGame.advantage     (reduce A).2.1 n +
+        hashBGame.advantage   (reduce A).2.2 n)
+    (h_groth_secure : groth16Game.secureAgainst IsPPT_proper)
+    (h_tdx_secure   : tdxGame.secureAgainst IsPPT_proper)
+    (h_hashB_secure : hashBGame.secureAgainst IsPPT_proper) :
+    consGame.secureAgainst IsPPT_proper := fun A hA =>
+  negligible_of_le (h_bound A)
+    (negligible_add
+      (negligible_add
+        (h_groth_secure (reduce A).1     (reduce_preserves_ppt A hA).1)
+        (h_tdx_secure   (reduce A).2.1   (reduce_preserves_ppt A hA).2.1))
+      (h_hashB_secure  (reduce A).2.2     (reduce_preserves_ppt A hA).2.2))
+
 /-! ## Triple-bundle lifted theorem 5: `cross_component_auction_winner_determinism` -/
 
 /-- **Classical form (preserved as a corollary)**:
@@ -962,6 +1090,15 @@ def reduce_auctionDeterm_to_groth
   fun n => do
     let p : HandshakeCheck × AuctionRound × ResolveMessage ← 𝒜 n
     pure (p.1.proof, p.1.inputs)
+
+/-- **Cycle 6.14.b — `IsPPT_proper`-preservation under
+    `reduce_auctionDeterm_to_groth`**. -/
+theorem reduce_auctionDeterm_to_groth_preserves_IsPPT_proper
+    (𝒜 : AuctionDeterminismAdv) (h : IsPPT_proper 𝒜) :
+    IsPPT_proper (reduce_auctionDeterm_to_groth 𝒜) :=
+  IsPPT_proper_of_bind_pure_comp 𝒜
+    (fun p : HandshakeCheck × AuctionRound × ResolveMessage =>
+      (p.1.proof, p.1.inputs)) h
 
 /-- **Content-bearing failure advantage**. -/
 noncomputable def auctFailAdv
@@ -1060,6 +1197,33 @@ theorem auctionDetermGame_secure_of_triple_bundle_secure_AGAINST_UNBOUNDED_ADVER
         (h_groth_secure (reduce A).1     (IsPPT_trivial _))
         (h_tdx_secure   (reduce A).2.1   (IsPPT_trivial _)))
       (h_hashB_secure  (reduce A).2.2     (IsPPT_trivial _)))
+
+/-- **Cycle 6.14.c** parallel PPT-bounded packaging. -/
+theorem auctionDetermGame_secure_of_triple_bundle_secure_AGAINST_PPT_ADVERSARIES
+    {auctGame    : SecurityGame AuctionDeterminismAdv}
+    {groth16Game : SecurityGame Groth16SoundAdv}
+    {tdxGame     : SecurityGame TdxVerifierSoundAdv}
+    {hashBGame   : SecurityGame CommitHashBytesCollisionAdv}
+    (reduce : AuctionDeterminismAdv →
+      Groth16SoundAdv × TdxVerifierSoundAdv × CommitHashBytesCollisionAdv)
+    (reduce_preserves_ppt : ∀ A, IsPPT_proper A →
+      IsPPT_proper (reduce A).1 ∧ IsPPT_proper (reduce A).2.1 ∧
+        IsPPT_proper (reduce A).2.2)
+    (h_bound : ∀ A n,
+      auctGame.advantage A n ≤
+        groth16Game.advantage (reduce A).1 n +
+        tdxGame.advantage     (reduce A).2.1 n +
+        hashBGame.advantage   (reduce A).2.2 n)
+    (h_groth_secure : groth16Game.secureAgainst IsPPT_proper)
+    (h_tdx_secure   : tdxGame.secureAgainst IsPPT_proper)
+    (h_hashB_secure : hashBGame.secureAgainst IsPPT_proper) :
+    auctGame.secureAgainst IsPPT_proper := fun A hA =>
+  negligible_of_le (h_bound A)
+    (negligible_add
+      (negligible_add
+        (h_groth_secure (reduce A).1     (reduce_preserves_ppt A hA).1)
+        (h_tdx_secure   (reduce A).2.1   (reduce_preserves_ppt A hA).2.1))
+      (h_hashB_secure  (reduce A).2.2     (reduce_preserves_ppt A hA).2.2))
 
 /-! ## Outstanding follow-ups (Step 6.3 work)
 

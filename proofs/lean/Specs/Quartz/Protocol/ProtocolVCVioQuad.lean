@@ -357,6 +357,15 @@ def reduce_crossSessionBind_to_groth
     let p : HandshakeCheck × RawSessionSetPubKey × PrivKey × Plaintext ← 𝒜 n
     pure (p.1.proof, p.1.inputs)
 
+/-- **Cycle 6.14.b — `IsPPT_proper`-preservation under
+    `reduce_crossSessionBind_to_groth`**. -/
+theorem reduce_crossSessionBind_to_groth_preserves_IsPPT_proper
+    (𝒜 : CrossSessionBindAdv) (h : IsPPT_proper 𝒜) :
+    IsPPT_proper (reduce_crossSessionBind_to_groth 𝒜) :=
+  IsPPT_proper_of_bind_pure_comp 𝒜
+    (fun p : HandshakeCheck × RawSessionSetPubKey × PrivKey × Plaintext =>
+      (p.1.proof, p.1.inputs)) h
+
 /-- **Content-bearing failure advantage**. -/
 noncomputable def bindFailAdv
     (𝒜 : CrossSessionBindAdv) (n : ℕ) : ℝ≥0∞ :=
@@ -518,6 +527,49 @@ theorem crossSessionBindGame_secure_of_quad_bundle_secure_AGAINST_UNBOUNDED_ADVE
           (h_tdx_secure        (reduce A).2.2.1   (IsPPT_trivial _)))
         (h_hash_secure         (reduce A).2.2.2.1 (IsPPT_trivial _)))
       (h_hashB_secure          (reduce A).2.2.2.2 (IsPPT_trivial _)))
+
+/-- **Cycle 6.14.c** parallel PPT-bounded packaging for the
+    quadruple-bundle terminal lift. The `reduce_preserves_ppt`
+    hypothesis bundles the five-way preservation claim into one
+    conjunction. -/
+theorem crossSessionBindGame_secure_of_quad_bundle_secure_AGAINST_PPT_ADVERSARIES
+    {bindGame    : SecurityGame CrossSessionBindAdv}
+    {groth16KSGame' : SecurityGame Groth16KSAdv}
+    {circuitEqGame' : SecurityGame CircuitEqAdv}
+    {tdxGame     : SecurityGame TdxVerifierSoundAdv}
+    {hashGame    : SecurityGame CommitHashCollisionAdv}
+    {hashBGame   : SecurityGame CommitHashBytesCollisionAdv}
+    (reduce : CrossSessionBindAdv →
+      Groth16KSAdv × CircuitEqAdv × TdxVerifierSoundAdv ×
+      CommitHashCollisionAdv × CommitHashBytesCollisionAdv)
+    (reduce_preserves_ppt : ∀ A, IsPPT_proper A →
+      IsPPT_proper (reduce A).1 ∧ IsPPT_proper (reduce A).2.1 ∧
+        IsPPT_proper (reduce A).2.2.1 ∧
+        IsPPT_proper (reduce A).2.2.2.1 ∧
+        IsPPT_proper (reduce A).2.2.2.2)
+    (h_bound : ∀ A n,
+      bindGame.advantage A n ≤
+        groth16KSGame'.advantage (reduce A).1 n +
+        circuitEqGame'.advantage (reduce A).2.1 n +
+        tdxGame.advantage        (reduce A).2.2.1 n +
+        hashGame.advantage       (reduce A).2.2.2.1 n +
+        hashBGame.advantage      (reduce A).2.2.2.2 n)
+    (h_groth_ks_secure : groth16KSGame'.secureAgainst IsPPT_proper)
+    (h_circuit_secure  : circuitEqGame'.secureAgainst IsPPT_proper)
+    (h_tdx_secure      : tdxGame.secureAgainst IsPPT_proper)
+    (h_hash_secure     : hashGame.secureAgainst IsPPT_proper)
+    (h_hashB_secure    : hashBGame.secureAgainst IsPPT_proper) :
+    bindGame.secureAgainst IsPPT_proper := fun A hA =>
+  negligible_of_le (h_bound A)
+    (negligible_add
+      (negligible_add
+        (negligible_add
+          (negligible_add
+            (h_groth_ks_secure (reduce A).1       (reduce_preserves_ppt A hA).1)
+            (h_circuit_secure  (reduce A).2.1     (reduce_preserves_ppt A hA).2.1))
+          (h_tdx_secure        (reduce A).2.2.1   (reduce_preserves_ppt A hA).2.2.1))
+        (h_hash_secure         (reduce A).2.2.2.1 (reduce_preserves_ppt A hA).2.2.2.1))
+      (h_hashB_secure          (reduce A).2.2.2.2 (reduce_preserves_ppt A hA).2.2.2.2))
 
 /-! ## Closing assessment
 

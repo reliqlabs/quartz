@@ -532,6 +532,44 @@ noncomputable def IsPPT_proper {T : Type}
     (α := fun _ : ℕ => PUnit) (β := fun _ : ℕ => T)
     (fun n (_ : PUnit) => 𝒜 n))
 
+/-! ## `IsPPT_proper`-preservation under reductions (Cycle 6.14.b)
+
+Every protocol-layer reduction in `ProtocolVCVio{Dual,Triple,Quad}.lean`
+has the same shape: `fun n => 𝒜 n >>= pure ∘ proj`. Such a reduction
+makes the same oracle queries as `𝒜 n` plus zero (because `pure ∘ proj`
+is pure), so the same per-index polynomial query bound witnesses
+`IsPPT_proper` of the reduced adversary.
+
+The generic lemma below packages this once for all four reductions,
+discharging the `IsPPT_proper (reduce_X 𝒜)` side of each
+`_AGAINST_PPT_ADVERSARIES` packaging that cycle 6.14.c (queued) will
+build.
+-/
+
+/-- Generic `IsPPT_proper`-preservation under the `bind/pure ∘ f` shape.
+
+    If `𝒜` is a `OracleComp ProtocolSpec`-valued PPT adversary at
+    each security parameter, then `fun n => 𝒜 n >>= pure ∘ f` is
+    also PPT — the post-composition with `pure ∘ f` makes no new
+    oracle queries, so the source's polynomial bound witnesses the
+    reduced adversary's `IsPPT_proper` too.
+
+    Proof: extract the source's PolyQueries witness `⟨qb, hqb⟩`;
+    return the same `qb`; rewrite `>>= pure ∘ f` as `f <$> _` via
+    `← map_eq_bind_pure_comp`; `isPerIndexQueryBound_map_iff` reduces
+    the per-index query bound on the mapped computation to the bound
+    on the source. -/
+theorem IsPPT_proper_of_bind_pure_comp {S T : Type}
+    (𝒜 : ℕ → OracleComp ProtocolSpec S) (f : S → T)
+    (h : IsPPT_proper 𝒜) :
+    IsPPT_proper (fun n => 𝒜 n >>= pure ∘ f) := by
+  obtain ⟨⟨qb, hqb⟩⟩ := h
+  refine ⟨⟨qb, ?_⟩⟩
+  intro n _
+  show IsPerIndexQueryBound (𝒜 n >>= pure ∘ f) _
+  rw [← map_eq_bind_pure_comp, isPerIndexQueryBound_map_iff]
+  exact hqb n PUnit.unit
+
 /-! ## Decidable Bool/Prop bridges (resolves Step 6.0 finding 2)
 
 Step 6.0 surfaced a *win-condition Bool/Prop mismatch*: the lifted
