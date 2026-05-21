@@ -139,13 +139,33 @@ namespace Specs.Quartz.Attestation.Dstack
 axiom TdxQuote : Type
 
 /-- The measurement of the enclave image (MRTD / RTMR composition).
-    Used in `state.rs::Config::mr_enclave`. -/
-axiom MrEnclave : Type
+    Used in `state.rs::Config::mr_enclave`.
+
+    **Cycle 6.17 (carrier refinement, 2026-05-20)**: refined from
+    `axiom MrEnclave : Type` to `abbrev MrEnclave : Type := BitVec 384`.
+    Intel TDX's MRTD (build-time measurement) is a 48-byte / 384-bit
+    SHA-384 digest. `BitVec 384` mirrors this exactly and provides
+    automatic `Fintype`/`DecidableEq`/`Inhabited` instances. -/
+abbrev MrEnclave : Type := BitVec 384
 
 /-- The 64-byte user-data field embedded in the TDX quote's
     `report_data`. Quartz binds this to a domain-separated hash
-    of session/handshake state. -/
-axiom UserData : Type
+    of session/handshake state.
+
+    **Cycle 6.18 (carrier refinement, 2026-05-20)**: refined from
+    `axiom UserData : Type` to `abbrev UserData : Type := BitVec 512`.
+    The DCAP quote's `report_data` is exactly 64 bytes / 512 bits;
+    `BitVec 512` mirrors this exactly and provides automatic
+    `Fintype`/`DecidableEq`/`Inhabited`. This is the highest-leverage
+    carrier refinement in the queue because `UserData` is the
+    codomain of both `commitHashE` and `commitHashBytesE`; with
+    `Fintype UserData` available, the random-oracle birthday-bound
+    discharge of those (d-pigeonhole-impossible) axioms becomes
+    statable (though discharge also requires `Fintype` on the
+    *domain*, which remains pending — `UserDataCommit` cardinality
+    is still abstract because `DomainSep`, `Addr`, `PubKey` have
+    not been refined yet). -/
+abbrev UserData : Type := BitVec 512
 
 /-- Abstract soundness predicate.
 

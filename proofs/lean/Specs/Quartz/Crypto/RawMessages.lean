@@ -170,9 +170,15 @@ open Specs.Quartz.Crypto.Ecies
 open Specs.Quartz.Attestation.Dstack
 
 /-- Opaque byte sequence — the output of `serde_json::to_string`
-    seen abstractly. Kept axiomatic because the JSON byte layout is
-    out of scope at this spec level. -/
-axiom ByteSeq : Type
+    seen abstractly.
+
+    **Cycle 6.20 (carrier refinement, 2026-05-20)**: refined to
+    `List UInt8`. JSON byte output is a variable-length byte
+    sequence; `List UInt8` is the natural Lean model. The JSON byte
+    layout itself remains out of scope at this spec level — what
+    we now make concrete is the *type* of the byte sequence, not
+    the byte mapping from a `RawSession*` struct. -/
+abbrev ByteSeq : Type := List UInt8
 
 /-- Lean mirror of Rust's `RawSessionCreate { nonce, contract }`.
 
@@ -362,17 +368,28 @@ theorem userDataOfSessionSetPubKey_inj :
     tag carried implicitly in the serde encoding. At this spec level
     its identity is irrelevant — only its presence in the bridge.
 
-    Kept as a witness axiom: `DomainSep` is an abstract carrier
-    type defined in `UserDataCommit.lean` (frozen by Step 2); no
-    concrete value is available to demote this to a `def`. -/
-axiom rawDomainSep : DomainSep
+    **Cycle 6.20 (2026-05-20, (a)-bucket demotion)**: with
+    `DomainSep` refined to `List UInt8` in the same cycle's carrier-
+    refinement pass, this can be demoted to a concrete `def`. The
+    value is the deployed ASCII tag `"QUARTZ-HS-V1"` interpreted
+    byte-by-byte as `UInt8` codes. -/
+def rawDomainSep : DomainSep :=
+  "QUARTZ-HS-V1".toUTF8.toList
 
 /-- A canonical `Addr` value standing in for the contract address
     field that `RawSessionSetPubKey` does not carry directly. (The
     Rust `SessionSetPubKey` flow runs against a single bound
-    contract resolved at handler dispatch.) Same reasoning as
-    `rawDomainSep`: witness axiom into an abstract carrier. -/
-axiom rawBoundContract : Addr
+    contract resolved at handler dispatch.)
+
+    **Cycle 6.20 (2026-05-20, (a)-bucket demotion)**: with `Addr`
+    refined to `String`, this can be demoted to a concrete `def`.
+    The exact bech32 address used in deployment is configured at
+    instantiation time and not relevant to the spec's logical
+    content; we pin a documentary placeholder
+    `"xion1quartzdeploymentaddress"` to make the slot non-opaque
+    without claiming a specific deployed address. -/
+def rawBoundContract : Addr :=
+  "xion1quartzdeploymentaddress"
 
 /-- Bridge from a `RawSessionSetPubKey` to the abstract
     `UserDataCommit` schema. The structured commit reuses the
@@ -390,9 +407,15 @@ noncomputable def commitOfRawSessionSetPubKey
     message does not carry the ECIES pubkey directly — that
     arrives later via SetPubKey — so the bridge to
     `UserDataCommit` fills the slot with this placeholder.
-    Witness axiom into the abstract `PubKey` carrier from
-    `Ecies.lean` (frozen by Step 1). -/
-axiom rawPlaceholderPubKey : PubKey
+
+    **Cycle 6.20 (2026-05-20, (a)-bucket demotion)**: with `PubKey`
+    refined to `BitVec 264`, this can be demoted to a concrete
+    `def`. The placeholder is the zero bitvec — a sentinel value
+    indicating "no pubkey set yet". This is a documentary choice;
+    the value is never exercised cryptographically because
+    `SessionCreate`'s downstream consumers do not use the pubkey
+    field. -/
+def rawPlaceholderPubKey : PubKey := 0
 
 /-- Bridge from a `RawSessionCreate` to the abstract
     `UserDataCommit` schema. -/

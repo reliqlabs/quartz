@@ -96,11 +96,20 @@ open Specs.Quartz.Attestation.Dstack
 /-- Domain-separation tag for the user_data commitment.
 
     The Rust code uses a fixed ASCII prefix (e.g. `"QUARTZ-HS-V1"`)
-    so that hashes for different protocol contexts cannot collide. -/
-axiom DomainSep : Type
+    so that hashes for different protocol contexts cannot collide.
 
-/-- A CosmWasm contract address (bech32). Modelled abstractly. -/
-axiom Addr : Type
+    **Cycle 6.20 (carrier refinement, 2026-05-20)**: refined to
+    `List UInt8` (a variable-length byte sequence) — the natural
+    Lean model for an ASCII byte string. -/
+abbrev DomainSep : Type := List UInt8
+
+/-- A CosmWasm contract address (bech32).
+
+    **Cycle 6.20 (carrier refinement, 2026-05-20)**: refined to
+    `String`. Bech32 addresses are textual; `String` is the
+    natural Lean model. `String` carries `DecidableEq` and
+    `Inhabited` automatically. -/
+abbrev Addr : Type := String
 
 /-- A per-handshake nonce, chosen by the contract / chain (e.g. block
     height + tx index) to prevent replay of stale `user_data`.

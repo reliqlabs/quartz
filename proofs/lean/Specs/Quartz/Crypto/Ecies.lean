@@ -61,19 +61,35 @@ namespace Specs.Quartz.Crypto.Ecies
 /-- An ECIES secp256k1 private (signing) key.
 
     Modelled after `k256::ecdsa::SigningKey` as used in
-    `crates/enclave/core/src/encryption.rs`. Treated abstractly:
-    we never inspect the bit-level representation here. -/
-axiom PrivKey : Type
+    `crates/enclave/core/src/encryption.rs`.
+
+    **Cycle 6.19 (carrier refinement, 2026-05-20)**: refined to
+    `BitVec 256`. secp256k1 private keys are 32-byte / 256-bit
+    scalars. `BitVec 256` is the natural Lean model. -/
+abbrev PrivKey : Type := BitVec 256
 
 /-- An ECIES secp256k1 public (verifying) key.
 
-    Modelled after `k256::ecdsa::VerifyingKey`. -/
-axiom PubKey : Type
+    Modelled after `k256::ecdsa::VerifyingKey`.
+
+    **Cycle 6.19 (carrier refinement, 2026-05-20)**: refined to
+    `BitVec 264`. Compressed secp256k1 public keys are
+    33 bytes / 264 bits (1-byte parity prefix + 32-byte X coordinate).
+    This gives `DecidableEq PubKey` computably, making the
+    `Classical.propDecidable` local instance below redundant
+    (retained for backwards compatibility with explicit references). -/
+abbrev PubKey : Type := BitVec 264
 
 /-- An ECIES plaintext (opaque byte blob). Equivalent to `Vec<u8>`
-    in the Rust code, but kept abstract here so the spec is purely
-    algebraic. -/
-axiom Plaintext : Type
+    in the Rust code.
+
+    **Cycle 6.19 (carrier refinement, 2026-05-20)**: refined to
+    `List UInt8` (variable-length byte sequence). Differs from the
+    fixed-width refinements above because plaintexts are
+    application-defined and arbitrary-length. Not `Fintype` (the
+    type is infinite) — that's fine; ECIES doesn't claim a `Fintype`
+    on plaintexts. -/
+abbrev Plaintext : Type := List UInt8
 
 /-- Derive the public key corresponding to a private key.
 
