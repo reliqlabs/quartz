@@ -283,15 +283,15 @@ All five Round D criticals are now either closed or partitioned into named follo
 - [ ] `cross_component_session_bind_negl` 5-summand union bound matches the load-bearing claim the protocol layer is meant to make? — **Round A: no**, because the 5 underlying adversaries are unconstrained from the main one. See attack #3.
 - [ ] No new `sorry` introduced in the lift modules? — Yes, still none.
 - [ ] No regression in classical-chain axiom closures (each `_classical` corollary preserves its pre-refactor closure)? — **Yes, Round A confirms this is honest.**
-- [ ] ~~Option-(b) collision-resistance framing is the framing the team intended?~~ → Round A: the framing is correctly intended, but the *implementation* of the framing names a new symbol without tying it back to `commitHash`. See attack #8.
-- [ ] `IsPPT := True` placeholder is acceptable as a documented gap (or is `PolyQueries` adoption a blocker)? — **Round A escalates: blocker**. The placeholder interacts with the free-symbol root cause to admit "for all adversaries, this opaque function is negligible" certificates that mean nothing. See attack #5.
+- [x] ~~Option-(b) collision-resistance framing is the framing the team intended?~~ → **Closed surface-side by cycle 6.15 (2026-05-20)**: `commitHashCollisionAdv` and `commitHashBytesCollisionAdv` def-tied to `Pr[…]` collision events. Substantive Option-(a) closure (replacing the impossible `commitHashE` injection axiom with a random-oracle model) remains blocked on `[Fintype UserData]` carrier refinement.
+- [x] `IsPPT := True` placeholder is acceptable as a documented gap (or is `PolyQueries` adoption a blocker)? → **Closed end-to-end by cycles 6.12 + 6.14.a/b/c (2026-05-20)**: placeholder retained for backwards-compatible `_AGAINST_UNBOUNDED_ADVERSARIES` packagings, with substantive `IsPPT_proper := Nonempty (PolyQueries …)` and parallel `_AGAINST_PPT_ADVERSARIES` packagings landed. The PPT packagings discharge each summand via per-reduction `IsPPT_proper`-preservation lemmas.
 
 **New items added by Round A:**
 
-- [ ] For each `_negl` theorem, is the protocol-fail advantage a `def` over a concrete win event, or a free function symbol?
-- [ ] For each `*Advantage` `abbrev`, is it tied to a concrete win condition involving the actual verifier/hash, or is it a `Type`-only alias?
-- [ ] At the terminal lift, are the bundle adversaries *derived* from the main adversary (via a `reduce : 𝒜 → 𝒜_low` function with a `reduce_correct` lemma), or are they free arguments?
-- [ ] Has the `ProtocolSpec` oracle-access framework been wired into adversary types, or is it imported but unused?
+- [x] For each `_negl` theorem, is the protocol-fail advantage a `def` over a concrete win event, or a free function symbol? → **Closed by cycles 6.4–6.11 + 6.15**: all advantages are now `def`s over `Pr[…]` events mentioning the concrete cryptographic functions.
+- [x] For each `*Advantage` `abbrev`, is it tied to a concrete win condition involving the actual verifier/hash, or is it a `Type`-only alias? → **Closed by cycles 6.4–6.11 + 6.15**: every advantage has a content-bearing def. `Type`-only abbrevs are retained alongside for backwards-compatibility with the generic packagings.
+- [ ] At the terminal lift, are the bundle adversaries *derived* from the main adversary (via a `reduce : 𝒜 → 𝒜_low` function with a `reduce_correct` lemma), or are they free arguments? → **Partial closure** at cycle 6.11 (terminal lift's bundle adversaries are derived from the main one), full closure of attack #3 remains tracked under the wider Round A surface.
+- [x] Has the `ProtocolSpec` oracle-access framework been wired into adversary types, or is it imported but unused? → **Closed by cycle 6.13 (2026-05-20)**: all five adversary types lifted to `OracleComp ProtocolSpec`-valued; advantages route through `simulateQ protocolSpecHonestSim` over the four protocol oracles.
 
 ---
 
