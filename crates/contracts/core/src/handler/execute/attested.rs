@@ -28,6 +28,58 @@ struct QueryVerifyGnarkRequest {
     vkey_id: u64,
 }
 
+// ── DcapJournal report_data extraction (Round D Critical 4 production hook) ─────
+//
+// Minimal subset of `zkdcap_core::DcapJournal` covering only the field needed
+// for the binding check between the proof's public journal and the
+// wrapper-supplied `user_data`. We avoid the full `zkdcap-core` dependency
+// to keep `quartz-contract-core` self-contained in the wasm32 build.
+//
+// The DcapJournal full layout lives at
+// `/Users/mvid/Development/reliq/zkdcap/core/src/lib.rs`; the canonical
+// `report_data` field is serialised as a hex-encoded `String`.
+//
+// **Compose_hash binding NOT covered here**: `DcapJournal` does not currently
+// expose `compose_hash` directly — only `rtmr3` (48-byte SHA-384 measurement
+// register), into which `compose_hash` was extended at boot. Verifying
+// `self.compose_hash` against `journal.rtmr3` requires either (a) adding
+// `compose_hash` to the journal format in zkdcap (zkdcap-side change) or
+// (b) verifying the RTMR3 extension relationship on-chain (expensive,
+// requires prior RTMR state).
+//
+// This hook implements (1) the report_data binding; the compose_hash
+// binding is queued as a separate follow-up (see Round D Critical 4 in
+// `.colosseum/ledger.md`).
+
+#[cfg(not(feature = "mock"))]
+#[derive(serde::Deserialize)]
+struct JournalReportData {
+    report_data: String,
+}
+
+#[cfg(not(feature = "mock"))]
+fn verify_journal_binds_report_data(
+    journal_bytes: &[u8],
+    expected_user_data: &[u8; 64],
+) -> Result<(), Error> {
+    let journal: JournalReportData = serde_json::from_slice(journal_bytes)
+        .map_err(|e| Error::ZkdcapVerificationFailed(format!("decode journal: {e}")))?;
+    let report_data_bytes = hex::decode(&journal.report_data)
+        .map_err(|e| Error::ZkdcapVerificationFailed(format!("decode report_data hex: {e}")))?;
+    if report_data_bytes.len() != 64 {
+        return Err(Error::ZkdcapVerificationFailed(format!(
+            "journal report_data wrong length: expected 64, got {}",
+            report_data_bytes.len()
+        )));
+    }
+    if report_data_bytes.as_slice() != expected_user_data.as_slice() {
+        return Err(Error::ZkdcapVerificationFailed(
+            "journal report_data does not match self.user_data".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(not(feature = "mock"))]
 #[derive(Clone, prost::Message)]
 struct ProofVerifyGnarkResponse {
@@ -118,6 +170,15 @@ impl Handler for DstackZkAttestation {
                 "proof verification returned false".to_string(),
             ));
         }
+
+        // Round D Critical 4 production hook (2026-05-21): the gnark
+        // verifier confirms the proof checks out, but does not say
+        // anything about *which* report_data and compose_hash were
+        // attested. Bind the proof's journal to the wrapper-declared
+        // user_data; the matching compose_hash binding is queued as a
+        // separate Quartz/zkdcap follow-up because DcapJournal does not
+        // currently expose compose_hash directly.
+        verify_journal_binds_report_data(&self.zkdcap_journal, &self.user_data)?;
 
         Ok(Response::new().add_attribute("action", "zkdcap_verified"))
     }

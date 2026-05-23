@@ -325,6 +325,67 @@ noncomputable def protocolSpecHonestSim : QueryImpl ProtocolSpec ProbComp :=
   ((commitHashHonestSim + commitHashBytesHonestSim) + verifyTdxQuoteHonestSim)
     + verifyGroth16HonestSim
 
+/-! ## Random-oracle migration path (Cycle 6.22, documentation only)
+
+Cycle 6.22 is the substantive Option-(a) closure of (d-pigeonhole-
+impossible) for `commitHashE` and `commitHashBytesE`. With
+`UserData = BitVec 512` (cycle 6.18) and `DecidableEq UserDataCommit`
+(cycle 6.14.a), VCV-io's `randomOracle` is now mechanically applicable.
+
+### What cycle 6.22.a (scaffolding) would add
+
+```lean
+noncomputable def commitHashROSim :
+    QueryImpl CommitHashSpec (StateT CommitHashSpec.QueryCache ProbComp) :=
+  randomOracle
+```
+
+(plus the analogous `commitHashBytesROSim`).
+
+### What cycle 6.22.b (birthday bound) would prove
+
+```lean
+theorem commitHashCollisionAdv_RO_birthday_bound
+    (𝒜 : CommitHashCollisionAdv) (qb : ℕ) (h : … : query bound on 𝒜 …) :
+    Pr[commitHashCollisionWinPred |
+        simulateQ commitHashROSim_combined (𝒜 n)] ≤
+      qb^2 / (2 * 2^512)
+```
+
+This is the standard birthday bound (`n²/(2·|Range|)`), discharged
+via VCV-io's `probEvent_logCollision_le_birthday_total` from
+`VCVio/OracleComp/QueryTracking/Birthday.lean:396`.
+
+### What cycle 6.22.c (downstream migration) would change
+
+Every protocol theorem currently using `commitHash_inj` (4 lifts:
+`handshake_binds_ecies_key_negl`, `session_confidentiality_negl`,
+`session_confidentiality_via_extractor_negl`,
+`cross_component_session_bind_negl`) needs probabilistic re-statement.
+`pkOfUserData` becomes state-dependent on the random-oracle cache;
+`pkOfUserData_commitHash` becomes a probabilistic guarantee with
+collision-failure carve-out.
+
+### Infrastructure prerequisites surfaced by the cycle-6.22.a attempt
+
+Building `commitHashROSim` directly requires two extra imports that
+the current `ProtocolVCVio.lean` does not pull in:
+
+1. `VCVio.OracleComp.QueryTracking.RandomOracle` (for `randomOracle`)
+2. `VCVio.OracleComp.Constructions.BitVec` (for
+   `SampleableType (BitVec 512)`)
+
+Plus a section reorganisation: the `DecidableEq UserDataCommit`
+`local instance` from cycle 6.14.a sits well after this section in
+the file, so consuming it here requires either moving the instance
+earlier or restructuring the file. Cleanest path: split the
+random-oracle scaffolding into a separate module
+`ProtocolVCVioROModel.lean` that imports `ProtocolVCVio.lean` plus
+the extra dependencies.
+
+This refactoring is the cycle 6.22.a work; we document it here
+rather than committing partial scaffolding that has no consumer. -/
+
 /-! ## Adversary efficiency class (resolves Step 6.0 finding 1)
 
 Step 6.0 surfaced an *adversary-class quantification gap*: the lifted
