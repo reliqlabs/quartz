@@ -10,6 +10,41 @@ pub type Hash = [u8; 32];
 pub type Height = u64;
 pub type TrustThreshold = (u64, u64);
 
+/// Custom serde for `Option<[u8; 48]>`. Serde's built-in array impls only
+/// cover lengths up to 32; the 48-byte SHA-384 measurement registers need
+/// this helper. Wire form is a `Vec<u8>` (binary), length-checked on
+/// deserialise.
+pub(crate) mod rtmr_opt_serde {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(
+        val: &Option<[u8; 48]>,
+        ser: S,
+    ) -> Result<S::Ok, S::Error> {
+        val.as_ref().map(|a| a.as_slice()).serialize(ser)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        de: D,
+    ) -> Result<Option<[u8; 48]>, D::Error> {
+        let opt = <Option<Vec<u8>>>::deserialize(de)?;
+        match opt {
+            None => Ok(None),
+            Some(v) => {
+                if v.len() != 48 {
+                    return Err(serde::de::Error::custom(format!(
+                        "expected_rtmr3 wrong length: expected 48, got {}",
+                        v.len()
+                    )));
+                }
+                let mut arr = [0u8; 48];
+                arr.copy_from_slice(&v);
+                Ok(Some(arr))
+            }
+        }
+    }
+}
+
 pub const CONFIG_KEY: &str = "quartz_config";
 pub const SESSION_KEY: &str = "quartz_session";
 pub const SEQUENCE_NUM_KEY: &str = "quartz_seq_num";
@@ -24,6 +59,27 @@ pub struct Config {
     /// Verification key name registered in Xion's ZK module for zkdcap proof verification.
     /// When set, DstackAttestation handler queries the ZK module directly.
     zkdcap_vkey: Option<String>,
+    /// Expected TDX RTMR3 (48-byte SHA-384 measurement register).
+    ///
+    /// When `Some`, the `DstackZkAttestation` handler additionally verifies
+    /// that the proof's journal-committed `rtmr3` equals this value. This is
+    /// the path-(c) closure of the Round D Critical 4 `compose_hash` binding
+    /// gap (2026-05-21): the contract owner pins the expected post-boot
+    /// RTMR3 of the deployed dstack VM (which incorporates `compose_hash`
+    /// via dstack's boot-time TDX RTMR extension), and the wrapper enforces
+    /// `journal.rtmr3 == config.expected_rtmr3`. Without this field, an
+    /// attacker with a valid proof for image Y can submit
+    /// `self.compose_hash = config.mr_enclave (value for image X)` and pass
+    /// all other checks.
+    ///
+    /// Deployers should compute `expected_rtmr3` once from a known-good
+    /// quote of the intended dstack image (e.g., from the `rtmr3` field of
+    /// a `DcapJournal` produced by the canonical sp1-guest run). When
+    /// `None`, the binding is skipped — backwards-compatible with existing
+    /// deployments, but the residual `compose_hash` substitution vector
+    /// remains open.
+    #[serde(default, with = "rtmr_opt_serde")]
+    expected_rtmr3: Option<[u8; 48]>,
 }
 
 impl Config {
@@ -36,6 +92,23 @@ impl Config {
             mr_enclave,
             light_client_opts,
             zkdcap_vkey,
+            expected_rtmr3: None,
+        }
+    }
+
+    /// Builder variant: same as `new` but also pins the expected RTMR3.
+    /// Recommended for production deployments — see the field docstring.
+    pub fn new_with_rtmr3(
+        mr_enclave: MrEnclave,
+        light_client_opts: LightClientOpts,
+        zkdcap_vkey: Option<String>,
+        expected_rtmr3: [u8; 48],
+    ) -> Self {
+        Self {
+            mr_enclave,
+            light_client_opts,
+            zkdcap_vkey,
+            expected_rtmr3: Some(expected_rtmr3),
         }
     }
 
@@ -50,6 +123,10 @@ impl Config {
     pub fn zkdcap_vkey(&self) -> Option<&str> {
         self.zkdcap_vkey.as_deref()
     }
+
+    pub fn expected_rtmr3(&self) -> Option<&[u8; 48]> {
+        self.expected_rtmr3.as_ref()
+    }
 }
 
 #[cw_serde]
@@ -57,6 +134,9 @@ pub struct RawConfig {
     mr_enclave: HexBinary,
     light_client_opts: RawLightClientOpts,
     zkdcap_vkey: Option<String>,
+    /// Hex-encoded 48-byte expected RTMR3. See `Config::expected_rtmr3`.
+    #[serde(default)]
+    expected_rtmr3: Option<HexBinary>,
 }
 
 impl RawConfig {
@@ -67,12 +147,21 @@ impl RawConfig {
     pub fn zkdcap_vkey(&self) -> Option<&str> {
         self.zkdcap_vkey.as_deref()
     }
+
+    pub fn expected_rtmr3(&self) -> Option<&[u8]> {
+        self.expected_rtmr3.as_ref().map(|h| h.as_slice())
+    }
 }
 
 impl TryFrom<RawConfig> for Config {
     type Error = StdError;
 
     fn try_from(value: RawConfig) -> Result<Self, Self::Error> {
+        let expected_rtmr3 = value
+            .expected_rtmr3
+            .map(|h| h.to_array::<48>())
+            .transpose()
+            .map_err(|e| StdError::msg(format!("expected_rtmr3: {e}")))?;
         Ok(Self {
             mr_enclave: value.mr_enclave.to_array()?,
             light_client_opts: value
@@ -80,6 +169,7 @@ impl TryFrom<RawConfig> for Config {
                 .try_into()
                 .map_err(|e| StdError::msg(format!("light_client_opts: {e}")))?,
             zkdcap_vkey: value.zkdcap_vkey,
+            expected_rtmr3,
         })
     }
 }
@@ -90,6 +180,7 @@ impl From<Config> for RawConfig {
             mr_enclave: value.mr_enclave.into(),
             light_client_opts: value.light_client_opts.into(),
             zkdcap_vkey: value.zkdcap_vkey,
+            expected_rtmr3: value.expected_rtmr3.map(HexBinary::from),
         }
     }
 }

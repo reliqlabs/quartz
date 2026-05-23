@@ -9,6 +9,8 @@ use crate::{
     },
     state::CONFIG,
 };
+#[cfg(not(feature = "mock"))]
+use crate::state::Config;
 
 // ── ZK module protobuf types (for DstackZkAttestation) ─────────────
 // Uses the gnark-native ProofVerifyGnark endpoint (Xion v29+).
@@ -39,51 +41,46 @@ struct QueryVerifyGnarkRequest {
 // `/Users/mvid/Development/reliq/zkdcap/core/src/lib.rs`; the canonical
 // `report_data` field is serialised as a hex-encoded `String`.
 //
-// **Compose_hash binding NOT covered here — SECURITY GAP**: this is the
-// deferred half of Round D Critical 4. The current wrapper enforces
-// `config.mr_enclave == self.compose_hash` (line ~245), but `self.compose_hash`
-// is sender-supplied. Nothing in the current verification chain binds the
-// proof's attested RTMR3 (which encodes the actual running compose_hash via
-// dstack's boot-time TDX extension) back to `self.compose_hash`. An attacker
-// holding a valid proof for image Y can submit it with `self.compose_hash =
-// config.mr_enclave` (a value for image X) and pass all wrapper checks plus
-// the report_data binding above.
+// **Round D Critical 4 binding status (2026-05-21)**:
 //
-// To close: one of —
-//   (a) Extend `zkdcap_core::DcapJournal` with a `compose_hash: [u8; 32]`
-//       field; the sp1-guest reads the dstack-extended compose_hash and
-//       commits it to the journal. Cross-repo PR to
-//       `/Users/mvid/Development/reliq/zkdcap`. Cleanest end state.
-//   (b) Implement an on-chain RTMR3-extension verifier: compute the
-//       expected `rtmr3 = sha384_extend(initial_rtmr3, [compose_hash,
-//       ...other_events])` from `self.compose_hash` + known dstack
-//       boot-time event list, compare against `journal.rtmr3`. Requires
-//       SHA-384 on-chain and knowing dstack's extension event ordering;
-//       expensive but no cross-repo dep.
-//   (c) Add `config.expected_rtmr3: [u8; 48]` and verify-equal directly
-//       against `journal.rtmr3`. Loses the indirection through
-//       compose_hash but is the cheapest interim binding.
+// (1) report_data binding: ENFORCED below via
+//     `verify_journal_binds_report_data`. The journal's `report_data` is
+//     verified-equal against the wrapper-supplied `self.user_data`. Closes
+//     the "anybody-can-substitute-the-attested-user-data" vector.
 //
-// All three paths are out of scope for this hook. The report_data binding
-// alone closes the more critical "anybody-can-substitute-the-attested-
-// user-data" vector; the compose_hash binding closes the residual
-// "wrong-image-attestation" vector. Until one of (a)/(b)/(c) lands, the
-// contract should be considered to trust that whoever submitted the
-// transaction also faithfully reports compose_hash.
+// (2) rtmr3 binding (compose_hash transitive): ENFORCED conditionally below
+//     via `verify_journal_binds_rtmr3` when `config.expected_rtmr3.is_some()`.
+//     The journal's `rtmr3` (48-byte SHA-384 TDX measurement register) is
+//     verified-equal against the on-chain-pinned `config.expected_rtmr3`.
+//     Path-(c) closure: avoids the cross-repo `DcapJournal` extension and
+//     the on-chain SHA-384 extension verifier; pins the expected RTMR3
+//     directly. Deployers compute the expected value once from a known-good
+//     quote of the intended dstack image. When `config.expected_rtmr3` is
+//     `None`, the binding is skipped (backwards-compat with deployments
+//     that predate this field), and the residual "wrong-image-attestation"
+//     vector remains open — set `expected_rtmr3` to close it.
+//
+// The `JournalFields` helper deserialises only the two journal fields we
+// consume; we avoid the full `zkdcap-core` dependency to keep
+// `quartz-contract-core` self-contained in the wasm32 build.
 
 #[cfg(not(feature = "mock"))]
 #[derive(serde::Deserialize)]
-struct JournalReportData {
+struct JournalFields {
     report_data: String,
+    rtmr3: String,
 }
 
 #[cfg(not(feature = "mock"))]
-fn verify_journal_binds_report_data(
+fn verify_journal_bindings(
     journal_bytes: &[u8],
     expected_user_data: &[u8; 64],
+    expected_rtmr3: Option<&[u8; 48]>,
 ) -> Result<(), Error> {
-    let journal: JournalReportData = serde_json::from_slice(journal_bytes)
+    let journal: JournalFields = serde_json::from_slice(journal_bytes)
         .map_err(|e| Error::ZkdcapVerificationFailed(format!("decode journal: {e}")))?;
+
+    // report_data binding (always enforced)
     let report_data_bytes = hex::decode(&journal.report_data)
         .map_err(|e| Error::ZkdcapVerificationFailed(format!("decode report_data hex: {e}")))?;
     if report_data_bytes.len() != 64 {
@@ -97,6 +94,24 @@ fn verify_journal_binds_report_data(
             "journal report_data does not match self.user_data".to_string(),
         ));
     }
+
+    // rtmr3 binding (conditional on config.expected_rtmr3 being set)
+    if let Some(expected) = expected_rtmr3 {
+        let rtmr3_bytes = hex::decode(&journal.rtmr3)
+            .map_err(|e| Error::ZkdcapVerificationFailed(format!("decode rtmr3 hex: {e}")))?;
+        if rtmr3_bytes.len() != 48 {
+            return Err(Error::ZkdcapVerificationFailed(format!(
+                "journal rtmr3 wrong length: expected 48, got {}",
+                rtmr3_bytes.len()
+            )));
+        }
+        if rtmr3_bytes.as_slice() != expected.as_slice() {
+            return Err(Error::ZkdcapVerificationFailed(
+                "journal rtmr3 does not match config.expected_rtmr3".to_string(),
+            ));
+        }
+    }
+
     Ok(())
 }
 
@@ -193,12 +208,17 @@ impl Handler for DstackZkAttestation {
 
         // Round D Critical 4 production hook (2026-05-21): the gnark
         // verifier confirms the proof checks out, but does not say
-        // anything about *which* report_data and compose_hash were
-        // attested. Bind the proof's journal to the wrapper-declared
-        // user_data; the matching compose_hash binding is queued as a
-        // separate Quartz/zkdcap follow-up because DcapJournal does not
-        // currently expose compose_hash directly.
-        verify_journal_binds_report_data(&self.zkdcap_journal, &self.user_data)?;
+        // anything about *which* report_data and rtmr3 were attested.
+        // Bind the proof's journal to the wrapper-declared user_data and
+        // (if config pins an expected rtmr3) to that pinned value. See
+        // the helper doc above for the binding model.
+        let expected_rtmr3 =
+            Config::try_from(config.clone()).ok().and_then(|c| c.expected_rtmr3().copied());
+        verify_journal_bindings(
+            &self.zkdcap_journal,
+            &self.user_data,
+            expected_rtmr3.as_ref(),
+        )?;
 
         Ok(Response::new().add_attribute("action", "zkdcap_verified"))
     }
