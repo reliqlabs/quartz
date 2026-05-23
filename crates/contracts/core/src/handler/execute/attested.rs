@@ -39,17 +39,37 @@ struct QueryVerifyGnarkRequest {
 // `/Users/mvid/Development/reliq/zkdcap/core/src/lib.rs`; the canonical
 // `report_data` field is serialised as a hex-encoded `String`.
 //
-// **Compose_hash binding NOT covered here**: `DcapJournal` does not currently
-// expose `compose_hash` directly — only `rtmr3` (48-byte SHA-384 measurement
-// register), into which `compose_hash` was extended at boot. Verifying
-// `self.compose_hash` against `journal.rtmr3` requires either (a) adding
-// `compose_hash` to the journal format in zkdcap (zkdcap-side change) or
-// (b) verifying the RTMR3 extension relationship on-chain (expensive,
-// requires prior RTMR state).
+// **Compose_hash binding NOT covered here — SECURITY GAP**: this is the
+// deferred half of Round D Critical 4. The current wrapper enforces
+// `config.mr_enclave == self.compose_hash` (line ~245), but `self.compose_hash`
+// is sender-supplied. Nothing in the current verification chain binds the
+// proof's attested RTMR3 (which encodes the actual running compose_hash via
+// dstack's boot-time TDX extension) back to `self.compose_hash`. An attacker
+// holding a valid proof for image Y can submit it with `self.compose_hash =
+// config.mr_enclave` (a value for image X) and pass all wrapper checks plus
+// the report_data binding above.
 //
-// This hook implements (1) the report_data binding; the compose_hash
-// binding is queued as a separate follow-up (see Round D Critical 4 in
-// `.colosseum/ledger.md`).
+// To close: one of —
+//   (a) Extend `zkdcap_core::DcapJournal` with a `compose_hash: [u8; 32]`
+//       field; the sp1-guest reads the dstack-extended compose_hash and
+//       commits it to the journal. Cross-repo PR to
+//       `/Users/mvid/Development/reliq/zkdcap`. Cleanest end state.
+//   (b) Implement an on-chain RTMR3-extension verifier: compute the
+//       expected `rtmr3 = sha384_extend(initial_rtmr3, [compose_hash,
+//       ...other_events])` from `self.compose_hash` + known dstack
+//       boot-time event list, compare against `journal.rtmr3`. Requires
+//       SHA-384 on-chain and knowing dstack's extension event ordering;
+//       expensive but no cross-repo dep.
+//   (c) Add `config.expected_rtmr3: [u8; 48]` and verify-equal directly
+//       against `journal.rtmr3`. Loses the indirection through
+//       compose_hash but is the cheapest interim binding.
+//
+// All three paths are out of scope for this hook. The report_data binding
+// alone closes the more critical "anybody-can-substitute-the-attested-
+// user-data" vector; the compose_hash binding closes the residual
+// "wrong-image-attestation" vector. Until one of (a)/(b)/(c) lands, the
+// contract should be considered to trust that whoever submitted the
+// transaction also faithfully reports compose_hash.
 
 #[cfg(not(feature = "mock"))]
 #[derive(serde::Deserialize)]
