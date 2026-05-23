@@ -59,45 +59,60 @@
 
 After the VCVio refactor, Quartz's Lean trust boundary decomposes into three honest classes. **Honest carriers** (14 opaque types + 3 named-constant witnesses + 5 function/predicate signatures = 22 of 26 axioms) are non-cryptographic abstractions over types and named values from the deployed Rust stack (k256/ECIES key shapes, serde_json byte sequences, DCAP quote bytes, gnark vkey/proof/input bytes). They compile to nothing — they are the parametric model the Lean tree refines. **Honest cryptographic assumptions** (4 bundled record axioms — `commitHashE`, `commitHashBytesE`, `tdxVerifier`, `groth16Verifier`) name real cryptographic / attestation primitives; two are spec-impossible-as-stated injections (pigeonhole bound on hash codomain), two are classical-Prop verification implications dropping computational-soundness qualifiers. Each is consumed by the protocol-layer classical theorems but is **shadowed at the content layer** by 8 `_negl` lifts in `ProtocolVCVio*.lean` that re-state the trust claim as parametric negligibility hypotheses (zero `sorry`). **Externally deferred** discharges (5 negligibility budgets feeding the `cross_component_session_bind` 5-summand union bound) point to: ArkLib Groth16 KS coverage (upstream), a Lean reference DCAP verifier (separate effort), a PCK-signature unforgeability reduction (Intel-spec + crypto-lib), and VCVio random-oracle + birthday bound after `[Fintype UserData]` carrier refinement. The protocol layer's verified surface is now: 5 honest cryptographic assumptions on real-world primitives, plus standard carrier axioms, plus a parametric union-bound composition — *none* of the 8 lifted theorems carry a bundle axiom in its `_negl` closure (only carriers + standard logic + the parametric negligibility hypotheses).
 
-## Per-axiom inventory (26 axioms, 4-bucket classification)
+## Per-axiom inventory (10 axioms, post-cycles-6.16-6.21)
 
 Categories: **(a)** demotable-to-def-or-dead · **(b)** demotable-to-derived-theorem · **(c)** honest-computational-assumption · **(d)** impossibility-or-over-strength
 
-| # | Axiom | Module | Cat | Sub-tag | Discharge path | Carried by |
+| # | Axiom (original numbering retained) | Module | Cat | Sub-tag | Discharge path | Carried by |
 |---|-------|--------|-----|---------|----------------|------------|
-| 1 | `PrivKey : Type` | Ecies | (c) | carrier | k256/ECIES Rust crate type model | all 8 lifted (carrier) |
-| 2 | `PubKey : Type` | Ecies | (c) | carrier | k256 Rust crate type model | all 8 lifted (carrier) |
-| 3 | `Plaintext : Type` | Ecies | (c) | carrier | application-level type model | all 8 lifted (carrier) |
-| 4 | `keyOf : PrivKey → PubKey` | Ecies | (c) | carrier | deterministic key derivation, k256 spec | classical chain only (not in `_negl` closures) |
-| 5 | `DomainSep : Type` | UserDataCommit | (c) | carrier | named-constant byte-string type | 7 of 8 lifted (carrier; not in cross_transfers/auction `_negl`) |
-| 6 | `Addr : Type` | UserDataCommit | (c) | carrier | Cosmos chain-address type model | all 8 lifted (carrier) |
-| ~~7~~ | ~~`Nonce : Type`~~ — **removed (cycle 6.16, 2026-05-20)**: refined to `abbrev Nonce : Type := BitVec 256`; no longer an axiom | UserDataCommit | n/a | n/a | n/a | n/a |
-| 8 | `commitHashE : UserDataCommit ↪ UserData` | UserDataCommit | (d) | pigeonhole-impossible | concrete `H : UC → UD` carrier + `randomOracle` birthday bound, requires `[Fintype UserData]` | classical chain (4 theorems); shadowed in `_negl` by `CommitHashCollisionAdv` hypothesis |
-| 9 | `ByteSeq : Type` | RawMessages | (c) | carrier | serde_json byte-sequence type model | 3 of 8 lifted (carrier; cross_transfers, auction, cross_component_session_bind) |
-| 10 | `serializeRawSessionCreateE : RawSessionCreate ↪ ByteSeq` | RawMessages | (c) | carrier (genuine injectivity claim) | serde_json byte layout determinism on fixed struct schema | classical chain only |
-| 11 | `serializeRawSessionSetPubKeyE : RawSessionSetPubKey ↪ ByteSeq` | RawMessages | (c) | carrier (genuine injectivity claim) | serde_json byte layout determinism on fixed struct schema | classical chain + cross_component_session_bind `_classical` |
-| 12 | `commitHashBytesE : ByteSeq ↪ UserData` | RawMessages | (d) | pigeonhole-impossible | concrete `H_b : ByteSeq → UD` carrier + `randomOracle` birthday bound | classical chain (3 theorems); shadowed in `_negl` by `CommitHashBytesCollisionAdv` hypothesis |
-| 13 | `rawDomainSep : DomainSep` | RawMessages | (a) | blocked-by-abstract-carrier | demote to `def` once `DomainSep` carrier refined to concrete byte string | classical chain + cross_component_session_bind `_classical` |
-| 14 | `rawBoundContract : Addr` | RawMessages | (a) | blocked-by-abstract-carrier | demote to `def` once `Addr` carrier refined to concrete bech32 string | classical chain + cross_component_session_bind `_classical` |
-| 15 | `rawPlaceholderPubKey : PubKey` | RawMessages | (a) | blocked-by-abstract-carrier | demote to `def` once `PubKey` carrier refined to concrete bytes | classical chain only |
-| 16 | `userDataOfSessionSetPubKey_eq_commitHash` | RawMessages | (c) | carrier (genuine bridge equality) | constructive byte-level model of serde_json AND `commitHash` | classical chain + cross_component_session_bind `_classical` |
-| 17 | `userDataOfSessionCreate_eq_commitHash` | RawMessages | (c) | carrier (genuine bridge equality) | same — constructive byte-level + commit model | classical chain only |
-| 18 | `TdxQuote : Type` | Dstack | (c) | carrier | DCAP-quote-v4 wire-format byte-blob model | all 8 lifted (carrier) |
-| 19 | `MrEnclave : Type` | Dstack | (c) | carrier | MRTD / RTMR digest byte-string model | 7 of 8 lifted (carrier; not in `verifyGroth16_yields_decoded_negl`) |
-| 20 | `UserData : Type` | Dstack | (c) | carrier | 64-byte report_data slot model | all 8 lifted (carrier) |
-| 21 | `was_signed_by_dstack : TdxQuote → Prop` | Dstack | (c) | carrier (off-chain reality witness) | irreducible — propositional witness for "a real dstack TEE produced this quote" | classical chain only (sidestepped by `IsPPT`/`Classical.propDecidable` in `_negl`) |
+| ~~1~~ | ~~`PrivKey : Type`~~ — **refined to `abbrev PrivKey := BitVec 256` (cycle 6.19, 2026-05-20)** | Ecies | – | – | – | – |
+| ~~2~~ | ~~`PubKey : Type`~~ — **refined to `abbrev PubKey := BitVec 264` (cycle 6.19, 2026-05-20)** | Ecies | – | – | – | – |
+| ~~3~~ | ~~`Plaintext : Type`~~ — **refined to `abbrev Plaintext := List UInt8` (cycle 6.19, 2026-05-20)** | Ecies | – | – | – | – |
+| 4 | `keyOf : PrivKey → PubKey` | Ecies | (c) | function signature | deterministic key derivation, k256 spec | classical chain + terminal `_negl` |
+| ~~5~~ | ~~`DomainSep : Type`~~ — **refined to `abbrev DomainSep := List UInt8` (cycle 6.20, 2026-05-20)** | UserDataCommit | – | – | – | – |
+| ~~6~~ | ~~`Addr : Type`~~ — **refined to `abbrev Addr := String` (cycle 6.20, 2026-05-20)** | UserDataCommit | – | – | – | – |
+| ~~7~~ | ~~`Nonce : Type`~~ — **refined to `abbrev Nonce := BitVec 256` (cycle 6.16, 2026-05-20)** | UserDataCommit | – | – | – | – |
+| 8 | `commitHashE : UserDataCommit ↪ UserData` | UserDataCommit | (d) | pigeonhole-impossible (type-level visible post-cycle 6.18) | replace with `randomOracle` over `BitVec 512` + birthday bound (cycle 6.22, queued) | classical chain (4 theorems); shadowed in `_negl` by `CommitHashCollisionAdv` hypothesis |
+| ~~9~~ | ~~`ByteSeq : Type`~~ — **refined to `abbrev ByteSeq := List UInt8` (cycle 6.20, 2026-05-20)** | RawMessages | – | – | – | – |
+| 10 | `serializeRawSessionCreateE : RawSessionCreate ↪ ByteSeq` | RawMessages | (c) | genuine injectivity | serde_json byte layout determinism on fixed struct schema | classical chain only |
+| 11 | `serializeRawSessionSetPubKeyE : RawSessionSetPubKey ↪ ByteSeq` | RawMessages | (c) | genuine injectivity | serde_json byte layout determinism on fixed struct schema | classical chain + cross_component_session_bind `_classical` + terminal `_negl` |
+| 12 | `commitHashBytesE : ByteSeq ↪ UserData` | RawMessages | (d) | pigeonhole-impossible (type-level visible post-cycle 6.18) | replace with `randomOracle` over `BitVec 512` + birthday bound (cycle 6.22, queued) | classical chain (3 theorems); shadowed in `_negl` by `CommitHashBytesCollisionAdv` hypothesis |
+| ~~13~~ | ~~`rawDomainSep : DomainSep`~~ — **demoted to `def rawDomainSep := "QUARTZ-HS-V1".toUTF8.toList` (cycle 6.20, 2026-05-20)** | RawMessages | – | – | – | – |
+| ~~14~~ | ~~`rawBoundContract : Addr`~~ — **demoted to `def rawBoundContract := "xion1quartzdeploymentaddress"` (cycle 6.20, 2026-05-20)** | RawMessages | – | – | – | – |
+| ~~15~~ | ~~`rawPlaceholderPubKey : PubKey`~~ — **demoted to `def rawPlaceholderPubKey := (0 : BitVec 264)` (cycle 6.20, 2026-05-20)** | RawMessages | – | – | – | – |
+| 16 | `userDataOfSessionSetPubKey_eq_commitHash` | RawMessages | (c) | bridge equality | constructive byte-level model of serde_json AND `commitHash` (becomes derived once cycle 6.22 random-oracle migration completes) | classical chain + cross_component_session_bind `_classical` + terminal `_negl` |
+| 17 | `userDataOfSessionCreate_eq_commitHash` | RawMessages | (c) | bridge equality | same — constructive byte-level + commit model | classical chain only |
+| ~~18~~ | ~~`TdxQuote : Type`~~ — **refined to `abbrev TdxQuote := List UInt8` (cycle 6.21, 2026-05-20)** | Dstack | – | – | – | – |
+| ~~19~~ | ~~`MrEnclave : Type`~~ — **refined to `abbrev MrEnclave := BitVec 384` (cycle 6.17, 2026-05-20)** | Dstack | – | – | – | – |
+| ~~20~~ | ~~`UserData : Type`~~ — **refined to `abbrev UserData := BitVec 512` (cycle 6.18, 2026-05-20)** | Dstack | – | – | – | – |
+| 21 | `was_signed_by_dstack : TdxQuote → Prop` | Dstack | (c) | off-chain reality witness | irreducible — propositional witness for "a real dstack TEE produced this quote" | classical chain + every `_negl` lift's win predicate |
 | 22 | `tdxVerifier : TdxVerifier` | Dstack | (d) | classically-over-strong-single-negligibility (sound) + preconditional (complete) | (sound) PCK-signature unforgeability reduction; (complete) explicit collateral-freshness / non-revocation preconditions; both require Lean reference DCAP verifier | classical chain (7 theorems); shadowed in `_negl` by `TdxVerifierSoundAdv` hypothesis |
-| 23 | `Groth16Proof : Type` | Zkdcap | (c) | carrier | BN254 proof byte-string model | all 8 lifted (carrier) |
-| 24 | `PublicInputs : Type` | Zkdcap | (c) | carrier | concatenated 32-byte fr.Element values | all 8 lifted (carrier) |
-| 25 | `VKey : Type` | Zkdcap | (c) | carrier | gnark verification-key byte-string model | 1 of 8 lifted (only in cross_component_session_bind `_negl` carrier; not in others) |
+| ~~23~~ | ~~`Groth16Proof : Type`~~ — **refined to `abbrev Groth16Proof := List UInt8` (cycle 6.21, 2026-05-20)** | Zkdcap | – | – | – | – |
+| ~~24~~ | ~~`PublicInputs : Type`~~ — **refined to `abbrev PublicInputs := List UInt8` (cycle 6.21, 2026-05-20)** | Zkdcap | – | – | – | – |
+| ~~25~~ | ~~`VKey : Type`~~ — **refined to `abbrev VKey := List UInt8` (cycle 6.21, 2026-05-20)** | Zkdcap | – | – | – | – |
 | 26 | `groth16Verifier : Groth16Verifier` | Zkdcap | (d) | classically-over-strong-doubled-negligibility | (KS half) ArkLib Groth16 reduction; (circuit-eq half) Lean reference DCAP verifier + circuit-equivalence theorem; **decomposes into 2 summands at the terminal lift** | classical chain (8 theorems); shadowed in `_negl` by `Groth16SoundAdv` (intermediate) or `Groth16KSAdv` + `CircuitEqAdv` (terminal) hypotheses |
 
-### Bucket totals (25 axioms — post-cycle-6.16)
+### Surviving 10 axioms at a glance
 
-- **(a) demotable-to-def-or-dead** — 3 (rawDomainSep, rawBoundContract, rawPlaceholderPubKey); all blocked-by-abstract-carrier
+| # | Axiom | Bucket | Status |
+|---|---|---|---|
+| 4 | `keyOf` | (c) | k256 deterministic key derivation function signature |
+| 8 | `commitHashE` | (d) | pigeonhole-impossible; cycle 6.22 queued |
+| 10 | `serializeRawSessionCreateE` | (c) | serde_json injectivity |
+| 11 | `serializeRawSessionSetPubKeyE` | (c) | serde_json injectivity |
+| 12 | `commitHashBytesE` | (d) | pigeonhole-impossible; cycle 6.22 queued |
+| 16 | `userDataOfSessionSetPubKey_eq_commitHash` | (c) | bridge equality |
+| 17 | `userDataOfSessionCreate_eq_commitHash` | (c) | bridge equality |
+| 21 | `was_signed_by_dstack` | (c) | off-chain reality witness |
+| 22 | `tdxVerifier` | (d) | PCK-signature unforgeability + collateral preconditions |
+| 26 | `groth16Verifier` | (d) | ArkLib Groth16-KS + circuit-equivalence |
+
+### Bucket totals (10 axioms — post-cycle-6.21)
+
+- **(a) demotable-to-def-or-dead** — 0 (all three closed by cycle 6.20: `rawDomainSep`, `rawBoundContract`, `rawPlaceholderPubKey` demoted to `def`s with concrete values)
 - **(b) demotable-to-derived-theorem** — 0 (all demotables of this kind were already discharged in Steps 1-5: `roundtrip`, `commitHash_inj`, `commitHashBytes_inj`, `serializeRaw*_inj`, `verifyTdxQuote_sound`/`_complete`, `verifyGroth16_sound`)
-- **(c) honest-computational-assumption** — 18 (13 carriers + 3 function/predicate signatures + 2 bridge equalities; `Nonce` removed by cycle 6.16)
-- **(d) impossibility-or-over-strength** — 4 (`commitHashE`, `commitHashBytesE`, `tdxVerifier`, `groth16Verifier`); each shadowed at content layer by parametric `_negl` hypothesis
+- **(c) honest-computational-assumption** — 6 (2 serde_json genuine-injectivity + 2 bridge equalities + `keyOf` function signature + `was_signed_by_dstack` off-chain witness)
+- **(d) impossibility-or-over-strength** — 4 (`commitHashE`, `commitHashBytesE`, `tdxVerifier`, `groth16Verifier`); each shadowed at content layer by parametric `_negl` hypothesis. `commitHashE`/`commitHashBytesE` substantive closure via VCV-io `randomOracle` + birthday bound queued as cycle 6.22.
 
 ### Sub-bucket (d) sub-taxonomy
 
@@ -201,24 +216,29 @@ Companion-module invariant: VCV-io's transitive instance load is kept out of the
 
 ## Coverage delta vs prior ledger (2026-05-12T12:57:07Z)
 
-| Metric | Prior | Post-Step-6.3 | Delta |
-|--------|-------|---------------|-------|
-| Total Lean axioms | 40 | 26 | **-14 (-35%)** |
-| Bundled record axioms (Step 1-5 condensation) | 0 | 4 | +4 |
-| Demoted to def/theorem | 0 | 14+ (roundtrip, commitHash, commitHash_inj, commitHashBytes, commitHashBytes_inj, serializeRaw*_inj×2, verifyTdxQuote, verifyTdxQuote_sound, verifyTdxQuote_complete, verifyGroth16, inputs_to_quote, verifyGroth16_sound, zkdcapVKey) | +14+ |
-| Dead axioms removed | 0 | 1 (`RtmrLog`, Step 4) | -1 |
-| Protocol theorems (classical) | 5 | 8 (extended scope: Conservation + AuctionDeterminism added) | +3 |
-| Protocol theorems lifted to `_negl` | 0 | **8 of 8** | +8 |
-| Companion modules | 0 | 9 (5 carrier + 4 protocol) | +9 |
-| `lake build` jobs | 104 | 2667 (VCVio adds ~2534 transitive targets) | +2563 |
-| `sorry` count | 0 | 0 | 0 |
-| Trust density (axioms / total theorems) | 40/16 = 2.5 | 26/(16+14+8 derived/lifted) ≈ 0.68 | -1.82 |
+| Metric | Prior (2026-05-12) | Post-Step-6.3 (2026-05-13) | Post-cycles-6.13–6.21 (2026-05-20) | Cumulative delta |
+|--------|--------------------|-----------------------------|--------------------------------------|-------------------|
+| Total Lean axioms (original inventory) | 40 | 26 | **10** | **–30 (–75%)** |
+| Bundled record axioms | 0 | 4 | 4 | +4 |
+| Carrier axioms refined to `abbrev` | 0 | 0 | 12 (Nonce, MrEnclave, UserData, PrivKey, PubKey, Plaintext, DomainSep, Addr, ByteSeq, TdxQuote, Groth16Proof, PublicInputs, VKey) | +12 |
+| (a)-bucket axioms demoted to `def` | 0 | 0 | 3 (rawDomainSep, rawBoundContract, rawPlaceholderPubKey) | +3 |
+| Demoted to def/theorem (cumulative) | 0 | 14 | 29+ | +29+ |
+| Dead axioms removed | 0 | 1 (`RtmrLog`, Step 4) | 1 | -1 |
+| Protocol theorems (classical) | 5 | 8 | 8 | +3 |
+| Protocol theorems lifted to `_negl` | 0 | **8 of 8** | 8 of 8 | +8 |
+| Companion modules | 0 | 9 (5 carrier + 4 protocol) | 9 | +9 |
+| Adversary types using `OracleComp ProtocolSpec` | 0 | 0 | 5 (cycle 6.13) | +5 |
+| Substantive `IsPPT_proper` instances | 0 | 0 | 1 (`Nonempty (PolyQueries ...)`; cycle 6.14.a) | +1 |
+| `_AGAINST_PPT_ADVERSARIES` packagings | 0 | 0 | 7 (cycle 6.14.c) | +7 |
+| `lake build` jobs | 104 | 2667 | 2670 (cycle 6.13 added SimSemantics.Append) | +2566 |
+| `sorry` count | 0 | 0 | 0 | 0 |
+| Trust density (axioms / total theorems) | 40/16 = 2.5 | 26/38 ≈ 0.68 | **10/(38+15 cycle-6.14.b+c+ratio additions) ≈ 0.19** | –2.31 |
 
 ## Per-tool coverage snapshot
 
 | Tool | Artifacts | Proven / Verified | Outstanding | Notes |
 |------|-----------|-------------------|-------------|-------|
-| Lean | 26 axioms + classical theorems + 8×4 = 32 new lifted/packaged theorems | `lake build` green, 2667 jobs, 0 `sorry` | parametric negligibility hypotheses (5 budgets) deferred to ArkLib + ref-DCAP-verifier + carrier refinement | Step 6 complete — 8/8 lifted |
+| Lean | 10 axioms + classical theorems + 8×4 = 32 lifted/packaged theorems + 7 cycle-6.14.c PPT packagings + 5 cycle-6.14.b preservation corollaries | `lake build` green, 2670 jobs, 0 `sorry` | parametric negligibility hypotheses (5 budgets) deferred to ArkLib + ref-DCAP-verifier; substantive `commitHashE`/`commitHashBytesE` random-oracle discharge queued as cycle 6.22 | Steps 6.13–6.21 complete; 10 axioms surviving from original 26-inventory |
 | Quint | 22 invariants | 2 Apalache-verified (handshake `inv_pubkey_set_once`, attestation temporal violation reproducible) | 20 not exhaustively verified | unchanged from prior ledger; attestation `temporal_zk_accept_requires_vkey` rewrite landed (`temporal_zk_accept_action_tag` change record) |
 | Verus | 6 prototypes (feasibility specs, post-Round-D-hardened with one queued production-side follow-up) | 55 verified, 0 errors across the tree (Round D Criticals 1, 2, 3, 4-Verus, and 5 (substantive: mutating import + DstackKeyManager + session-lifecycle layer) all closed by 2026-05-20) | 38 unsampled annotations; Critical 4 production-side queued for Quartz agent (see banner) | post-Round-D + cross-critique: see `.colosseum/attacks/verus-prototype-2026-05-14/synthesis.md` and `.colosseum/attacks/verus-prototype-cross-critique-2026-05-20/synthesis.md` |
 | Kani | 41 harnesses | 1 verified, 1 prover-stuck | 39 unsampled | unchanged from prior ledger |
@@ -234,19 +254,35 @@ Companion-module invariant: VCV-io's transitive instance load is kept out of the
 4. `negligible_commitHash` — VCVio `randomOracle` + birthday bound; requires `[Fintype UserData]`
 5. `negligible_commitHashBytes` — same shape as (4) on byte domain
 
-### Carrier refinement queue (14 abstract carriers blocking concrete `Pr[...]`)
+### Carrier refinement queue — **CLOSED 2026-05-20 (cycles 6.16–6.21)**
 
-Crypto: `DomainSep`, `Addr`, `Nonce`, `Plaintext`, `Ciphertext` (now def), `PrivKey`, `PubKey`, `ByteSeq`
-Attestation: `TdxQuote`, `MrEnclave`, `UserData`
-Zkdcap: `Groth16Proof`, `PublicInputs`, `VKey`
+All 14 abstract carriers have been refined to concrete Lean types:
 
-Concrete `Pr[...]` statements (instead of parametric `[Fintype X] → ...`) require these refined to concrete byte-list / `BitVec n` representations. Currently sidestepped by parametric formulation in all 8 `_negl` lifts.
+| Carrier | Refined to | Cycle |
+|---|---|---|
+| `Nonce` | `BitVec 256` | 6.16 |
+| `MrEnclave` | `BitVec 384` | 6.17 |
+| `UserData` | `BitVec 512` | 6.18 |
+| `PrivKey` | `BitVec 256` | 6.19 |
+| `PubKey` | `BitVec 264` | 6.19 |
+| `Plaintext` | `List UInt8` | 6.19 |
+| `DomainSep` | `List UInt8` | 6.20 |
+| `Addr` | `String` | 6.20 |
+| `ByteSeq` | `List UInt8` | 6.20 |
+| `TdxQuote` | `List UInt8` | 6.21 |
+| `Groth16Proof` | `List UInt8` | 6.21 |
+| `PublicInputs` | `List UInt8` | 6.21 |
+| `VKey` | `List UInt8` | 6.21 |
+| `Ciphertext` | (already a def: `PubKey × Plaintext`) | pre-Step-6 |
+
+`Pr[...]` statements that depend on `[Fintype]` on these types are now (potentially) statable concretely; the parametric formulation in the 8 `_negl` lifts can stay as-is or be specialised when the corresponding cycle wants to discharge the negligibility hypothesis directly.
 
 ### In-codebase work
 
-- Adopt VCV-io's `PolyQueries` as the `IsPPT` body (currently placeholder `True`). **No longer blocked**: cycle 6.13 (done 2026-05-20) wired `OracleComp ProtocolSpec` into adversary types, so `PolyQueries` is now type-compatible with the adversary classes. Queued as cycle 6.14.
-- Replace `Classical.propDecidable` instance for `was_signed_by_dstack` with extractor reformulation if a less-classical move is desired.
-- Demote `rawDomainSep`, `rawBoundContract`, `rawPlaceholderPubKey` to `def`s once their carriers (`DomainSep`, `Addr`, `PubKey`) are refined.
+- **Done (cycles 6.14.a/b/c, 2026-05-20)**: `IsPPT_proper` via `PolyQueries`, per-reduction preservation lemmas, parallel `_AGAINST_PPT_ADVERSARIES` packagings.
+- **Done (cycle 6.20, 2026-05-20)**: `rawDomainSep`, `rawBoundContract`, `rawPlaceholderPubKey` all demoted to `def`s with concrete documentary values.
+- Replace `Classical.propDecidable` instance for `was_signed_by_dstack` with extractor reformulation if a less-classical move is desired — low priority.
+- **Cycle 6.22 (queued)**: substantive closure of (d-pigeonhole-impossible) `commitHashE`/`commitHashBytesE` via VCV-io `randomOracle` + birthday bound. Now mechanically tractable (`Fintype UserData` and `DecidableEq UserDataCommit` both satisfied). Multi-week scope because it requires probabilistic re-statement of every theorem currently depending on `commitHash_inj`.
 
 ### Round D Verus-prototype blocker resolution (closed; remaining items queued as named follow-ups)
 
