@@ -106,6 +106,41 @@ pub struct LightClientOpts {
 }
 
 impl LightClientOpts {
+    /// Validation predicate for `new`. Returns `Ok(())` if the inputs are
+    /// well-formed, or `Err(&'static str)` describing the first failed
+    /// invariant.
+    ///
+    /// Extracted from `new` so that Kani harnesses can exercise the
+    /// validation logic without paying for `StdError::msg`'s
+    /// `std::backtrace::Backtrace::capture()` call, which under Kani's
+    /// host-arch simulation pulls in an unbounded
+    /// `drop_in_place::<[BacktraceSymbol]>` loop that no reasonable
+    /// `--unwind` setting terminates. See `Specs/Quartz/state.rs` mod
+    /// `verification` for the corresponding harnesses (now usable under
+    /// standard `cargo kani`, no `--cfg kani_slow` needed).
+    pub fn validate_inputs(
+        trust_threshold: TrustThreshold,
+        trusted_height: Height,
+    ) -> Result<(), &'static str> {
+        let (numerator, denominator) = (trust_threshold.0, trust_threshold.1);
+        if numerator > denominator {
+            return Err("trust_threshold_too_large");
+        }
+        if denominator == 0 {
+            return Err("undefined_trust_threshold");
+        }
+        // Original logic was `3 * numerator < denominator`, which overflows in
+        // u64 for `numerator > u64::MAX / 3`. Caught by Kani 2026-05-21. Cast
+        // to u128 to keep the same semantic check (threshold ratio below 1/3)
+        // without the overflow path.
+        if (numerator as u128) * 3 < denominator as u128 {
+            return Err("trust_threshold_too_small");
+        }
+        // i64 fit check on trusted_height
+        let _: i64 = trusted_height.try_into().map_err(|_| "trusted_height too large")?;
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         chain_id: String,
@@ -116,20 +151,7 @@ impl LightClientOpts {
         max_clock_drift: u64,
         max_block_lag: u64,
     ) -> Result<Self, StdError> {
-        let (numerator, denominator) = (trust_threshold.0, trust_threshold.1);
-        if numerator > denominator {
-            return Err(StdError::msg("trust_threshold_too_large"));
-        }
-        if denominator == 0 {
-            return Err(StdError::msg("undefined_trust_threshold"));
-        }
-        if 3 * numerator < denominator {
-            return Err(StdError::msg("trust_threshold_too_small"));
-        }
-
-        let _trusted_height: i64 = trusted_height
-            .try_into()
-            .map_err(|_| StdError::msg("trusted_height too large"))?;
+        Self::validate_inputs(trust_threshold, trusted_height).map_err(StdError::msg)?;
 
         Ok(Self {
             chain_id,
@@ -312,65 +334,53 @@ mod verification {
         assert_eq!(nonce, recovered, "nonce must round-trip");
     }
 
-    // The LightClientOpts harnesses below are gated behind `kani_slow`
-    // because `StdError::msg(...)` in the error paths constructs a
-    // backtrace via std::backtrace::Backtrace, which pulls in
-    // ~thousand-iteration stdlib unwinding that Kani cannot bound.
-    // Run with `cargo kani --cfg-kani --harness ... -- --no-unwinding-checks`
-    // when you want to exercise them with a longer time budget.
+    // The LightClientOpts harnesses below exercise `validate_inputs`
+    // directly rather than `new`. Both paths apply the same predicate;
+    // `new` adds a `StdError::msg` wrapping that calls
+    // `std::backtrace::Backtrace::capture()` under Kani's host-arch
+    // simulation (the wasm32 build uses `Backtrace::disabled()` and is
+    // unaffected). The capture pulls in an unbounded
+    // `drop_in_place::<[BacktraceSymbol]>` loop that no `--unwind`
+    // setting terminates. Going through `validate_inputs` keeps the
+    // verification surface identical (same `Err` cases, same `Ok`
+    // case) while avoiding the backtrace constructor entirely. The
+    // `#[cfg(kani_slow)]` gate is removed; these are now standard
+    // `cargo kani` harnesses.
 
-    /// LightClientOpts::new validates trust threshold bounds.
+    /// LightClientOpts validation rejects ill-formed trust thresholds.
     /// Proves: 3*num < den is rejected, num > den is rejected,
     /// den == 0 is rejected, valid inputs accepted.
-    #[cfg(kani_slow)]
     #[kani::proof]
-    #[kani::unwind(20)]
+    #[kani::unwind(4)]
     fn light_client_opts_threshold_validation() {
         let num: u64 = kani::any();
         let den: u64 = kani::any();
         // Use small height to avoid i64 overflow path dominating
         let height: u64 = kani::any_where(|&h: &u64| h <= i64::MAX as u64);
 
-        let result = LightClientOpts::new(
-            "test".to_string(),
-            height,
-            [0u8; 32],
-            (num, den),
-            86400,
-            10,
-            10,
-        );
+        let result = LightClientOpts::validate_inputs((num, den), height);
 
+        // Use u128 comparison in the oracle to match the production check
+        // and avoid overflow in the harness's own arithmetic.
+        let three_num_u128: u128 = (num as u128) * 3;
         if den == 0 {
             assert!(result.is_err(), "zero denominator must fail");
         } else if num > den {
             assert!(result.is_err(), "num > den must fail");
-        } else if 3 * num < den {
-            // Only check if no overflow in 3*num
-            if num <= u64::MAX / 3 {
-                assert!(result.is_err(), "threshold < 1/3 must fail");
-            }
+        } else if three_num_u128 < den as u128 {
+            assert!(result.is_err(), "threshold < 1/3 must fail");
         } else {
             assert!(result.is_ok(), "valid threshold must succeed");
         }
     }
 
-    /// LightClientOpts::new rejects heights that don't fit in i64.
-    #[cfg(kani_slow)]
+    /// LightClientOpts validation rejects heights that don't fit in i64.
     #[kani::proof]
-    #[kani::unwind(20)]
+    #[kani::unwind(4)]
     fn light_client_opts_height_bounds() {
         let height: u64 = kani::any();
 
-        let result = LightClientOpts::new(
-            "test".to_string(),
-            height,
-            [0u8; 32],
-            (2, 3), // valid threshold
-            86400,
-            10,
-            10,
-        );
+        let result = LightClientOpts::validate_inputs((2, 3), height);
 
         if height > i64::MAX as u64 {
             assert!(result.is_err(), "height > i64::MAX must fail");
