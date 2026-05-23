@@ -57,8 +57,12 @@ open Filter Topology
 open OracleSpec OracleComp
 open Specs.Quartz.Crypto
 open Specs.Quartz.Crypto.UserDataCommitVCVio
+open Specs.Quartz.Crypto.Ecies
+open Specs.Quartz.Protocol.Handshake
 open Specs.Quartz.Protocol.ProtocolVCVio
 open Specs.Quartz.Protocol.ProtocolVCVioROModel
+open Specs.Quartz.Protocol.ProtocolVCVioTriple
+open Specs.Quartz.Protocol.ProtocolVCVioQuad
 
 /-! ## Parameterised carriers and spec -/
 
@@ -415,6 +419,188 @@ theorem crossSessionBindFail_secure_of_quad_bundle_secure_RO
         (commitHashCollisionAdvRO_N_negligible_of_constant_qb 𝒜h qbh hbound_𝒜h))
       (commitHashBytesCollisionAdvRO_N_negligible_of_constant_qb 𝒜hB qbhB hbound_𝒜hB))
     h_bound
+
+/-! ## Cycle 6.22.d.2.5 — Connection theorems: existing lifts via RO packagings
+
+The four RO-form packagings above take generic `SecurityExp`s as
+inputs, so they're compatible with any consumer. The natural
+end-to-end connection is to take an existing lift's conclusion (e.g.,
+`handshake_binds_ecies_key_negl : negligible (bindsFailAdv 𝒜)`) and
+re-derive it through the RO packaging via over-approximation.
+
+The TDX and hash terms in the RO packaging's bound aren't actually
+consumed by the existing lift's proof (the cycle-6.4-6.11 over-bundling
+finding: only Groth16 contributes). We supply zero advantages for
+those and an arbitrary trivial RO adversary. The end conclusion is
+identical to the lift's, but framed honestly through the RO model. -/
+
+/-- **Connection theorem**: re-derive `handshake_binds_ecies_key_negl`'s
+    conclusion through the RO-form triple-bundle packaging, exhibiting
+    that the lift's `bindsFailAdv` security factors through the new
+    RO discharge of collision-resistance.
+
+    The hash term is over-approximated by an empty RO computation
+    (`qb = 0` → bound `0`), and the TDX term by the zero advantage.
+    The Groth16 term carries the actual cryptographic content via the
+    lift's existing reduction. -/
+theorem handshakeBindsFail_secure_via_RO_packaging
+    (𝒜 : HandshakeBindsAdv)
+    (h_groth_negl :
+      negligible (groth16SoundnessAdv (reduce_binds_to_groth 𝒜))) :
+    ({ advantage := bindsFailAdv 𝒜 } : SecurityExp).secure := by
+  -- Trivial RO adversary: no queries.
+  let 𝒜hash : CommitHashCollisionAdvRO_N := fun _ => return ()
+  have hbound_𝒜hash : ∀ n, IsTotalQueryBound (𝒜hash n) 0 := fun _ => trivial
+  apply handshakeBindsFail_secure_of_triple_bundle_secure_RO
+    (bindsFailExp := { advantage := bindsFailAdv 𝒜 })
+    (groth16Exp := { advantage := groth16SoundnessAdv (reduce_binds_to_groth 𝒜) })
+    (tdxExp := { advantage := fun _ => 0 })
+    (𝒜 := 𝒜hash) (qb := 0)
+    (hbound_𝒜 := hbound_𝒜hash)
+  · -- h_bound: bindsFailAdv ≤ groth16 + 0 + ROadv
+    intro n
+    have hlift := handshake_binds_ecies_key_negl 𝒜 h_groth_negl
+    -- The lift gives negligibility, not a pointwise bound. We need
+    -- the pointwise bound that the lift's proof produces internally.
+    -- That's exactly the body of the lift: bindsFailAdv 𝒜 n ≤ groth16...
+    -- Reconstruct via the same reduction the lift uses.
+    have h := handshakeBindsWinPred_imp_groth16SoundnessWinPred_projected
+    -- The lift's pointwise bound:
+    have hp : bindsFailAdv 𝒜 n ≤
+        groth16SoundnessAdv (reduce_binds_to_groth 𝒜) n := by
+      show Pr[ handshakeBindsWinPred | simulateQ protocolSpecHonestSim (𝒜 n) ] ≤
+           Pr[ groth16SoundnessWinPred | simulateQ protocolSpecHonestSim
+                  (reduce_binds_to_groth 𝒜 n) ]
+      rw [show reduce_binds_to_groth 𝒜 n
+            = 𝒜 n >>= pure ∘
+                (fun p : HandshakeCheck × UserDataCommit × PrivKey × Plaintext =>
+                  (p.1.proof, p.1.inputs))
+            from rfl]
+      simp only [← map_eq_bind_pure_comp, simulateQ_map, probEvent_map]
+      exact probEvent_mono (fun p _ hp => h p hp)
+    calc bindsFailAdv 𝒜 n
+        ≤ groth16SoundnessAdv (reduce_binds_to_groth 𝒜) n := hp
+      _ = groth16SoundnessAdv (reduce_binds_to_groth 𝒜) n + 0 + 0 := by ring
+      _ ≤ groth16SoundnessAdv (reduce_binds_to_groth 𝒜) n + 0 +
+            commitHashCollisionAdvRO_N 𝒜hash n := by
+          exact add_le_add le_rfl (zero_le _)
+  · -- h_groth_secure
+    exact h_groth_negl
+  · -- h_tdx_secure
+    exact negligible_of_zero (fun _ => rfl)
+
+/-- **Connection theorem**: re-derive `session_confidentiality_negl`'s
+    conclusion through the RO-form triple-bundle packaging. The lift
+    proves `confFailAdv 𝒜 = 0` (unconditional), so the packaging input
+    advantages can all be zero or trivial. -/
+theorem sessionConfFail_secure_via_RO_packaging
+    (𝒜 : SessionConfidentialityAdv) :
+    ({ advantage := confFailAdv 𝒜 } : SecurityExp).secure := by
+  let 𝒜hash : CommitHashCollisionAdvRO_N := fun _ => return ()
+  have hbound_𝒜hash : ∀ n, IsTotalQueryBound (𝒜hash n) 0 := fun _ => trivial
+  apply sessionConfFail_secure_of_triple_bundle_secure_RO
+    (confFailExp := { advantage := confFailAdv 𝒜 })
+    (groth16Exp := { advantage := fun _ => 0 })
+    (tdxExp := { advantage := fun _ => 0 })
+    (𝒜 := 𝒜hash) (qb := 0)
+    (hbound_𝒜 := hbound_𝒜hash)
+  · intro n
+    have hlift := session_confidentiality_negl 𝒜
+    -- Lift gives negligibility via confFailAdv = 0, so the
+    -- pointwise advantage is zero.
+    have hzero : confFailAdv 𝒜 n = 0 := by
+      have : confFailAdv 𝒜 = 0 := by
+        funext m
+        refine le_antisymm ?_ (zero_le _)
+        calc Pr[ sessionConfWinPred | simulateQ protocolSpecHonestSim (𝒜 m) ]
+            ≤ Pr[ fun _ => False | simulateQ protocolSpecHonestSim (𝒜 m) ] := by
+              exact probEvent_mono (fun p _ hp => sessionConfWinPred_false p hp)
+          _ = 0 := probEvent_False _
+      exact congr_fun this n
+    show confFailAdv 𝒜 n ≤ 0 + 0 + commitHashCollisionAdvRO_N 𝒜hash n
+    rw [hzero]; exact zero_le _
+  · exact negligible_of_zero (fun _ => rfl)
+  · exact negligible_of_zero (fun _ => rfl)
+
+/-- **Connection theorem**: re-derive
+    `session_confidentiality_via_extractor_negl`'s conclusion through
+    the RO-form triple-bundle packaging. Same shape as
+    `sessionConfFail_secure_via_RO_packaging`. -/
+theorem sessionConfExtractor_secure_via_RO_packaging
+    (𝒜 : SessionConfidentialityExtractorAdv) :
+    ({ advantage := extFailAdv 𝒜 } : SecurityExp).secure := by
+  let 𝒜hash : CommitHashCollisionAdvRO_N := fun _ => return ()
+  have hbound_𝒜hash : ∀ n, IsTotalQueryBound (𝒜hash n) 0 := fun _ => trivial
+  apply sessionConfExtractor_secure_of_triple_bundle_secure_RO
+    (extractorFailExp := { advantage := extFailAdv 𝒜 })
+    (groth16Exp := { advantage := fun _ => 0 })
+    (tdxExp := { advantage := fun _ => 0 })
+    (𝒜 := 𝒜hash) (qb := 0)
+    (hbound_𝒜 := hbound_𝒜hash)
+  · intro n
+    have hzero : extFailAdv 𝒜 n = 0 := by
+      have : extFailAdv 𝒜 = 0 := by
+        funext m
+        refine le_antisymm ?_ (zero_le _)
+        calc Pr[ sessionConfExtractorWinPred | simulateQ protocolSpecHonestSim (𝒜 m) ]
+            ≤ Pr[ fun _ => False | simulateQ protocolSpecHonestSim (𝒜 m) ] := by
+              exact probEvent_mono (fun p _ hp =>
+                sessionConfExtractorWinPred_false p hp)
+          _ = 0 := probEvent_False _
+      exact congr_fun this n
+    show extFailAdv 𝒜 n ≤ 0 + 0 + commitHashCollisionAdvRO_N 𝒜hash n
+    rw [hzero]; exact zero_le _
+  · exact negligible_of_zero (fun _ => rfl)
+  · exact negligible_of_zero (fun _ => rfl)
+
+/-- **Connection theorem**: re-derive
+    `cross_component_session_bind_negl`'s conclusion through the
+    RO-form quad-bundle packaging. The lift reduces to Groth16 alone
+    (per cycle-6.4-6.11 over-bundling correction); the circuit-eq,
+    TDX, and both hash terms are over-approximated to zero / trivial
+    RO adversaries. -/
+theorem crossSessionBindFail_secure_via_RO_packaging
+    (𝒜 : CrossSessionBindAdv)
+    (h_groth_negl :
+      negligible (groth16SoundnessAdv (reduce_crossSessionBind_to_groth 𝒜))) :
+    ({ advantage := bindFailAdv 𝒜 } : SecurityExp).secure := by
+  let 𝒜h  : CommitHashCollisionAdvRO_N      := fun _ => return ()
+  let 𝒜hB : CommitHashBytesCollisionAdvRO_N := fun _ => return ()
+  have hbound_𝒜h  : ∀ n, IsTotalQueryBound (𝒜h n)  0 := fun _ => trivial
+  have hbound_𝒜hB : ∀ n, IsTotalQueryBound (𝒜hB n) 0 := fun _ => trivial
+  apply crossSessionBindFail_secure_of_quad_bundle_secure_RO
+    (bindFailExp := { advantage := bindFailAdv 𝒜 })
+    (groth16KSExp := { advantage := groth16SoundnessAdv (reduce_crossSessionBind_to_groth 𝒜) })
+    (circuitEqExp := { advantage := fun _ => 0 })
+    (tdxExp := { advantage := fun _ => 0 })
+    (𝒜h := 𝒜h) (qbh := 0)
+    (hbound_𝒜h := hbound_𝒜h)
+    (𝒜hB := 𝒜hB) (qbhB := 0)
+    (hbound_𝒜hB := hbound_𝒜hB)
+  · intro n
+    have hp : bindFailAdv 𝒜 n ≤
+        groth16SoundnessAdv (reduce_crossSessionBind_to_groth 𝒜) n := by
+      show Pr[ crossSessionBindWinPred | simulateQ protocolSpecHonestSim (𝒜 n) ] ≤
+           Pr[ groth16SoundnessWinPred | simulateQ protocolSpecHonestSim
+                  (reduce_crossSessionBind_to_groth 𝒜 n) ]
+      rw [show reduce_crossSessionBind_to_groth 𝒜 n
+            = 𝒜 n >>= pure ∘
+                (fun p : HandshakeCheck × RawSessionSetPubKey × PrivKey × Plaintext =>
+                  (p.1.proof, p.1.inputs))
+            from rfl]
+      simp only [← map_eq_bind_pure_comp, simulateQ_map, probEvent_map]
+      exact probEvent_mono (fun p _ hp =>
+        crossSessionBindWinPred_imp_groth16SoundnessWinPred_projected p hp)
+    calc bindFailAdv 𝒜 n
+        ≤ groth16SoundnessAdv (reduce_crossSessionBind_to_groth 𝒜) n := hp
+      _ = groth16SoundnessAdv (reduce_crossSessionBind_to_groth 𝒜) n + 0 + 0 + 0 + 0 := by ring
+      _ ≤ groth16SoundnessAdv (reduce_crossSessionBind_to_groth 𝒜) n + 0 + 0 +
+            commitHashCollisionAdvRO_N 𝒜h n +
+            commitHashBytesCollisionAdvRO_N 𝒜hB n := by
+          gcongr <;> exact zero_le _
+  · exact h_groth_negl
+  · exact negligible_of_zero (fun _ => rfl)
+  · exact negligible_of_zero (fun _ => rfl)
 
 /-! ## Round A attack #8 closure status under option (a)
 
