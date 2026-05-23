@@ -13,7 +13,7 @@ The integration ledger `.colosseum/ledger.md` is the contract between them. Each
 
 ## Current verification priority (Colosseum agent)
 
-**Status: Steps 1-7 + cycles 6.4-6.22.a/b complete. Audit-ready ledger in place; cycle 6.22.b log-collision birthday bound proven 2026-05-23 with `{propext, Classical.choice, Quot.sound}` axiom closure only; 6.22.c win-pred lift + downstream lift migration queued; awaiting external discharge paths.**
+**Status: Steps 1-7 + cycles 6.4-6.22.c complete. Audit-ready ledger in place; cycles 6.22.b/c (log-collision bound + RO-shape advantage + bound) proven 2026-05-23/24 with `{propext, Classical.choice, Quot.sound}` axiom closure only; cycle 6.22.d (downstream packaging migration) blocked on asymptotic-framing decision (fixed-size hash vs asymptotic-negligibility mismatch — three documented options); awaiting external discharge paths.**
 
 VCV-io OracleComp refactor done. Cumulative: **40 → 10 axioms (-30, -75%)**; 8 of 8 protocol theorems lifted into probabilistic `_negl` forms with zero `sorry`, parametric over hardness hypotheses. All 14 abstract carrier types refined to concrete Lean types via cycles 6.16-6.21. `IsPPT_proper` substantive PPT predicate landed (cycle 6.14.a) with per-reduction preservation lemmas (cycle 6.14.b) and parallel `_AGAINST_PPT_ADVERSARIES` packagings (cycle 6.14.c). Build at 2670 jobs, green.
 
@@ -21,7 +21,7 @@ VCV-io OracleComp refactor done. Cumulative: **40 → 10 axioms (-30, -75%)**; 8
 - **Plan archive**: `.colosseum/refactor-plan-vcvio.md` (executed)
 - **Change records**: `.colosseum/changes/2026-05-{13..21}T*.md` (19+ records spanning Steps 1-7 + cycles 6.4-6.21)
 - **What's open**:
-  - **Cycle 6.22.c** (queued): win-pred form of the birthday bound (`commitHashCollisionAdvRO 𝒜 n ≤ n²/(2·2^512)`), plus downstream migration of the four protocol-layer lifts currently consuming `commitHash_inj` (`handshake_binds_ecies_key_negl`, `session_confidentiality_negl`, `session_confidentiality_via_extractor_negl`, `cross_component_session_bind_negl`). The log-collision form of the bound is proven; 6.22.c is the structural plumbing to thread it through the adversary-shape advantages and lift theorems.
+  - **Cycle 6.22.d** (blocked on decision): downstream packaging migration of the four `*_secure_of_*_bundle_secure` wrappers (`handshakeBindsFail_*`, `sessionConfFail_*`, `sessionConfExtractor_*`, `crossSessionBindFail_*`) to consume the cycle-6.22.c RO-shape advantage. Blocked because the bound `qb²/(2·2^512)` is a constant in the security parameter `n` while the packagings consume asymptotic negligibility. Three options documented in `.colosseum/changes/2026-05-24T00-00-00Z-cycle-6.22c-ro-advantage-bound.md`: (a) re-parameterize spec by security parameter (1-2 weeks), (b) re-frame packagings to expose concrete bounds (2-3 days), (c) add fake "hash advantage is negligible" axiom (regression). Decision needed from user/maintainer.
   - External discharge of remaining (d)-bucket axioms: ArkLib Groth16-KS reduction, reference DCAP verifier in Lean. All upstream-blocked or substantial separate work.
   - Re-adversarial review of cycles 6.13-6.21 against external voices (v0.4 Ask R recommends after canonical revisions touching load-bearing predicates).
   - This fork is the canonical destination for the verification surface. The original informalsystems/cycles-quartz upstream is unmaintained and does not carry the dstack TDX / zkdcap / Xion changes that motivate the refactor. Work lands here; no upstream contribution is planned.

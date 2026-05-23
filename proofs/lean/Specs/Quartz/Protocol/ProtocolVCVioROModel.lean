@@ -315,38 +315,124 @@ theorem commitHashBytes_logCollision_birthday_bound {α : Type}
   refine h.trans (le_of_eq ?_)
   rw [hcard]; push_cast; rfl
 
-/-! ## What cycle 6.22.c (queued) will use
+/-! ## Cycle 6.22.c — RO-shape collision-finder advantage
 
-`commitHash_logCollision_birthday_bound` is the foundation; cycle
-6.22.c will:
+The cycle-6.15 `commitHashCollisionAdv` (in `ProtocolVCVioTriple.lean`)
+defines the collision-finder advantage as
+`Pr[winPred | simulateQ protocolSpecHonestSim (𝒜 n)]`, evaluated under
+the *honest deterministic* interpretation of `commitHash`. That is
+the wrong probability model for a collision bound: under deterministic
+hashing the advantage is either 0 (no collisions exist) or 1 (they
+do); negligibility is not a meaningful notion.
 
-1. Define `commitHashCollisionAdvRO` analogous to the cycle-6.15
-   `commitHashCollisionAdv`, but evaluated under a simulator that
-   uses `randomOracle` for the commit-hash queries (the other three
-   `ProtocolSpec` oracles can stay deterministic via
-   `protocolSpecHonestSim` lifted through `StateT`).
-2. Reduce a `commitHashCollisionWinPred` event (the adversary
-   outputting `uc₁ ≠ uc₂` with `commitHash uc₁ = commitHash uc₂`) to
-   the cache having a log collision. The forward implication: if the
-   adversary's output pair witnesses a collision, the adversary must
-   have queried the oracle on both inputs and observed equal
-   responses, so the `loggingOracle` trace contains a log collision.
-3. Compose with `commitHash_logCollision_birthday_bound` (above) to
-   conclude `commitHashCollisionAdvRO 𝒜 n ≤ n² / (2 · 2^512)`.
-4. Migrate the four protocol-layer lifts that consume
-   `commitHash_inj` (handshake_binds_ecies_key_negl,
-   session_confidentiality_negl,
-   session_confidentiality_via_extractor_negl,
-   cross_component_session_bind_negl) to consume
-   `commitHashCollisionAdvRO`-based negligibility in place of the
-   `CommitHashCollisionAdv` hypothesis.
+The cryptographically meaningful model is the random oracle: the
+adversary makes oracle queries, each of which returns a fresh uniform
+range value, and the cache (or log) records the trace. The chance
+that any two queries collide is bounded by the birthday formula
+`q²/(2·|Range|)`.
+
+This section provides the RO-shape adversary type, the corresponding
+advantage definition (using the log-collision event), and the
+birthday bound on it, parallel to the cycle-6.15 honest-deterministic
+shape. Cycle 6.22.d (queued) wires these into the four downstream
+lifts (`handshake_binds_ecies_key_negl`,
+`session_confidentiality_negl`,
+`session_confidentiality_via_extractor_negl`,
+`cross_component_session_bind_negl`).
+
+### Why use the log-collision event as the advantage shape
+
+A natural alternative is the "explicit win" event: the adversary
+outputs a pair `(uc₁, uc₂)`, the game queries both, and the win is
+`uc₁ ≠ uc₂ ∧ oracle(uc₁) = oracle(uc₂)`. That advantage is also
+bounded by the birthday formula (with `q + 2` queries), but the proof
+requires unpacking the log structure after `𝒜 n >>= query >>= query`
+to find the verifier's two log entries — non-trivial index management.
+
+The log-collision shape is strictly stronger (any explicit-win event
+implies a log collision, since the adversary must have queried both
+inputs to assert the win) and the bound applies in one line via
+`commitHash_logCollision_birthday_bound`. Downstream lifts that need
+the explicit-win shape can derive it from the log-collision shape
+without re-proving the bound. -/
+
+/-- An RO-shape `commitHash` collision-finder adversary: an oracle
+    computation over `CommitHashSpec` that issues some number of
+    queries and returns nothing of interest (the existence of a
+    collision is read off the trace, not the output). -/
+def CommitHashCollisionAdvRO : Type :=
+  ℕ → OracleComp CommitHashSpec Unit
+
+/-- The RO-shape advantage of a `commitHash` collision-finder: the
+    probability that the `loggingOracle` trace contains two distinct
+    queries with equal outputs. This event is semantically
+    "the adversary's queries witnessed a collision" — strictly
+    stronger than (and an upper bound on) any "the adversary
+    explicitly output a colliding pair" event. -/
+noncomputable def commitHashCollisionAdvRO
+    (𝒜 : CommitHashCollisionAdvRO) (n : ℕ) : ℝ≥0∞ :=
+  Pr[fun z => LogHasCollision z.2 |
+      (simulateQ loggingOracle (𝒜 n)).run]
+
+/-- **Birthday bound on the RO-shape commit-hash collision advantage**.
+
+    Direct consequence of `commitHash_logCollision_birthday_bound`. -/
+theorem commitHashCollisionAdvRO_le_birthday_bound
+    (𝒜 : CommitHashCollisionAdvRO) (qb : ℕ)
+    (hbound : ∀ n, IsTotalQueryBound (𝒜 n) qb) (n : ℕ) :
+    commitHashCollisionAdvRO 𝒜 n ≤ (qb ^ 2 : ℝ≥0∞) / (2 * 2 ^ 512) :=
+  commitHash_logCollision_birthday_bound (𝒜 n) qb (hbound n)
+
+/-- An RO-shape `commitHashBytes` collision-finder adversary. -/
+def CommitHashBytesCollisionAdvRO : Type :=
+  ℕ → OracleComp CommitHashBytesSpec Unit
+
+/-- The RO-shape advantage of a `commitHashBytes` collision-finder. -/
+noncomputable def commitHashBytesCollisionAdvRO
+    (𝒜 : CommitHashBytesCollisionAdvRO) (n : ℕ) : ℝ≥0∞ :=
+  Pr[fun z => LogHasCollision z.2 |
+      (simulateQ loggingOracle (𝒜 n)).run]
+
+/-- **Birthday bound on the RO-shape commit-hash-bytes collision
+    advantage**. Direct consequence of
+    `commitHashBytes_logCollision_birthday_bound`. -/
+theorem commitHashBytesCollisionAdvRO_le_birthday_bound
+    (𝒜 : CommitHashBytesCollisionAdvRO) (qb : ℕ)
+    (hbound : ∀ n, IsTotalQueryBound (𝒜 n) qb) (n : ℕ) :
+    commitHashBytesCollisionAdvRO 𝒜 n ≤ (qb ^ 2 : ℝ≥0∞) / (2 * 2 ^ 512) :=
+  commitHashBytes_logCollision_birthday_bound (𝒜 n) qb (hbound n)
+
+/-! ## What cycle 6.22.d (queued) will use
+
+Cycle 6.22.c (this section) provides the RO-shape advantage and bound.
+Cycle 6.22.d migrates the four downstream lifts:
+
+1. `handshake_binds_ecies_key_negl` (ProtocolVCVioTriple.lean) —
+   currently consumes `commitHashCollisionAdv` (honest-sim shape) as
+   one of its parametric negligibility hypotheses (per the
+   over-bundled triple-bundle packaging). Migration: switch the
+   packaging to consume `commitHashCollisionAdvRO`.
+2. `session_confidentiality_negl` (same module) — same pattern.
+3. `session_confidentiality_via_extractor_negl` (same module) — same.
+4. `cross_component_session_bind_negl` (ProtocolVCVioQuad.lean) —
+   consumes both `commitHashCollisionAdv` and
+   `commitHashBytesCollisionAdv` in the quad-bundle packaging.
+   Migration: switch both to RO-shape advantages.
+
+The lift proof bodies themselves don't consume these hypotheses (per
+the cycle-6.4–6.11 over-bundling finding); only the
+`*_secure_of_*_bundle_secure` packaging wrappers do. The migration
+is therefore confined to the packaging wrappers.
 
 ### Round A attack #8 closure status (refreshed)
 
 * Surface-side closure: cycle 6.15 (def-tying) — DONE.
 * Substantive RO scaffolding: cycle 6.22.a — DONE.
 * Substantive RO bound (log-collision form): cycle 6.22.b — DONE
-  (this file).
+  (above).
+* Substantive RO bound (advantage form): cycle 6.22.c — DONE (this
+  section).
+* Downstream packaging migration: cycle 6.22.d — queued.
 * Substantive RO bound (win-pred form, lifted into `commitHashCollisionAdv`-
   shaped advantage): cycle 6.22.c — queued.
 * Downstream lift migration: cycle 6.22.c — queued. -/
