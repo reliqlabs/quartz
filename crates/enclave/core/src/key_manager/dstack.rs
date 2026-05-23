@@ -9,7 +9,7 @@ use log::{debug, info};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    backup_restore::{Export, Import},
+    backup_restore::Export,
     key_manager::{default::PubKey, KeyManager},
 };
 
@@ -161,22 +161,23 @@ impl Export for DstackKeyManager {
     }
 }
 
-#[async_trait::async_trait]
-impl Import for DstackKeyManager {
-    type Error = String;
-
-    async fn import(&mut self, data: Vec<u8>) -> Result<(), Self::Error> {
-        let key_path: String =
-            serde_json::from_slice(&data).map_err(|e| format!("deserialize key path: {e}"))?;
-
-        // Re-derive the key from KMS using the stored path
-        match Self::derive_from_dstack(&key_path) {
-            Ok(sk) => {
-                self.sk = sk;
-                self.key_path = key_path;
-                Ok(())
-            }
-            Err(e) => Err(format!("Failed to re-derive key on import: {e}")),
-        }
-    }
-}
+// `Import for DstackKeyManager` was removed per Round D Critical 5 Option A
+// (2026-05-20 policy decision, executed 2026-05-21). Even though dstack's
+// KMS re-derives the same key from the same path (so import would be
+// idempotent in the common case), the import path opened a window where
+// the KMS-fallback `Err` branch in `derive_from_dstack` would silently
+// replace the in-use signing key with a freshly-generated random key
+// (see `Self::new`'s `Err(e)` arm). That fallback combined with the
+// contract's already-published pubkey is the staleness vector Round D
+// Critical 5 flagged.
+//
+// With no Import impl, the only path to a `DstackKeyManager` is
+// `Self::new(key_path)`, which is invoked once at enclave startup. If
+// the KMS is reachable on startup, the key is deterministic; if not,
+// the fallback random key still means the contract must handshake
+// against the actual published pubkey, with no opportunity for the
+// pubkey-vs-sk binding to drift after handshake completion.
+//
+// The Verus prototype `DstackKeyManagerLifecycle::import_with_rotate`
+// documents the sound add-back path for any future cycle that
+// reintroduces live key rotation.

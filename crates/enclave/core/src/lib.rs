@@ -254,7 +254,16 @@ impl<C, A, K, S> Backup for DefaultEnclave<C, A, K, S>
 where
     C: Send + Sync + Export + Import,
     A: Attestor + Clone + Export + Import,
-    K: KeyManager + Clone + Export + Import,
+    // `K: Import` bound removed per Round D Critical 5 Option A (2026-05-21).
+    // Restoring a key manager from a backup file would resurrect the
+    // staleness vector Critical 5 flagged: contract publishes pubkey P
+    // bound to enclave-state s; sealed file is restored later with key k
+    // such that derive(k) ≠ P; contract is now bound to a pubkey whose
+    // private key the enclave does not hold. `Export` is retained because
+    // the bound is structural — the key bytes are NOT included in the
+    // backup payload (see `try_restore` below; the `DefaultBackup.
+    // key_manager` field is now unused-but-reserved for forward-compat).
+    K: KeyManager + Clone + Export,
     S: Store<Contract = AccountId> + Clone + Export + Import,
 {
     type Config = PathBuf;
@@ -318,10 +327,20 @@ where
             .import(backup.store)
             .await
             .map_err(|e| anyhow!("store import failed: {e:?}"))?;
-        self.key_manager
-            .import(backup.key_manager)
-            .await
-            .map_err(|e| anyhow!("key-manager import failed: {e:?}"))?;
+        // Round D Critical 5 Option A (2026-05-21): the key_manager.import
+        // call has been removed. The `Import` impls for `DefaultKeyManager`
+        // and `DstackKeyManager` no longer exist; restoring a key from a
+        // sealed file would leave the contract bound to a pubkey whose
+        // private key the enclave does not hold (see commentary on the
+        // `Backup` bound above). The key manager is instead reconstructed
+        // fresh at enclave-startup time: `DefaultKeyManager::default()`
+        // generates a new random key, `DstackKeyManager::new(path)`
+        // re-derives from KMS. In both cases a fresh handshake against the
+        // current pubkey is required after restart. The
+        // `backup.key_manager` field is read above but its content is
+        // discarded; the field is retained for forward-compatibility with
+        // sealed files that predate this change.
+        let _ = backup.key_manager;
         self.attestor
             .import(backup.attestor)
             .await

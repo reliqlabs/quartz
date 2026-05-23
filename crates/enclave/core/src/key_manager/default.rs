@@ -2,7 +2,7 @@ use k256::ecdsa::{Error, SigningKey, VerifyingKey};
 use log::{debug, info};
 
 use crate::{
-    backup_restore::{Export, Import},
+    backup_restore::Export,
     key_manager::KeyManager,
 };
 
@@ -46,15 +46,20 @@ impl From<PubKey> for VerifyingKey {
     }
 }
 
-#[async_trait::async_trait]
-impl Import for DefaultKeyManager {
-    type Error = Error;
-
-    async fn import(&mut self, data: Vec<u8>) -> Result<(), Self::Error> {
-        self.sk = SigningKey::from_slice(&data)?;
-        Ok(())
-    }
-}
+// `Import for DefaultKeyManager` was removed per Round D Critical 5 Option A
+// (2026-05-20 policy decision, executed 2026-05-21). Restoring a key after
+// the contract has already published the corresponding pubkey would leave
+// the contract bound to a stale pubkey, breaking the protocol-layer
+// session-binding invariant proved in the Lean spec. With no Import impl,
+// the only path to a new key is constructing a fresh `DefaultKeyManager`
+// via `Default::default()`, which means the contract must re-handshake.
+//
+// If a future operational requirement reintroduces live key rotation,
+// the sound add-back path is documented in
+// `crates/enclave/core/verus-prototype/key_manager.rs` as
+// `DefaultKeyManagerLifecycle::import_with_rotate` — it requires a
+// corresponding `session_rotate_pub_key` contract message and a binding-
+// to-attestation discipline.
 
 #[async_trait::async_trait]
 impl Export for DefaultKeyManager {
