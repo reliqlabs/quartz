@@ -9,8 +9,6 @@ use crate::{
     },
     state::CONFIG,
 };
-#[cfg(not(feature = "mock"))]
-use crate::state::Config;
 
 // ── ZK module protobuf types (for DstackZkAttestation) ─────────────
 // Uses the gnark-native ProofVerifyGnark endpoint (Xion v29+).
@@ -212,8 +210,26 @@ impl Handler for DstackZkAttestation {
         // Bind the proof's journal to the wrapper-declared user_data and
         // (if config pins an expected rtmr3) to that pinned value. See
         // the helper doc above for the binding model.
-        let expected_rtmr3 =
-            Config::try_from(config.clone()).ok().and_then(|c| c.expected_rtmr3().copied());
+        //
+        // Read expected_rtmr3 directly from RawConfig to avoid a Config
+        // round-trip (and the silent .ok() discard if Config::try_from
+        // were to fail for an unrelated reason). Validate length here so
+        // a malformed stored value surfaces as a real Err rather than
+        // silently disabling the binding.
+        let expected_rtmr3: Option<[u8; 48]> = match config.expected_rtmr3() {
+            None => None,
+            Some(bytes) if bytes.len() == 48 => {
+                let mut arr = [0u8; 48];
+                arr.copy_from_slice(bytes);
+                Some(arr)
+            }
+            Some(bytes) => {
+                return Err(Error::ZkdcapVerificationFailed(format!(
+                    "config.expected_rtmr3 wrong length: expected 48, got {}",
+                    bytes.len()
+                )));
+            }
+        };
         verify_journal_bindings(
             &self.zkdcap_journal,
             &self.user_data,
@@ -304,5 +320,102 @@ impl<T> Handler for Noop<T> {
         _info: &MessageInfo,
     ) -> Result<Response, Error> {
         Ok(Response::default())
+    }
+}
+
+#[cfg(all(test, not(feature = "mock")))]
+mod tests {
+    use super::*;
+
+    fn make_journal(report_data_hex: &str, rtmr3_hex: &str) -> Vec<u8> {
+        // Minimal JSON shape compatible with our `JournalFields` deserialiser.
+        // Includes a smattering of other fields that the real `DcapJournal`
+        // ships so the test inputs are realistic; `serde_json` ignores
+        // fields not present in our subset struct.
+        format!(
+            r#"{{"quote_hash":"00","quote_verified":true,"tcb_status":"UpToDate","advisory_ids":[],"mr_td":"00","rtmr0":"00","rtmr1":"00","rtmr2":"00","rtmr3":"{rtmr3_hex}","report_data":"{report_data_hex}","verification_timestamp":0}}"#
+        )
+        .into_bytes()
+    }
+
+    #[test]
+    fn report_data_binding_accepts_matching() {
+        let user_data = [0xAAu8; 64];
+        let rtmr3 = [0xBBu8; 48];
+        let journal = make_journal(&hex::encode(user_data), &hex::encode(rtmr3));
+        verify_journal_bindings(&journal, &user_data, None).unwrap();
+    }
+
+    #[test]
+    fn report_data_binding_rejects_mismatch() {
+        let user_data = [0xAAu8; 64];
+        let other = [0xCCu8; 64];
+        let rtmr3 = [0xBBu8; 48];
+        let journal = make_journal(&hex::encode(other), &hex::encode(rtmr3));
+        let err = verify_journal_bindings(&journal, &user_data, None).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("report_data"), "got: {msg}");
+    }
+
+    #[test]
+    fn rtmr3_binding_accepts_matching_when_pinned() {
+        let user_data = [0xAAu8; 64];
+        let rtmr3 = [0xBBu8; 48];
+        let journal = make_journal(&hex::encode(user_data), &hex::encode(rtmr3));
+        verify_journal_bindings(&journal, &user_data, Some(&rtmr3)).unwrap();
+    }
+
+    #[test]
+    fn rtmr3_binding_rejects_mismatch_when_pinned() {
+        let user_data = [0xAAu8; 64];
+        let expected_rtmr3 = [0xBBu8; 48];
+        let actual_rtmr3 = [0xCCu8; 48];
+        let journal = make_journal(&hex::encode(user_data), &hex::encode(actual_rtmr3));
+        let err =
+            verify_journal_bindings(&journal, &user_data, Some(&expected_rtmr3)).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("rtmr3"), "got: {msg}");
+    }
+
+    #[test]
+    fn rtmr3_binding_skipped_when_none() {
+        // With no expected_rtmr3 pinned, any rtmr3 in the journal is
+        // accepted (backwards-compat for deployments that pre-date
+        // the config field).
+        let user_data = [0xAAu8; 64];
+        let rtmr3 = [0xCCu8; 48]; // not pinned anywhere
+        let journal = make_journal(&hex::encode(user_data), &hex::encode(rtmr3));
+        verify_journal_bindings(&journal, &user_data, None).unwrap();
+    }
+
+    #[test]
+    fn rejects_malformed_journal() {
+        let user_data = [0xAAu8; 64];
+        let err = verify_journal_bindings(b"not json", &user_data, None).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("decode journal"), "got: {msg}");
+    }
+
+    #[test]
+    fn rejects_wrong_length_report_data() {
+        let user_data = [0xAAu8; 64];
+        let rtmr3 = [0xBBu8; 48];
+        // 32-byte report_data when 64 is required
+        let journal = make_journal(&hex::encode([0u8; 32]), &hex::encode(rtmr3));
+        let err = verify_journal_bindings(&journal, &user_data, None).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("report_data wrong length"), "got: {msg}");
+    }
+
+    #[test]
+    fn rejects_wrong_length_rtmr3() {
+        let user_data = [0xAAu8; 64];
+        let expected_rtmr3 = [0xBBu8; 48];
+        // 32-byte rtmr3 when 48 is required
+        let journal = make_journal(&hex::encode(user_data), &hex::encode([0u8; 32]));
+        let err =
+            verify_journal_bindings(&journal, &user_data, Some(&expected_rtmr3)).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("rtmr3 wrong length"), "got: {msg}");
     }
 }
