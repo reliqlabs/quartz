@@ -13,17 +13,17 @@ The integration ledger `.colosseum/ledger.md` is the contract between them. Each
 
 ## Current verification priority (Colosseum agent)
 
-**Status: Steps 1-7 complete. Audit-ready ledger in place; awaiting external discharge paths.**
+**Status: Steps 1-7 + cycles 6.4-6.21 complete. Audit-ready ledger in place; awaiting external discharge paths and queued cycle 6.22 (random-oracle migration).**
 
-VCV-io OracleComp refactor done. Cumulative: **40 → 26 axioms (-14, ~35%)**; 8 of 8 protocol theorems lifted into probabilistic `_negl` forms with zero `sorry`, parametric over hardness hypotheses. Build at 2667 jobs, green.
+VCV-io OracleComp refactor done. Cumulative: **40 → 10 axioms (-30, -75%)**; 8 of 8 protocol theorems lifted into probabilistic `_negl` forms with zero `sorry`, parametric over hardness hypotheses. All 14 abstract carrier types refined to concrete Lean types via cycles 6.16-6.21. `IsPPT_proper` substantive PPT predicate landed (cycle 6.14.a) with per-reduction preservation lemmas (cycle 6.14.b) and parallel `_AGAINST_PPT_ADVERSARIES` packagings (cycle 6.14.c). Build at 2670 jobs, green.
 
-- **Ledger**: `.colosseum/ledger.md` (audit-ready paragraph at the top; 26-axiom 4-bucket classification; 8-theorem lift index; cross-bundle composition map)
+- **Ledger**: `.colosseum/ledger.md` (audit-ready paragraph at the top; refreshed 10-axiom 4-bucket classification with original-26 inventory cross-reference; 8-theorem lift index; cross-bundle composition map; updated carrier refinement table)
 - **Plan archive**: `.colosseum/refactor-plan-vcvio.md` (executed)
-- **Change records**: `.colosseum/changes/2026-05-13T*.md` (10 records spanning Steps 1-7)
+- **Change records**: `.colosseum/changes/2026-05-{13..21}T*.md` (19+ records spanning Steps 1-7 + cycles 6.4-6.21)
 - **What's open**:
-  - External discharge of (d)-bucket axioms: ArkLib Groth16-KS reduction, reference DCAP verifier in Lean, concrete bytes/userdata hash specs. All upstream-blocked or substantial separate work.
-  - 3 (a)-bucket named-constant axioms could be demoted to `def` after carrier refinement (one of the few near-term Quartz-side wins).
-  - `IsPPT` predicate is currently `True`-placeholder; hardening required if/when adversaries gain oracle access.
+  - **Cycle 6.22** (queued): substantive closure of (d-pigeonhole-impossible) `commitHashE`/`commitHashBytesE` via VCV-io `randomOracle` + birthday bound. Mechanically tractable post-cycle-6.18 (`Fintype UserData` available) and post-cycle-6.14.a (`DecidableEq UserDataCommit` available). Multi-week scope because it requires probabilistic re-statement of every theorem currently depending on `commitHash_inj`.
+  - External discharge of remaining (d)-bucket axioms: ArkLib Groth16-KS reduction, reference DCAP verifier in Lean. All upstream-blocked or substantial separate work.
+  - Re-adversarial review of cycles 6.13-6.21 against external voices (v0.4 Ask R recommends after canonical revisions touching load-bearing predicates).
   - This fork is the canonical destination for the verification surface. The original informalsystems/cycles-quartz upstream is unmaintained and does not carry the dstack TDX / zkdcap / Xion changes that motivate the refactor. Work lands here; no upstream contribution is planned.
 - **Background**: `.colosseum/attacks/temporal_zk_accept_requires_vkey-multimodel-2026-05-12T16-38-48Z/synthesis.md` — Quint adversarial review (closed loop, action-tag rewrite landed pre-VCVio)
 
