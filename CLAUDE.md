@@ -41,6 +41,7 @@ Three things the Colosseum agent here may not be aware of yet. If a fresh spec-a
 
 - **zkdcap verifier migration**: circom `ProofVerify` → gnark `ProofVerifyGnark` endpoint. Live blocker for testnet flow. See `crates/cli/src/handler/zkdcap.rs` + `tests/integration/src/zk_mock.rs` (both endpoints already mocked).
 - **Register zkdcap gnark vkey on testnet**: keygen tool at `zkdcap/circuits/dcap-gnark/cmd/keygen/`.
+- **Set `config.expected_rtmr3` on new deployments**: as of 2026-05-21 the `DstackZkAttestation` handler enforces `journal.rtmr3 == config.expected_rtmr3` when the field is populated. Without it, the contract is vulnerable to a "wrong-image-attestation" substitution (attacker submits a valid proof for image Y with `self.compose_hash` of image X). Compute `expected_rtmr3` once from a known-good quote of the intended dstack image and set it on instantiate. Existing deployments keep working without the field (binding skipped); new deployments should always populate it.
 - **Anti-sniping for BidBoard auction contract** (separate repo at `/Users/mvid/Development/reliq/bidboard`, but the integration touches Quartz).
 - **IBE-based key management**: commonware `feat/threshold-ibe` branch. Blocked on chain signature support in xiond.
 
