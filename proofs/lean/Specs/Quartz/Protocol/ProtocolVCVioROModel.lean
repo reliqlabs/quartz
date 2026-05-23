@@ -52,19 +52,30 @@ ones without `local instance` scoping issues.
 
 * `commitHashROSim : QueryImpl CommitHashSpec (StateT _ ProbComp)`
 * `commitHashBytesROSim : QueryImpl CommitHashBytesSpec (StateT _ ProbComp)`
-* Explicit `DecidableEq` instances on the carrier types and
-  `SampleableType` instances on the spec ranges, plumbing the
-  `randomOracle` requirements through the cycle-6.21 concrete carriers.
+* Explicit `DecidableEq`, `Fintype`, `Inhabited` instances on the
+  carriers and the spec ranges, plumbing the `randomOracle` and
+  birthday-bound requirements through the cycle-6.21 concrete carriers.
 
-## Cycle 6.22.b blocker — see in-file note below
+## What this module provides (cycle 6.22.b)
 
-The substantive birthday-bound theorem requires `OracleSpec.Fintype`
-on `CommitHashSpec`, which requires `Fintype` on the *index* type
-`UserDataCommit`. Cycle 6.21 made `UserDataCommit`'s fields
-`List UInt8`/`String` (matching production-faithful variable-length
-shapes), so the index is infinite and `OracleSpec.Fintype` does not
-hold. Three remediation paths are documented below; all are out of
-session scope.
+* `commitHash_logCollision_birthday_bound` — the standard textbook
+  birthday bound `n²/(2·2^512)` on the probability of a log collision
+  for any `OracleComp CommitHashSpec α` issuing at most `n` queries.
+* `commitHashBytes_logCollision_birthday_bound` — the byte-domain
+  analogue, same bound.
+
+Both proved from VCV-io's `probEvent_logCollision_le_birthday_total`.
+Closure: `{propext, Classical.choice, Quot.sound}` only — no
+protocol-layer or cryptographic axioms.
+
+## What remains (cycle 6.22.c, queued)
+
+The bound is in *log-collision* form. The win-pred form used by the
+protocol-layer adversaries (`commitHashCollisionAdvRO 𝒜 n ≤ …`)
+requires the forward implication "adversary's win event implies the
+cache contains a log collision", then composition with the bound
+proven here. The downstream lift migration (the four lifts currently
+consuming `commitHash_inj`) consumes the win-pred form.
 -/
 
 namespace Specs.Quartz.Protocol.ProtocolVCVioROModel
@@ -114,6 +125,73 @@ instance instSampleableTypeCommitHashBytesRange :
       SampleableType (CommitHashBytesSpec.Range t) :=
   fun _ => inferInstanceAs (SampleableType (BitVec 512))
 
+/-! ## `OracleSpec.{DecidableEq, Fintype, Inhabited}` instances
+
+The cycle-6.22.b blocker note further down incorrectly claimed that
+VCV-io's `probEvent_logCollision_le_birthday_total` requires `Fintype`
+on the *index* type. Re-reading
+`VCVio/OracleComp/QueryTracking/Birthday.lean:20-21` shows the actual
+typeclass requirements are:
+
+* `[DecidableEq ι]` on the index — we provide via `Classical.decEq`.
+* `[spec.DecidableEq]` (DecidableEq on domain + per-range) — derives.
+* `[spec.Fintype]` (Fintype on each *range* only, via
+  `PFunctor.Fintype` at `ToMathlib/PFunctor/Basic.lean:231`) —
+  derives from `Fintype (BitVec 512)`.
+* `[spec.Inhabited]` (Inhabited on each *range* only) — derives from
+  `Inhabited (BitVec 512)` (via `⟨0⟩`).
+
+All four hold for `CommitHashSpec` post cycle-6.18 + cycle-6.14.a.
+We declare the spec-level instances explicitly so the typeclass
+unifier doesn't need to walk through the unfolded `OracleSpec.ofFn`
+shape (`CommitHashSpec` is literally `fun _ => UserData`; `ofFn` is
+the reducible identity wrapper, but the explicit instance is cheaper
+and more diagnostic-friendly than relying on `ofFn` unfolding). -/
+
+noncomputable instance instCommitHashSpecDecidableEq :
+    CommitHashSpec.DecidableEq where
+  decidableEq_A := instDecidableEqUserDataCommitRO
+  decidableEq_B _ := inferInstanceAs (DecidableEq (BitVec 512))
+
+instance instCommitHashSpecFintype : CommitHashSpec.Fintype where
+  fintype_B _ := inferInstanceAs (Fintype (BitVec 512))
+
+instance instCommitHashSpecInhabited : CommitHashSpec.Inhabited where
+  inhabited_B _ := inferInstanceAs (Inhabited (BitVec 512))
+
+noncomputable instance instCommitHashBytesSpecDecidableEq :
+    CommitHashBytesSpec.DecidableEq where
+  decidableEq_A := instDecidableEqByteSeqRO
+  decidableEq_B _ := inferInstanceAs (DecidableEq (BitVec 512))
+
+instance instCommitHashBytesSpecFintype : CommitHashBytesSpec.Fintype where
+  fintype_B _ := inferInstanceAs (Fintype (BitVec 512))
+
+instance instCommitHashBytesSpecInhabited : CommitHashBytesSpec.Inhabited where
+  inhabited_B _ := inferInstanceAs (Inhabited (BitVec 512))
+
+/-- Sanity probe: with the spec-level instances above, the
+    `HasEvalPMF (OracleComp CommitHashSpec)` instance from
+    `VCVio/OracleComp/EvalDist.lean:153` synthesises, which makes
+    `Pr[…]` notation well-typed over `OracleComp CommitHashSpec`.
+    This is the prerequisite that the original cycle-6.22.b blocker
+    note claimed was unsatisfiable. -/
+noncomputable example : HasEvalPMF (OracleComp CommitHashSpec) := inferInstance
+
+noncomputable example : HasEvalPMF (OracleComp CommitHashBytesSpec) := inferInstance
+
+/-! ## `Inhabited` instances on the index types
+
+`probEvent_logCollision_le_birthday_total` requires `[Inhabited ι]` on
+the spec's index in order to project out a default range to bound
+against. We supply concrete `default` witnesses for each. -/
+
+instance instInhabitedUserDataCommit : Inhabited UserDataCommit where
+  default := { domainSep := [], eciesPubkey := 0, contractAddr := "", nonce := 0 }
+
+instance instInhabitedByteSeqRO : Inhabited ByteSeq where
+  default := []
+
 /-! ## Random-oracle simulators
 
 Each replaces the cycle-6.13 honest-deterministic responder
@@ -162,89 +240,115 @@ the four protocol oracles. Cycle 6.22.c (downstream lift migration)
 is where the heterogeneous combined simulator becomes necessary; we
 defer that construction until the bound theorem is in place. -/
 
-/-! ## Cycle 6.22.b BLOCKER (2026-05-23) — `spec.Fintype` incompatibility
+/-! ## Cycle 6.22.b — log-collision birthday bound
 
-The intended cycle 6.22.b deliverable was a theorem of the shape:
+The substantive cycle 6.22.b deliverable: VCV-io's
+`probEvent_logCollision_le_birthday_total`
+(`VCVio/OracleComp/QueryTracking/Birthday.lean:396`) directly bounds
+the probability that the `loggingOracle` trace records any pair of
+queries with equal outputs but distinct inputs. Specialised to
+`CommitHashSpec`, whose range is `UserData = BitVec 512`, the bound is
+`n²/(2·2^512)` for any computation issuing at most `n` queries.
 
-    commitHashCollisionAdvRO 𝒜 n ≤ (qb + 2)² / (2 · 2^512)
+### Closure history
 
-…proved via VCV-io's `probEvent_logCollision_le_birthday_total` in
-`VCVio/OracleComp/QueryTracking/Birthday.lean:396`. That theorem's
-file-level variable declaration (line 21) requires
-`[spec.DecidableEq] [spec.Fintype] [spec.Inhabited]`. Specifically,
-`OracleSpec.Fintype spec` extends `PFunctor.Fintype` which requires
-`Fintype` on BOTH the *index* type and the *range* type.
+An earlier draft of this module claimed the bound was blocked because
+`OracleSpec.Fintype` required `Fintype` on the index type
+`UserDataCommit`. That reading was wrong. The actual signature at
+`VCVio/OracleComp/QueryTracking/Birthday.lean:20-21` requires:
 
-For `CommitHashSpec : OracleSpec UserDataCommit`:
+* `[DecidableEq ι]` on the index — provided above via `Classical.decEq`.
+* `[spec.DecidableEq]` (DecidableEq on domain + per-range) — derives.
+* `[spec.Fintype]` (`PFunctor.Fintype` requires Fintype on each
+  *range* only, per `ToMathlib/PFunctor/Basic.lean:231`) — derives
+  from `Fintype (BitVec 512)`.
+* `[spec.Inhabited]` (Inhabited on each *range* only) — derives.
+* `[Inhabited ι]` on the index — provided above with a concrete
+  default value.
 
-* Range = `UserData = BitVec 512` — **Fintype OK** (post cycle 6.18).
-* Index = `UserDataCommit` — **Fintype FAILS**. `UserDataCommit`
-  has `domainSep : DomainSep = List UInt8` and
-  `contractAddr : Addr = String` fields, both infinite types
-  post cycle 6.20.
+`Fintype UserDataCommit` is *not* required, so cycle 6.21's
+production-faithful refinement (variable-length `domainSep`/`addr`)
+does not interact with the bound. -/
 
-This is a genuine incompatibility between two design choices:
+/-- **Birthday bound for `CommitHashSpec` log-collisions**.
 
-* Cycle 6.21's carrier refinement chose `List UInt8`/`String` for
-  variable-length fields to match production semantics faithfully.
-* VCV-io's birthday bound was designed for fixed-size index types
-  (typical in cryptographic specs where the adversary submits
-  finite-domain inputs).
+For any `OracleComp CommitHashSpec α` issuing at most `n` queries (in
+the `IsTotalQueryBound` sense), the probability that the
+`loggingOracle` trace contains two entries with equal outputs but
+distinct inputs is at most `n² / (2 · 2^512)`. Standard textbook
+birthday bound, instantiated via VCV-io's
+`probEvent_logCollision_le_birthday_total`. -/
+theorem commitHash_logCollision_birthday_bound {α : Type}
+    (oa : OracleComp CommitHashSpec α)
+    (n : ℕ) (hbound : IsTotalQueryBound oa n) :
+    Pr[fun z => LogHasCollision z.2 |
+        (simulateQ loggingOracle oa).run] ≤
+      (n ^ 2 : ℝ≥0∞) / (2 * 2 ^ 512) := by
+  have hcard : Fintype.card (CommitHashSpec.Range default) = 2 ^ 512 :=
+    card_bitVec 512
+  have hC_pos : 0 < Fintype.card (CommitHashSpec.Range default) := by
+    rw [hcard]; exact Nat.pos_of_ne_zero (Nat.pos_iff_ne_zero.mp (Nat.two_pow_pos 512))
+  have hrange : ∀ t, Fintype.card (CommitHashSpec.Range default) ≤
+      Fintype.card (CommitHashSpec.Range t) := fun _ => le_refl _
+  have h := probEvent_logCollision_le_birthday_total oa n hbound hC_pos hrange
+  -- Rewrite the bound's RHS from `Fintype.card (...)` to `2^512`.
+  refine h.trans (le_of_eq ?_)
+  rw [hcard]; push_cast; rfl
 
-### Three remediation paths, all out of session scope
+/-- **Birthday bound for `CommitHashBytesSpec` log-collisions**.
 
-(a) **Bound the spec's index artificially**: introduce a parallel
-    spec `BoundedCommitHashSpec` over `Vector UInt8 N × ... ×
-    Vector UInt8 M` for fixed maxima. Prove the bound under the
-    bounded spec. Connect to production via the observation that
-    deployed `domainSep` is `"QUARTZ-HS-V1"` (12 bytes, fits) and
-    `contractAddr` is a bech32 (fixed-length, fits). Loses
-    generality over arbitrary deployments but is the cleanest
-    local fix. Estimated effort: ~2 days. Recommended next step.
+The byte-domain analogue: same range type `UserData = BitVec 512`,
+same `n² / (2 · 2^512)` bound. -/
+theorem commitHashBytes_logCollision_birthday_bound {α : Type}
+    (oa : OracleComp CommitHashBytesSpec α)
+    (n : ℕ) (hbound : IsTotalQueryBound oa n) :
+    Pr[fun z => LogHasCollision z.2 |
+        (simulateQ loggingOracle oa).run] ≤
+      (n ^ 2 : ℝ≥0∞) / (2 * 2 ^ 512) := by
+  have hcard : Fintype.card (CommitHashBytesSpec.Range default) = 2 ^ 512 :=
+    card_bitVec 512
+  have hC_pos : 0 < Fintype.card (CommitHashBytesSpec.Range default) := by
+    rw [hcard]; exact Nat.pos_of_ne_zero (Nat.pos_iff_ne_zero.mp (Nat.two_pow_pos 512))
+  have hrange : ∀ t, Fintype.card (CommitHashBytesSpec.Range default) ≤
+      Fintype.card (CommitHashBytesSpec.Range t) := fun _ => le_refl _
+  have h := probEvent_logCollision_le_birthday_total oa n hbound hC_pos hrange
+  refine h.trans (le_of_eq ?_)
+  rw [hcard]; push_cast; rfl
 
-(b) **Weaken VCV-io's bound to drop `[spec.Fintype]` on the index**:
-    the birthday argument doesn't fundamentally need Fintype on the
-    domain — only on the range. Sending an upstream PR to VCV-io
-    would relax this. Cross-repo work, weeks of coordination.
+/-! ## What cycle 6.22.c (queued) will use
 
-(c) **Refactor cycle 6.21**: revert
-    `DomainSep`/`Addr`/`ByteSeq` to fixed-width carriers
-    (`BitVec`-based) at the cost of losing production
-    correspondence on variable-length fields. Loses the cycle-6.21
-    win that the deployed `domainSep`/`addr` shape is faithfully
-    modelled. Not recommended.
+`commitHash_logCollision_birthday_bound` is the foundation; cycle
+6.22.c will:
 
-### Methodology v0.4 ask: variable-length-domain birthday bounds
+1. Define `commitHashCollisionAdvRO` analogous to the cycle-6.15
+   `commitHashCollisionAdv`, but evaluated under a simulator that
+   uses `randomOracle` for the commit-hash queries (the other three
+   `ProtocolSpec` oracles can stay deterministic via
+   `protocolSpecHonestSim` lifted through `StateT`).
+2. Reduce a `commitHashCollisionWinPred` event (the adversary
+   outputting `uc₁ ≠ uc₂` with `commitHash uc₁ = commitHash uc₂`) to
+   the cache having a log collision. The forward implication: if the
+   adversary's output pair witnesses a collision, the adversary must
+   have queried the oracle on both inputs and observed equal
+   responses, so the `loggingOracle` trace contains a log collision.
+3. Compose with `commitHash_logCollision_birthday_bound` (above) to
+   conclude `commitHashCollisionAdvRO 𝒜 n ≤ n² / (2 · 2^512)`.
+4. Migrate the four protocol-layer lifts that consume
+   `commitHash_inj` (handshake_binds_ecies_key_negl,
+   session_confidentiality_negl,
+   session_confidentiality_via_extractor_negl,
+   cross_component_session_bind_negl) to consume
+   `commitHashCollisionAdvRO`-based negligibility in place of the
+   `CommitHashCollisionAdv` hypothesis.
 
-Adding to the colosseum methodology v0.4 ask candidates: when an
-`OracleSpec` has a variable-length domain (matching real-world
-variable-length hash inputs), VCV-io's birthday-bound infrastructure
-does not apply without artificial bounding. The right end state is
-upstream relaxation of the `spec.Fintype` requirement in
-`probEvent_logCollision_le_birthday_total` to `Fintype` on range
-only. Methodology should flag this whenever a spec's domain refines
-to `List`/`String` / other infinite carriers and a downstream
-collision-bound theorem is queued.
-
-### What cycle 6.22.a (this module) leaves in place
-
-The scaffolding (`*ROSim` simulators, `SampleableType (BitVec 512)`
-instances, explicit `DecidableEq UserDataCommit` instances) is real
-preparation. When one of the three remediation paths above lands,
-the bound theorem slots in directly above the existing simulator
-definitions.
-
-The cycle-6.15 `commitHashCollisionAdv` continues to be well-typed
-and consumed by the protocol-layer triple-bundle / quad-bundle
-lifts as a parametric negligibility hypothesis. The substantive
-content (the bound proof) remains externally deferred.
-
-### Reframe for Round A attack #8 closure status
+### Round A attack #8 closure status (refreshed)
 
 * Surface-side closure: cycle 6.15 (def-tying) — DONE.
-* Substantive Option-(a) closure: cycle 6.22 — partially done.
-  Scaffolding landed (cycle 6.22.a, this module). Bound theorem
-  blocked by `spec.Fintype` requirement; three remediation paths
-  documented. -/
+* Substantive RO scaffolding: cycle 6.22.a — DONE.
+* Substantive RO bound (log-collision form): cycle 6.22.b — DONE
+  (this file).
+* Substantive RO bound (win-pred form, lifted into `commitHashCollisionAdv`-
+  shaped advantage): cycle 6.22.c — queued.
+* Downstream lift migration: cycle 6.22.c — queued. -/
 
 end Specs.Quartz.Protocol.ProtocolVCVioROModel

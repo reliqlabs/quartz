@@ -46,6 +46,8 @@
 >
 > ~~Also Quartz-agent-territory but lower priority: re-host the transfers `safe_drain_len` / `checked_sum_withdrawals` helpers as production code so the spec_harnesses module covers deployed behavior instead of phantom-helper code.~~ **`safe_drain_len` half landed 2026-05-21**: transfers `contract.rs::update` now enforces `quantity > len` rejection with `ContractError::BadLength` before draining; replaces the prior `Vec::drain` panic. Same predicate the cycle-6-era spec harness verifies. Round C #17 and Round E Critical 2 (Claude #2, Kimi #6) both closed on the production side. `checked_sum_withdrawals` half remains unintegrated — production does not sum withdrawals (each `BankMsg::Send` is emitted independently). Round E recommendation stands for that half: re-host or delete the harness.
 >
+> **Cycle 6.22.a/b 2026-05-23 (RO migration: scaffolding + birthday bound)**: `proofs/lean/Specs/Quartz/Protocol/ProtocolVCVioROModel.lean` now provides VCV-io `randomOracle`-based simulators for `CommitHashSpec` and `CommitHashBytesSpec`, plus the textbook log-collision birthday bound `n²/(2·2^512)` for any `OracleComp CommitHashSpec α` / `OracleComp CommitHashBytesSpec α` with `IsTotalQueryBound n`. Axiom closure of both bounds: `{propext, Classical.choice, Quot.sound}` only — no protocol-layer or cryptographic axioms. A prior in-session blocker note claiming `OracleSpec.Fintype` requires Fintype on the index was retracted: the actual requirement is Fintype on the *range* only (per `PFunctor.Fintype` at `VCVio/ToMathlib/PFunctor/Basic.lean:231`), which holds via `Fintype (BitVec 512)`. The bound is in log-collision form; cycle 6.22.c (queued) will lift to the win-pred shape `commitHashCollisionAdvRO 𝒜 n ≤ …` consumed by the four protocol-layer lifts currently using `commitHash_inj`. Change records: `.colosseum/changes/2026-05-23T00-00-00Z-cycle-6.22-ro-scaffolding-and-blocker.md` (with retraction header) and `.colosseum/changes/2026-05-23T01-00-00Z-cycle-6.22b-birthday-bound-proven.md`. Build green at 2670 jobs, 0 new `sorry`. Methodology v0.4 ask candidate added: require a direct quote of an upstream API signature in any "out-of-session blocker" change record before closing the cycle (would have caught the cycle-6.22.a misreading in 5 minutes).
+>
 > **New methodology finding (cycle-6.4–6.11 sequence)**: 7 of 8 lifts were over-bundled in the original Step 6.0–6.3 work. The original plan classified lifts by the union-bound shape implied by an axiom count; the actual probabilistic-failure modes in each classical proof are fewer than the axiom count suggests. The terminal lift (5-summand union bound in the original) has only one probabilistic-failure mode (Groth16-soundness) under the current carrier model — the other 4 axioms are consumed unconditionally in the classical proof and do not lift to probabilistic hypotheses. Worth back-porting to colosseum methodology v0.2 as a new ask: **bundle-count derivation must come from per-conjunct failure-mode analysis of the classical proof, not from a static axiom-count classifier**.
 >
 > Specific retractions remain inline below, each marked with `[RETRACTED 2026-05-14]`. The corrective trail across initial retraction → cycle 6.4–6.11 sequence is visible in `.colosseum/changes/2026-05-14T*-cycle-6.{4..11}-*.md`. See also the synthesis at `.colosseum/attacks/lean-negl-lifts-2026-05-14/synthesis.md`.
@@ -74,11 +76,11 @@ Categories: **(a)** demotable-to-def-or-dead · **(b)** demotable-to-derived-the
 | ~~5~~ | ~~`DomainSep : Type`~~ — **refined to `abbrev DomainSep := List UInt8` (cycle 6.20, 2026-05-20)** | UserDataCommit | – | – | – | – |
 | ~~6~~ | ~~`Addr : Type`~~ — **refined to `abbrev Addr := String` (cycle 6.20, 2026-05-20)** | UserDataCommit | – | – | – | – |
 | ~~7~~ | ~~`Nonce : Type`~~ — **refined to `abbrev Nonce := BitVec 256` (cycle 6.16, 2026-05-20)** | UserDataCommit | – | – | – | – |
-| 8 | `commitHashE : UserDataCommit ↪ UserData` | UserDataCommit | (d) | pigeonhole-impossible (type-level visible post-cycle 6.18) | replace with `randomOracle` over `BitVec 512` + birthday bound (cycle 6.22, queued) | classical chain (4 theorems); shadowed in `_negl` by `CommitHashCollisionAdv` hypothesis |
+| 8 | `commitHashE : UserDataCommit ↪ UserData` | UserDataCommit | (d) | pigeonhole-impossible (type-level visible post-cycle 6.18) | `randomOracle` over `BitVec 512` + birthday bound (cycle 6.22.a/b landed 2026-05-23; log-collision bound proven, win-pred lift queued as 6.22.c) | classical chain (4 theorems); shadowed in `_negl` by `CommitHashCollisionAdv` hypothesis |
 | ~~9~~ | ~~`ByteSeq : Type`~~ — **refined to `abbrev ByteSeq := List UInt8` (cycle 6.20, 2026-05-20)** | RawMessages | – | – | – | – |
 | 10 | `serializeRawSessionCreateE : RawSessionCreate ↪ ByteSeq` | RawMessages | (c) | genuine injectivity | serde_json byte layout determinism on fixed struct schema | classical chain only |
 | 11 | `serializeRawSessionSetPubKeyE : RawSessionSetPubKey ↪ ByteSeq` | RawMessages | (c) | genuine injectivity | serde_json byte layout determinism on fixed struct schema | classical chain + cross_component_session_bind `_classical` + terminal `_negl` |
-| 12 | `commitHashBytesE : ByteSeq ↪ UserData` | RawMessages | (d) | pigeonhole-impossible (type-level visible post-cycle 6.18) | replace with `randomOracle` over `BitVec 512` + birthday bound (cycle 6.22, queued) | classical chain (3 theorems); shadowed in `_negl` by `CommitHashBytesCollisionAdv` hypothesis |
+| 12 | `commitHashBytesE : ByteSeq ↪ UserData` | RawMessages | (d) | pigeonhole-impossible (type-level visible post-cycle 6.18) | `randomOracle` over `BitVec 512` + birthday bound (cycle 6.22.a/b landed 2026-05-23; log-collision bound proven, win-pred lift queued as 6.22.c) | classical chain (3 theorems); shadowed in `_negl` by `CommitHashBytesCollisionAdv` hypothesis |
 | ~~13~~ | ~~`rawDomainSep : DomainSep`~~ — **demoted to `def rawDomainSep := "QUARTZ-HS-V1".toUTF8.toList` (cycle 6.20, 2026-05-20)** | RawMessages | – | – | – | – |
 | ~~14~~ | ~~`rawBoundContract : Addr`~~ — **demoted to `def rawBoundContract := "xion1quartzdeploymentaddress"` (cycle 6.20, 2026-05-20)** | RawMessages | – | – | – | – |
 | ~~15~~ | ~~`rawPlaceholderPubKey : PubKey`~~ — **demoted to `def rawPlaceholderPubKey := (0 : BitVec 264)` (cycle 6.20, 2026-05-20)** | RawMessages | – | – | – | – |
@@ -99,10 +101,10 @@ Categories: **(a)** demotable-to-def-or-dead · **(b)** demotable-to-derived-the
 | # | Axiom | Bucket | Status |
 |---|---|---|---|
 | 4 | `keyOf` | (c) | k256 deterministic key derivation function signature |
-| 8 | `commitHashE` | (d) | pigeonhole-impossible; cycle 6.22 queued |
+| 8 | `commitHashE` | (d) | pigeonhole-impossible; cycle 6.22.b log-collision bound proven 2026-05-23; 6.22.c win-pred lift queued |
 | 10 | `serializeRawSessionCreateE` | (c) | serde_json injectivity |
 | 11 | `serializeRawSessionSetPubKeyE` | (c) | serde_json injectivity |
-| 12 | `commitHashBytesE` | (d) | pigeonhole-impossible; cycle 6.22 queued |
+| 12 | `commitHashBytesE` | (d) | pigeonhole-impossible; cycle 6.22.b log-collision bound proven 2026-05-23; 6.22.c win-pred lift queued |
 | 16 | `userDataOfSessionSetPubKey_eq_commitHash` | (c) | bridge equality |
 | 17 | `userDataOfSessionCreate_eq_commitHash` | (c) | bridge equality |
 | 21 | `was_signed_by_dstack` | (c) | off-chain reality witness |
@@ -114,7 +116,7 @@ Categories: **(a)** demotable-to-def-or-dead · **(b)** demotable-to-derived-the
 - **(a) demotable-to-def-or-dead** — 0 (all three closed by cycle 6.20: `rawDomainSep`, `rawBoundContract`, `rawPlaceholderPubKey` demoted to `def`s with concrete values)
 - **(b) demotable-to-derived-theorem** — 0 (all demotables of this kind were already discharged in Steps 1-5: `roundtrip`, `commitHash_inj`, `commitHashBytes_inj`, `serializeRaw*_inj`, `verifyTdxQuote_sound`/`_complete`, `verifyGroth16_sound`)
 - **(c) honest-computational-assumption** — 6 (2 serde_json genuine-injectivity + 2 bridge equalities + `keyOf` function signature + `was_signed_by_dstack` off-chain witness)
-- **(d) impossibility-or-over-strength** — 4 (`commitHashE`, `commitHashBytesE`, `tdxVerifier`, `groth16Verifier`); each shadowed at content layer by parametric `_negl` hypothesis. `commitHashE`/`commitHashBytesE` substantive closure via VCV-io `randomOracle` + birthday bound queued as cycle 6.22.
+- **(d) impossibility-or-over-strength** — 4 (`commitHashE`, `commitHashBytesE`, `tdxVerifier`, `groth16Verifier`); each shadowed at content layer by parametric `_negl` hypothesis. `commitHashE`/`commitHashBytesE` substantive closure via VCV-io `randomOracle` + birthday bound: cycle 6.22.a/b landed 2026-05-23 (log-collision bound proven, axiom closure `{propext, Classical.choice, Quot.sound}` only); win-pred lift to consumer-facing advantage shape queued as 6.22.c.
 
 ### Sub-bucket (d) sub-taxonomy
 
