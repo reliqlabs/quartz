@@ -188,10 +188,29 @@ pub mod execute {
         // Store state
         STATE.save(deps.storage, &msg.ciphertext)?;
 
-        // Clear queue
+        // Clear queue.
+        //
+        // **Round C #17 / Round E Critical 2 fix (2026-05-21)**: the
+        // previous `requests.drain(0..msg.quantity as usize)` would panic
+        // (inside Vec::drain's out-of-bounds slicing) if `msg.quantity`
+        // exceeded the queue length. That divergence between the Rust
+        // contract and the Quint spec (which processed a single request
+        // per update) was flagged by both Round C adversarial review
+        // (#17 single-vs-drain) and Round E (Critical 2, three voices).
+        //
+        // The defensive helper `safe_drain_len` in
+        // `examples/transfers/contracts/src/state.rs` (mod
+        // spec_harnesses, Kani-verified) returns `Option<usize>` —
+        // `None` on out-of-bounds. Production now uses the same
+        // bounds check and rejects with BadLength on failure rather
+        // than panicking.
         let mut requests: Vec<Request> = REQUESTS.load(deps.storage)?;
 
-        requests.drain(0..msg.quantity as usize);
+        let quantity = msg.quantity as usize;
+        if quantity > requests.len() {
+            return Err(ContractError::BadLength);
+        }
+        requests.drain(0..quantity);
 
         REQUESTS.save(deps.storage, &requests)?;
 
