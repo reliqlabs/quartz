@@ -17,6 +17,7 @@ import Specs.Quartz.Attestation.Dstack
 import Specs.Quartz.Attestation.DstackVCVio
 import Specs.Quartz.Attestation.Zkdcap
 import Specs.Quartz.Attestation.ZkdcapVCVio
+import Specs.Quartz.Attestation.DcapVerifier
 import Specs.Quartz.Protocol.Handshake
 import Specs.Quartz.Protocol.Confidentiality
 import Specs.Quartz.Protocol.CrossComponent
