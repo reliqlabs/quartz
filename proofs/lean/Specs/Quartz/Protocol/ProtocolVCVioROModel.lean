@@ -296,6 +296,112 @@ theorem commitHashBytesCollisionAdvRO_negligible_of_constant_qb
     · exact ENNReal.pow_ne_top (ENNReal.natCast_ne_top qb)
     · norm_num
 
+/-! ## Polynomial-qb negligibility (cycle 6.22.d.4 follow-up, finding #15)
+
+Real PPT adversaries scale their per-`n` query budget with the
+security parameter (typically polynomial in `n`). The
+`*_negligible_of_constant_qb` lemmas above only cover adversaries
+with a uniform constant query bound, which is a much weaker class.
+
+The lemmas below close that gap: given a per-`n` query budget
+`qb : ℕ → ℕ` bounded by a polynomial in `n`, the RO advantage is
+negligible. Composes the parameterised birthday bound with VCV-io's
+`negligible_polynomial_mul`. -/
+
+/-- **Per-`n` query-budget variant of the birthday bound**. Given an
+    adversary with per-`n` query budget `qb n`, the per-`n` advantage
+    is bounded by `(qb n)²/(2·2^n)`. -/
+theorem commitHashCollisionAdvRO_le_birthday_bound_per_n
+    (𝒜 : CommitHashCollisionAdvRO) (qb : ℕ → ℕ)
+    (hbound : ∀ n, IsTotalQueryBound (𝒜 n) (qb n)) (n : Nat) :
+    commitHashCollisionAdvRO 𝒜 n ≤ ((qb n) ^ 2 : ℝ≥0∞) / (2 * 2 ^ n) :=
+  commitHash_logCollision_birthday_bound n (𝒜 n) (qb n) (hbound n)
+
+/-- **Negligibility for polynomial query budgets**: given an adversary
+    whose per-`n` query budget is bounded by a polynomial `p`, the RO
+    advantage is negligible.
+
+    Closes cycle-6.22.d.4 adversarial-review finding #15. -/
+theorem commitHashCollisionAdvRO_negligible_of_polynomial_qb
+    (𝒜 : CommitHashCollisionAdvRO) (qb : Nat → Nat)
+    (p : Polynomial Nat) (hp_bound : ∀ n : Nat, qb n ≤ p.eval n)
+    (hbound : ∀ n : Nat, IsTotalQueryBound (𝒜 n) (qb n)) :
+    negligible (commitHashCollisionAdvRO 𝒜) := by
+  -- Let q : Polynomial Nat be p², so q.eval n = (p.eval n)² for all n.
+  set q : Polynomial Nat := p * p with hq_def
+  have hq_eval : ∀ n : Nat, q.eval n = (p.eval n) * (p.eval n) := fun n => by
+    rw [hq_def, Polynomial.eval_mul]
+  refine negligible_of_le
+    (fun n => commitHashCollisionAdvRO_le_birthday_bound_per_n 𝒜 qb hbound n) ?_
+  -- (qb n)² / (2·2^n) ≤ (q.eval n) / (2·2^n) and the RHS is negligible.
+  refine negligible_of_le
+    (g := fun n => ((q.eval n : ℕ) : ℝ≥0∞) / (2 * 2 ^ n)) ?_ ?_
+  · intro n
+    apply ENNReal.div_le_div_right
+    rw [show ((q.eval n : ℕ) : ℝ≥0∞) = ((p.eval n : ℕ) : ℝ≥0∞) * ((p.eval n : ℕ) : ℝ≥0∞) from by
+      rw [hq_eval n]; push_cast; ring]
+    rw [sq]
+    exact mul_le_mul' (Nat.cast_le.mpr (hp_bound n)) (Nat.cast_le.mpr (hp_bound n))
+  · refine negligible_of_le
+      (g := fun n => (((q.eval n : ℕ) : ℝ≥0∞) * ((2 : ℝ≥0∞) ^ n)⁻¹) * 2⁻¹) ?_ ?_
+    · intro n
+      have hinv : ((2 : ℝ≥0∞) * 2 ^ n)⁻¹ = (2 : ℝ≥0∞)⁻¹ * (2 ^ n)⁻¹ := by
+        apply ENNReal.mul_inv (Or.inl (by norm_num))
+        exact Or.inl (by norm_num)
+      rw [div_eq_mul_inv, hinv]
+      ring_nf
+      exact le_refl _
+    · -- Goal: negligible (fun n => q.eval n * (1/2^n) * (1/2))
+      have h1 : negligible (fun n => ((q.eval n : ℕ) : ℝ≥0∞) * ((2 : ℝ≥0∞) ^ n)⁻¹) :=
+        negligible_polynomial_mul negligible_inv_two_pow q
+      have h2 : negligible (fun n => (2⁻¹ : ℝ≥0∞) *
+          (((q.eval n : ℕ) : ℝ≥0∞) * ((2 : ℝ≥0∞) ^ n)⁻¹)) :=
+        negligible_const_mul h1 (by norm_num)
+      exact h2.congr (fun n => by ring)
+
+/-- Byte-domain analogue. -/
+theorem commitHashBytesCollisionAdvRO_le_birthday_bound_per_n
+    (𝒜 : CommitHashBytesCollisionAdvRO) (qb : ℕ → ℕ)
+    (hbound : ∀ n, IsTotalQueryBound (𝒜 n) (qb n)) (n : Nat) :
+    commitHashBytesCollisionAdvRO 𝒜 n ≤ ((qb n) ^ 2 : ℝ≥0∞) / (2 * 2 ^ n) :=
+  commitHashBytes_logCollision_birthday_bound n (𝒜 n) (qb n) (hbound n)
+
+/-- Byte-domain analogue of
+    `commitHashCollisionAdvRO_negligible_of_polynomial_qb`. -/
+theorem commitHashBytesCollisionAdvRO_negligible_of_polynomial_qb
+    (𝒜 : CommitHashBytesCollisionAdvRO) (qb : Nat → Nat)
+    (p : Polynomial Nat) (hp_bound : ∀ n : Nat, qb n ≤ p.eval n)
+    (hbound : ∀ n : Nat, IsTotalQueryBound (𝒜 n) (qb n)) :
+    negligible (commitHashBytesCollisionAdvRO 𝒜) := by
+  set q : Polynomial Nat := p * p with hq_def
+  have hq_eval : ∀ n : Nat, q.eval n = (p.eval n) * (p.eval n) := fun n => by
+    rw [hq_def, Polynomial.eval_mul]
+  refine negligible_of_le
+    (fun n => commitHashBytesCollisionAdvRO_le_birthday_bound_per_n 𝒜 qb hbound n) ?_
+  refine negligible_of_le
+    (g := fun n => ((q.eval n : ℕ) : ℝ≥0∞) / (2 * 2 ^ n)) ?_ ?_
+  · intro n
+    apply ENNReal.div_le_div_right
+    rw [show ((q.eval n : ℕ) : ℝ≥0∞) = ((p.eval n : ℕ) : ℝ≥0∞) * ((p.eval n : ℕ) : ℝ≥0∞) from by
+      rw [hq_eval n]; push_cast; ring]
+    rw [sq]
+    exact mul_le_mul' (Nat.cast_le.mpr (hp_bound n)) (Nat.cast_le.mpr (hp_bound n))
+  · refine negligible_of_le
+      (g := fun n => (((q.eval n : ℕ) : ℝ≥0∞) * ((2 : ℝ≥0∞) ^ n)⁻¹) * 2⁻¹) ?_ ?_
+    · intro n
+      have hinv : ((2 : ℝ≥0∞) * 2 ^ n)⁻¹ = (2 : ℝ≥0∞)⁻¹ * (2 ^ n)⁻¹ := by
+        apply ENNReal.mul_inv (Or.inl (by norm_num))
+        exact Or.inl (by norm_num)
+      rw [div_eq_mul_inv, hinv]
+      ring_nf
+      exact le_refl _
+    · have h1 : negligible (fun n => ((q.eval n : ℕ) : ℝ≥0∞) * ((2 : ℝ≥0∞) ^ n)⁻¹) :=
+        negligible_polynomial_mul negligible_inv_two_pow q
+      have h2 : negligible (fun n => (2⁻¹ : ℝ≥0∞) *
+          (((q.eval n : ℕ) : ℝ≥0∞) * ((2 : ℝ≥0∞) ^ n)⁻¹)) :=
+        negligible_const_mul h1 (by norm_num)
+      exact h2.congr (fun n => by ring)
+
 /-! ## RO-form packagings discharging collision-resistance internally
 
 These are the first packagings in the project that derive

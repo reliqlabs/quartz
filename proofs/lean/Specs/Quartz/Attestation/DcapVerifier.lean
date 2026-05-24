@@ -217,12 +217,54 @@ opaque verifyAttestationKeyBinding (qeReport : BitVec (384 * 8))
     (attestationKey : BitVec 512) : Bool
 
 /-- Check that the TCB level reported by the quote meets the
-    collateral's TCB threshold. -/
-opaque checkTcbLevel (q : DcapQuote) (info : TcbInfo) : Bool
+    collateral's TCB threshold.
+
+    **Cycle 7.2.b implementation**: walks `info.tcbLevels` looking for a
+    level entry whose `svns` field matches `q.body.teeTcbSvn` bytewise
+    AND whose `status` is `UpToDate` (the deployed-policy threshold).
+
+    The match predicate is "the quote's TCB SVN equals at least one
+    `UpToDate` entry in the collateral's TCB info". Production zkdcap
+    additionally accepts `SWHardeningNeeded` and `ConfigurationNeeded`;
+    Quartz's stance is strict (`UpToDate` only) — auditable here.
+
+    Note: this substep is *structural* — given a parsed quote and a
+    parsed collateral bundle, it returns a Bool decision. It does NOT
+    verify the collateral's signature (that's `verifyX509Chain` plus
+    `verifyEcdsaP256` on the TCB-info signing key, a separate substep). -/
+def checkTcbLevel (q : DcapQuote) (info : TcbInfo) : Bool :=
+  -- Convert q.body.teeTcbSvn (BitVec 128 = 16 bytes) to a byte list for
+  -- comparison against the collateral's per-level svns field.
+  let quoteSvns : RawBytes :=
+    (List.range 16).map (fun i => UInt8.ofNat ((q.body.teeTcbSvn.toNat >>> (i * 8)) &&& 0xff))
+  info.tcbLevels.any (fun lvl =>
+    lvl.svns = quoteSvns ∧ lvl.status = "UpToDate".toUTF8.toList)
 
 /-- Check that the QE identity reported by the quote matches the
-    collateral's QE identity (MRSIGNER + product ID + SVN min). -/
-opaque checkQeIdentity (q : DcapQuote) (qe : QeIdentity) : Bool
+    collateral's QE identity (MRSIGNER + product ID + SVN min).
+
+    **Cycle 7.2.b implementation**: extracts the QE report's MRSIGNER
+    (SGX report offset 128..160), ISVPRODID (offset 256..258), ISVSVN
+    (offset 258..260) from the 384-byte QE report blob and compares
+    against the collateral's `qe.mrsigner`, `qe.isvProdId`, `qe.isvSvnMin`
+    fields. The SVN check is `>=` against the minimum (production-aligned).
+
+    Reference: Intel SGX Architectural Enclaves Service Manager spec,
+    SGX_REPORT_BODY layout. -/
+def checkQeIdentity (q : DcapQuote) (qe : QeIdentity) : Bool :=
+  let report := q.authData.qeReport
+  -- Extract MRSIGNER (32 bytes at offset 128..160 in SGX report body).
+  let mrsigner : BitVec 256 :=
+    BitVec.ofNat 256 ((report.toNat >>> (128 * 8)) &&& ((1 <<< 256) - 1))
+  -- Extract ISVPRODID (2 bytes at offset 256..258, little-endian).
+  let isvProdId : BitVec 16 :=
+    BitVec.ofNat 16 ((report.toNat >>> (256 * 8)) &&& 0xffff)
+  -- Extract ISVSVN (2 bytes at offset 258..260, little-endian).
+  let isvSvn : BitVec 16 :=
+    BitVec.ofNat 16 ((report.toNat >>> (258 * 8)) &&& 0xffff)
+  decide (mrsigner = qe.mrsigner) &&
+  decide (isvProdId = qe.isvProdId) &&
+  decide (isvSvn.toNat ≥ qe.isvSvnMin.toNat)
 
 /-! ## Reference verifier
 
