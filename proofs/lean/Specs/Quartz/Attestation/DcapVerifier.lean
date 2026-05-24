@@ -243,8 +243,14 @@ opaque qeReportBytes : BitVec (384 * 8) → RawBytes
     verify the collateral's signature (that's `verifyX509Chain` plus
     `verifyEcdsaP256` on the TCB-info signing key, a separate substep). -/
 def checkTcbLevel (q : DcapQuote) (info : TcbInfo) : Bool :=
-  -- Convert q.body.teeTcbSvn (BitVec 128 = 16 bytes) to a byte list for
-  -- comparison against the collateral's per-level svns field.
+  -- **Endianness assumption (cycle 7.x adversarial finding #8)**:
+  -- parseDcapQuote is opaque, so the wire-byte → BitVec 128 packing
+  -- convention is not externally pinned. This function assumes
+  -- *little-endian* byte packing: wire byte 0 of teeTcbSvn maps to
+  -- the LOW 8 bits of the BitVec, and byte i = `(teeTcbSvn.toNat >>>
+  -- (i*8)) &&& 0xff`. Production parseDcapQuote MUST match this
+  -- convention; mismatch silently reverses the byte order and the
+  -- comparison fails against the collateral.
   let quoteSvns : RawBytes :=
     (List.range 16).map (fun i => UInt8.ofNat ((q.body.teeTcbSvn.toNat >>> (i * 8)) &&& 0xff))
   info.tcbLevels.any (fun lvl =>
@@ -587,7 +593,20 @@ axiom dcapVerifier_complete (n : Nat) (q : RawBytes) (col : Collateral) :
     to standard cryptographic assumptions (PCK-signature
     unforgeability, X.509 chain trust, collateral freshness)
     rather than a single bundled tdxVerifier axiom that hid all
-    of them in one place. -/
+    of them in one place.
+
+    **Cycle 7.x adversarial finding #15 caveat**: this bridge closes
+    over `h_fresh : freshCollateral col` at construction time and
+    invokes it inside the `complete` field. But the consumer interface
+    `TdxVerifier.complete : was_signed_by_dstack q → ∃ mr ud, ...` has
+    no temporal precondition, so a caller could invoke
+    `(dcapTdxVerifier n col h_fresh).complete` long after `col`
+    expired. The bridge silently strengthens classical-Prop completeness
+    to "fresh-at-construction implies always-complete", which is
+    over-strong against cryptographic reality (TCB info has a finite
+    next-update window). Documented; the dstack production flow
+    rotates collateral within the next-update window, but the spec
+    does not enforce that. -/
 noncomputable def dcapTdxVerifier (n : Nat) (col : Collateral)
     (h_fresh : freshCollateral col) : TdxVerifier n where
   verify q := verifyDcap n q col
