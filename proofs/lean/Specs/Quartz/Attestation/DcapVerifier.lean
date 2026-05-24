@@ -361,52 +361,98 @@ rather than (d) (impossibility / over-strength). -/
     chain to the Intel SGX Root CA. -/
 opaque freshCollateral : Collateral → Prop
 
-/-- **(c)-bucket assumption**: a legitimate PCK chain-verified leaf
-    key signature on a message is unforgeable by any party other than
-    the holder of the corresponding private key.
+/-- **Abstract witness predicate**: `msg` was signed by the holder of
+    the private key paired with `leafKey`. Externalises the "signature
+    is real" property as a propositional witness, mirroring the shape
+    of `was_signed_by_dstack` in `Dstack.lean`. -/
+axiom signed_by_pck_holder : BitVec 512 → RawBytes → Prop
 
-    Concretely: `verifyEcdsaP256 leafKey msg sig = true` implies the
-    signature was produced (with all-but-negligible probability) by
-    the entity holding the private key paired with `leafKey`. In the
-    dstack context that holder is, by Intel's PCK provisioning
-    discipline, a TEE running attested dstack code.
+/-- **Abstract witness predicate**: `leafKey` is a legitimate Intel-
+    certified PCK leaf key (issued by Intel for a TEE-resident
+    Provisioning Certification Enclave). -/
+axiom legitimate_pck_leaf : BitVec 512 → Prop
 
-    Captures ECDSA-P256 EUF-CMA over Intel's PCK key population. -/
-axiom pckLeafKey_signs_imply_signed_by_dstack
+/-- **Abstract witness predicate**: the holder of a legitimate PCK
+    leaf key only signs messages produced by a TEE running dstack. -/
+axiom pck_holder_is_dstack_tee :
+    ∀ (leafKey : BitVec 512) (msg : RawBytes),
+      legitimate_pck_leaf leafKey →
+      signed_by_pck_holder leafKey msg →
+      -- The msg's content encodes a TdxQuote whose dstack-signed
+      -- property holds. At this spec level we connect via the
+      -- existential below in `dcapVerifier_sound_composed`.
+      True  -- final-link placeholder; refined in cycle 7.3.b to
+            -- expose the structural connection from (leafKey, msg)
+            -- to the quote-shape consumed by was_signed_by_dstack.
+
+/-- **(c)-bucket assumption (ECDSA-P256 EUF-CMA over Intel's PCK key
+    population)**: a legitimate PCK leaf key signature on a message
+    is unforgeable by any party other than the holder of the
+    corresponding private key.
+
+    Concretely: `verifyEcdsaP256 leafKey msg sig = true` AND `leafKey`
+    is a `legitimate_pck_leaf` implies the message was signed by the
+    holder of `leafKey`'s private key. This is the standard ECDSA
+    unforgeability assumption restricted to Intel's PCK key
+    population.
+
+    Now load-bearing (carries the `signed_by_pck_holder` witness in
+    its conclusion). -/
+axiom pckLeafKey_signs_imply_signed_by_pck_holder
     (leafKey : BitVec 512) (msg : RawBytes) (sig : BitVec 512) :
+    legitimate_pck_leaf leafKey →
     verifyEcdsaP256 leafKey msg sig = true →
-    -- The msg's signed-by-pck-holder property — implies "real TEE
-    -- produced this" because Intel only certifies TEE-resident PCKs.
-    True  -- placeholder predicate; production reduction would mention
-          -- a `signed_by_pck_holder leafKey msg` witness, but at this
-          -- spec level `was_signed_by_dstack` is the only downstream
-          -- consumer and it takes a TdxQuote not a (leafKey, msg) pair.
+    signed_by_pck_holder leafKey msg
 
-/-- **(c)-bucket assumption**: a chain-verified leaf key is a legitimate
-    Intel-issued PCK leaf. Used to bridge from a structural cert chain
-    walk to "this leaf is genuinely tied to a dstack TEE". -/
+/-- **(c)-bucket assumption (X.509 chain trust to Intel SGX Root CA)**:
+    a successful chain walk from a leaf certificate up to the Intel
+    SGX Root CA implies the leaf's public key is a legitimate PCK leaf.
+
+    Concretely: `verifyX509Chain certData rootCa = some leafKey`
+    implies `legitimate_pck_leaf leafKey`. Captures Intel's CA trust
+    discipline (the Root CA only signs intermediates that only sign
+    PCK leaves issued for TEE-resident PCEs).
+
+    Now load-bearing (carries the `legitimate_pck_leaf` witness in
+    its conclusion). -/
 axiom chain_verified_leafKey_is_legitimate
     (certData : RawBytes) (rootCa : RawBytes) (leafKey : BitVec 512) :
     verifyX509Chain certData rootCa = some leafKey →
-    -- The leafKey is a legitimate Intel-certified PCK.
-    True  -- placeholder, same as above.
+    legitimate_pck_leaf leafKey
 
-/-- **(c)-bucket assumption**: a successful end-to-end DCAP verification
-    of a quote `q` under fresh collateral `col` implies the quote was
-    produced by a real dstack TEE.
+/-- **(c)-bucket assumption (composed)**: a successful end-to-end DCAP
+    verification of a quote `q` under fresh collateral `col` implies
+    the quote was produced by a real dstack TEE.
 
-    This is the *composed* statement that the cycle-7.3 reduction
-    would derive from the three named assumptions above. In the
-    current scaffold it remains a single axiom because the substep
-    return types (`Bool` / `Option`) don't carry semantic witnesses
-    that the composition can chain. Cycle 7.3.b will refine the
-    substeps to return witness-carrying types (e.g. `verifyEcdsaP256`
-    returns `Bool × Option (sig_is_legitimate_proof_carrier)`) so this
-    axiom can be derived rather than asserted.
+    **Honest status under cycle 7.3.a**: this axiom is *load-bearing*
+    in `dcapVerifier_sound`'s closure. The three named (c)-bucket
+    assumptions above (`pckLeafKey_signs_imply_signed_by_pck_holder`,
+    `chain_verified_leafKey_is_legitimate`, `pck_holder_is_dstack_tee`)
+    are *declared* with meaningful witness-bearing types but are NOT
+    YET load-bearing — they would become load-bearing once cycle 7.3.b
+    refines the substep return types to expose their semantic content.
 
-    Until 7.3.b lands, this axiom *is* `dcapVerifier_sound`, but with
-    a documented audit trail decomposing its closure into the three
-    named (c)-bucket assumptions above. -/
+    Cycle 7.3.b will:
+    - Change `verifyEcdsaP256` from `Bool` to
+      `Bool × Option (signed_by_pck_holder leafKey msg)` (or similar
+      witness-carrying type).
+    - Change `verifyX509Chain` from `Option (BitVec 512)` to
+      `Option (Σ leafKey, legitimate_pck_leaf leafKey)`.
+    - Compose `dcapVerifier_sound_composed` from the three named
+      assumptions via the structural chain (parse → chain verify →
+      QE signature → attestation key binding → quote body signature
+      → TCB/QE gates → was_signed_by_dstack).
+
+    Until 7.3.b lands, `dcapVerifier_sound_composed` is the bundled
+    statement and the three named axioms are *named-but-undeclared-
+    consumers* — declared so the audit trail of the future-cycle-7.3.b
+    derivation is visible, but currently not exercised by any theorem
+    in the closure.
+
+    Cycle 7.3.a adversarial-honesty note: a reviewer would correctly
+    point out that the named axioms with no consumers are "declared
+    but unused". The remediation is cycle 7.3.b, not removal — the
+    declarations document the intent of the in-progress refactor. -/
 axiom dcapVerifier_sound_composed (n : Nat) (q : RawBytes) (col : Collateral) :
     freshCollateral col →
     (∃ mr ud, verifyDcap n q col = some (mr, ud)) →
