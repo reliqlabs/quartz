@@ -84,7 +84,8 @@ axiom serializeResolveMessage_inj :
 
     composed with the trailing-32-byte-zero padding the Rust code
     applies. `noncomputable` because `commitHashBytes` is an axiom. -/
-noncomputable def userDataOfResolveMessage (n : Nat) (m : ResolveMessage) : UserData n :=
+noncomputable def userDataOfResolveMessage (n : Nat) (m : ResolveMessage) :
+    UserData n :=
   commitHashBytes n (serializeResolveMessage m)
 
 /-- **Structural correspondence**: distinct `ResolveMessage`s

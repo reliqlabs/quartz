@@ -42,10 +42,32 @@ indexed by `n`, so the "fixed-size" form is just the instantiation at
 * Asymptotic negligibility infrastructure: `negligible_inv_two_pow`
   (lifted from Mathlib's `tendsto_pow_const_div_const_pow_of_one_lt`)
   and `*CollisionAdvRO_negligible_of_constant_qb`.
-* Four RO-form packagings — the first packagings in the project that
-  discharge collision-resistance internally rather than assuming it.
-* Four connection theorems wiring the existing protocol-layer lifts
-  through the new packagings.
+* Four RO-form packagings that *can* discharge collision-resistance
+  internally via the cycle-6.22 birthday bound — when invoked with a
+  real query-bounded `CommitHashCollisionAdvRO` adversary. The packaging
+  signature requires the caller to supply the adversary and the query
+  budget; negligibility comes from the proven birthday bound.
+* Four connection theorems (`*_secure_via_RO_packaging`) demonstrating
+  *type-shape compatibility* between the existing protocol-layer lifts
+  and the new RO packagings. The connection theorems supply a trivial
+  zero-query hash adversary (`qb := 0`) and zero-advantage TDX /
+  circuit-equivalence experiments, so the RO machinery does not exercise
+  the birthday bound on real adversaries — they are documentation-grade
+  demonstrations that the type shapes align, not substantive cryptographic
+  reductions. See the connection-theorem docstrings for the precise
+  framing.
+
+  **Cycle 6.22.d.4 adversarial-review caveat (findings #4/#5/#17/#22/#26)**:
+  the protocol-layer lifts (`bindsFailAdv`, `confFailAdv`, etc.) evaluate
+  the adversary under `simulateQ (protocolSpecHonestSim n)` (axiomatic
+  deterministic `commitHash`), while the RO packagings evaluate
+  `CommitHashCollisionAdvRO` adversaries under `simulateQ loggingOracle`
+  (uniformly-sampled fresh values per query). These are *different*
+  probability spaces; the connection theorems do not transport bounds
+  from one to the other. Genuine wiring between the lift and RO bounds
+  requires either (a) unifying the simulators (rewrite lifts to use
+  `randomOracle`), or (b) a separate reduction lemma. Neither is in this
+  module.
 -/
 
 namespace Specs.Quartz.Protocol.ProtocolVCVioROModel
@@ -384,7 +406,24 @@ theorem crossSessionBindFail_secure_of_quad_bundle_secure_RO
       (commitHashBytesCollisionAdvRO_negligible_of_constant_qb 𝒜hB qbhB hbound_𝒜hB))
     h_bound
 
-/-! ## Connection theorems wiring existing lifts through RO packagings -/
+/-! ## Connection theorems — type-shape compatibility demonstrations
+
+These four theorems re-derive each lift's conclusion through the
+corresponding RO-form packaging by supplying *trivial* hash adversaries
+(`qb := 0`, advantage identically 0) and zero-advantage TDX /
+circuit-equivalence experiments. They demonstrate that the type shape
+of the existing lift's conclusion fits the RO packaging's hypothesis
+schema, but they do **not** exercise the cycle-6.22 birthday bound
+on any real adversary, and they do **not** transport bounds between
+the lift's probability space (`simulateQ (protocolSpecHonestSim n)`,
+deterministic `commitHash`) and the RO packaging's probability space
+(`simulateQ loggingOracle`, fresh uniform samples). The two semantic
+spaces are incompatible without a separate reduction lemma; the
+connection theorems are documentation-grade, not load-bearing
+cryptographic content.
+
+Cycle 6.22.d.4 adversarial review findings #4/#5/#17/#22/#26 are the
+basis for this honest framing — see the module-level docstring above. -/
 
 /-- Re-derive `handshake_binds_ecies_key_negl`'s conclusion through the
     RO-form triple-bundle packaging. -/
@@ -552,11 +591,21 @@ theorem commitHashBytes_logCollision_birthday_bound_deployed
       (qb ^ 2 : ℝ≥0∞) / (2 * 2 ^ 512) :=
   commitHashBytes_logCollision_birthday_bound 512 oa qb hbound
 
-/-- **Concrete deployment-side bound on the RO advantage at `n = 512`**:
-    a commit-hash collision-finder issuing at most `qb` queries
-    achieves advantage `≤ qb²/(2·2^512)`. For polynomial `qb` this
-    is well within the negligibility envelope under any standard
-    security definition. -/
+/-- **Deployment-size bound at `n = 512`**: parametric inequality
+    `commitHashCollisionAdvRO 𝒜 512 ≤ qb²/(2·2^512)` for any
+    commit-hash collision-finder with query budget `qb`. Direct
+    instantiation of the parameterised bound at the deployed width.
+
+    **No claim about negligibility envelope is made here**: the bound
+    is informative only when `qb² ≪ 2^512` (i.e. `qb ≪ 2^256`). At
+    `qb ≥ 2^256` the RHS exceeds 1 and the bound is vacuous. Deployment-
+    side audits must supply a concrete `qb` budget (derived from the
+    adversary's runtime envelope on the dstack TEE) to interpret the
+    bound numerically.
+
+    Cycle 6.22.d.4 adversarial-review finding #9: the previous docstring
+    asserted "well within the negligibility envelope under any standard
+    security definition" without a `qb` bound. Retracted. -/
 theorem commitHashCollisionAdvRO_deployed_bound
     (𝒜 : CommitHashCollisionAdvRO) (qb : ℕ)
     (hbound : ∀ n, IsTotalQueryBound (𝒜 n) qb) :

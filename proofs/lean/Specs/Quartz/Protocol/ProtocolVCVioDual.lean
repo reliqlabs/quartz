@@ -326,27 +326,15 @@ theorem handshake_sound_negl
     negligible (handshakeFailAdv 𝒜) := by
   refine negligible_of_le ?_ h_groth_negl
   intro n
-  -- Goal (post-cycle-6.13): handshakeFailAdv 𝒜 n ≤
-  --   groth16SoundnessAdv (reduce_handshake_to_groth 𝒜) n
-  -- where both advantages route through `simulateQ protocolSpecHonestSim`.
   show Pr[ handshakeSoundnessWinPred |
               simulateQ (protocolSpecHonestSim n) (𝒜 n) ] ≤
        Pr[ groth16SoundnessWinPred |
               simulateQ (protocolSpecHonestSim n)
                 (reduce_handshake_to_groth 𝒜 n) ]
-  -- Unfold the reduction, then push `simulateQ` through `bind`/`pure`
-  -- so the RHS reduces to `Pr[winPred ∘ proj | simulateQ sim (𝒜 n)]`
-  -- via `probEvent_bind_pure_comp` at the ProbComp level.
   rw [show reduce_handshake_to_groth 𝒜 n
         = 𝒜 n >>= pure ∘ (fun h : HandshakeCheck n => (h.proof, h.inputs))
         from rfl]
-  -- `simulateQ` is a monad morphism, so it distributes through
-  -- `bind`/`pure`; pre-simp the reduction already exposes the
-  -- `<$>`/`map` form (via `← map_eq_bind_pure_comp`). After
-  -- `simulateQ_map` + `probEvent_map`, the RHS becomes
-  -- `Pr[winPred ∘ proj | simulateQ sim (𝒜 n)]`.
   simp only [← map_eq_bind_pure_comp, simulateQ_map, probEvent_map]
-  -- LHS ≤ RHS by probEvent_mono using the forward implication.
   exact probEvent_mono (fun h _ hp =>
     handshakeSoundnessWinPred_imp_groth16SoundnessWinPred_projected h hp)
 

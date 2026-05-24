@@ -259,7 +259,8 @@ noncomputable def verifyTdxQuote (n : Nat) (q : TdxQuote) :
     consumers should eventually migrate to the
     `tdxVerifier_soundness_negl` shape sketched in
     `DstackVCVio.lean`. -/
-theorem verifyTdxQuote_sound (n : Nat) (q : TdxQuote) (mr : MrEnclave) (ud : UserData n) :
+theorem verifyTdxQuote_sound (n : Nat) (q : TdxQuote)
+    (mr : MrEnclave) (ud : UserData n) :
     verifyTdxQuote n q = some (mr, ud) → was_signed_by_dstack q :=
   (tdxVerifier n).sound q mr ud
 
@@ -285,11 +286,13 @@ theorem verifyTdxQuote_complete (n : Nat) (q : TdxQuote) :
 /-- Extract the user-data field from a successfully verified quote.
 
     Convenience wrapper used by composition theorems. -/
-noncomputable def userDataOf (n : Nat) (q : TdxQuote) : Option (UserData n) :=
+noncomputable def userDataOf (n : Nat) (q : TdxQuote) :
+    Option (UserData n) :=
   (verifyTdxQuote n q).map Prod.snd
 
 /-- Extract the measurement from a successfully verified quote. -/
-noncomputable def mrEnclaveOf (n : Nat) (q : TdxQuote) : Option MrEnclave :=
+noncomputable def mrEnclaveOf (n : Nat) (q : TdxQuote) :
+    Option MrEnclave :=
   (verifyTdxQuote n q).map Prod.fst
 
 /-- **Derived corollary**: if a quote verifies, both projections

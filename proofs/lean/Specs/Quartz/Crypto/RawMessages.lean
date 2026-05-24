@@ -282,7 +282,8 @@ noncomputable def commitHashBytes (n : Nat) (b : ByteSeq) : UserData n :=
     standard set-theoretic sense. Downstream theorems consuming
     this should eventually migrate to the random-oracle
     negligibility shape sketched in `RawMessagesVCVio.lean`. -/
-theorem commitHashBytes_inj (n : Nat) : Function.Injective (commitHashBytes n) := by
+theorem commitHashBytes_inj (n : Nat) :
+    Function.Injective (commitHashBytes n) := by
   intro a b h
   exact (commitHashBytesE n).injective h
 
@@ -296,11 +297,13 @@ theorem commitHashBytes_inj (n : Nat) : Function.Injective (commitHashBytes n) :
     `noncomputable` because `commitHashBytes` is derived from an
     axiom — the code generator cannot lower it, but it is still
     usable in proofs. -/
-noncomputable def userDataOfSessionCreate (n : Nat) (raw : RawSessionCreate) : UserData n :=
+noncomputable def userDataOfSessionCreate (n : Nat) (raw : RawSessionCreate) :
+    UserData n :=
   commitHashBytes n (serializeRawSessionCreate raw)
 
 /-- `user_data` produced by Quartz from a `RawSessionSetPubKey`. -/
-noncomputable def userDataOfSessionSetPubKey (n : Nat) (raw : RawSessionSetPubKey) : UserData n :=
+noncomputable def userDataOfSessionSetPubKey (n : Nat)
+    (raw : RawSessionSetPubKey) : UserData n :=
   commitHashBytes n (serializeRawSessionSetPubKey raw)
 
 /-- **Structural correspondence (SessionCreate)**: distinct Rust

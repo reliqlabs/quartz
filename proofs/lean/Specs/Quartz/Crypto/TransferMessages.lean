@@ -117,7 +117,8 @@ axiom serializeTransferRequest_inj :
     composed with the trailing-32-byte-zero padding the Rust code
     applies. Spec-level definition — `noncomputable` because
     `commitHashBytes` is an axiom. -/
-noncomputable def userDataOfTransferRequest (n : Nat) (req : TransferRequest) : UserData n :=
+noncomputable def userDataOfTransferRequest (n : Nat) (req : TransferRequest) :
+    UserData n :=
   commitHashBytes n (serializeTransferRequest req)
 
 /-- **Structural correspondence**: distinct `TransferRequest`s

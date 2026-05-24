@@ -322,7 +322,8 @@ noncomputable def verifyGroth16HonestSim :
     Used by every cycle-6.13+ lift to convert
     `𝒜 n : OracleComp ProtocolSpec T` into a `ProbComp T` over
     which `Pr[winPred | ...]` is well-defined. -/
-noncomputable def protocolSpecHonestSim (n : Nat) : QueryImpl (ProtocolSpec n) ProbComp :=
+noncomputable def protocolSpecHonestSim (n : Nat) :
+    QueryImpl (ProtocolSpec n) ProbComp :=
   ((commitHashHonestSim n + commitHashBytesHonestSim n) + verifyTdxQuoteHonestSim n)
     + verifyGroth16HonestSim
 

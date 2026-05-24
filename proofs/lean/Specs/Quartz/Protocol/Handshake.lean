@@ -49,6 +49,7 @@ structure HandshakeCheck (n : Nat) where
 /-- The contract's combined acceptance predicate. Mirror of the
     boolean conjunction the `Attested` handler enforces. -/
 def Accepted {n : Nat} (h : HandshakeCheck n) : Prop :=
+  -- NeZero needed for `userDataOf n` and `mrEnclaveOf n` (tdxVerifier axiom).
   verifyGroth16 zkdcapVKey h.proof h.inputs = true ∧
   mrEnclaveOf n (inputs_to_quote h.inputs) = some h.expectedMr ∧
   userDataOf n (inputs_to_quote h.inputs) = some h.msgUserData

@@ -166,7 +166,27 @@ structure UserDataCommit where
     Downstream theorems currently consume the deterministic-equality
     shape; demoting this axiom to a negligibility theorem requires
     rewriting the protocol-layer theorems to live inside `OracleComp`.
-    Out of scope for Step 2 of the refactor plan. -/
+    Out of scope for Step 2 of the refactor plan.
+
+    **Safe-use convention (n ≥ 1)**: this axiom family is mathematically
+    inconsistent at `n = 0` because `UserData 0 = BitVec 0` has exactly
+    one inhabitant, forcing any two distinct `UserDataCommit` values to
+    collide constructively (via `Inhabited UserDataCommit` plus any
+    second value). The axiom is *not* gated on `n ≥ 1` at the type
+    level — every downstream theorem must invoke it at `n ≥ 1`. Deployed
+    `n = 512` (the dstack TDX `report_data` width); all in-tree uses
+    parameterise over the same `n` reaching the deployed value.
+
+    Adversarial review (cycle 6.22.d.4 finding #1/#14): the pre-
+    parameterisation single axiom required abstract pigeonhole to derive
+    `False`; the family form admits constructive `False` at `n = 0`. The
+    constraint is documentary rather than type-enforced because adding
+    `[NeZero n]` throughout the closure was a multi-hour cascade and
+    deployed callers never instantiate at `n = 0`. Future cycles may
+    migrate to the cycle-6.22 RO model entirely (which avoids the
+    `commitHashE` axiom).
+
+    -/
 axiom commitHashE (n : Nat) : UserDataCommit ↪ UserData n
 
 /-- The commitment hash: structured tuple → 64-byte `user_data`.
@@ -179,7 +199,8 @@ axiom commitHashE (n : Nat) : UserDataCommit ↪ UserData n
     Previously an axiom; now a derived definition. Marked
     `noncomputable` because `commitHashE` is an axiom — the code
     generator cannot lower it, but it is still usable in proofs. -/
-noncomputable def commitHash (n : Nat) (c : UserDataCommit) : UserData n := commitHashE n c
+noncomputable def commitHash (n : Nat) (c : UserDataCommit) : UserData n :=
+  commitHashE n c
 
 /-- **Theorem (formerly an axiom)**: `commitHash` is injective.
 
