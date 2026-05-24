@@ -216,6 +216,16 @@ opaque verifyEcdsaP256 (pubKey : BitVec 512) (msg : RawBytes)
 opaque verifyAttestationKeyBinding (qeReport : BitVec (384 * 8))
     (attestationKey : BitVec 512) : Bool
 
+/-- **Bit-to-byte conversion** for the QE report. Converts the
+    bit-packed `BitVec (384 * 8)` to its `RawBytes` representation
+    consumed by `verifyEcdsaP256`. Opaque at this spec level — the
+    production conversion is little-endian byte unpacking that
+    downstream substeps depend on.
+
+    Moved from cycle 7.3.b's bridging-axiom section to here so
+    `verifyDcap` (below) can invoke it. -/
+opaque qeReportBytes : BitVec (384 * 8) → RawBytes
+
 /-- Check that the TCB level reported by the quote meets the
     collateral's TCB threshold.
 
@@ -278,7 +288,17 @@ deployed-format `(MrEnclave, UserData n)` pair on full success. -/
     image identity"; in TDX terms that is MRTD specifically. RTMRs are
     runtime measurements (firmware / kernel / initrd / compose_hash)
     and bind separately via the journal's `rtmr3` field (cycle-6.22
-    `expected_rtmr3` config option). -/
+    `expected_rtmr3` config option).
+
+    **Cycle 6.22.d.5 caveat (adversarial finding #5)**: the docstring
+    of `MrEnclave` in `Dstack.lean:147-148` describes the field as
+    "MRTD / RTMR composition", but production dstack as of 2026-05
+    uses MRTD alone for the `mr_enclave` field (RTMR composition is
+    in the separate `rtmr3 = SHA-384(compose_hash || ...)` journal
+    field, gated by the cycle-6.22 `expected_rtmr3` config). The
+    `Dstack.lean` docstring is misleading; the right spec-level
+    semantics are documented here and the dstack-side docstring
+    should be updated to match. -/
 def composeMrEnclave (body : TdReport10) : MrEnclave :=
   body.mrTd
 
@@ -286,17 +306,22 @@ def composeMrEnclave (body : TdReport10) : MrEnclave :=
 
     **Cycle 7.2 implementation**: deployed `n = 512` returns the raw
     64-byte `report_data` field directly (`Eq`-via-cast). For `n ≠ 512`
-    we truncate (if `n < 512`) or zero-extend (if `n > 512`); both are
-    structurally faithful, matching the deployer's choice of hash width
-    against the fixed 512-bit slot. -/
+    `BitVec.ofNat n body.reportData.toNat` handles both truncation
+    (`n < 512`: takes low `n` bits) and zero-extension (`n > 512`:
+    high bits are zero by `BitVec.ofNat`'s `mod 2^n` semantics) in one
+    operation.
+
+    **Cycle 6.22.d.5 caveat (adversarial finding #6)**: when `n < 512`
+    the projection is *silent low-bit truncation*. The dstack
+    deployment uses `n = 512` so the truncation case is not exercised
+    in production; the spec offers no precondition forbidding `n < 512`
+    callers. If the high bits of `report_data` encode load-bearing
+    content (e.g. attestation-key hash binding), `n < 512` callers
+    would silently lose them. Documented; the safe-use convention
+    `n = 512` matches deployment. -/
 noncomputable def projectUserData (n : Nat) (body : TdReport10) : UserData n :=
   if h : n = 512 then h ▸ body.reportData
-  else if n < 512 then
-    -- truncate: take low n bits
-    BitVec.ofNat n body.reportData.toNat
-  else
-    -- zero-extend: cast 512-bit to n-bit by zeroing high bits
-    BitVec.ofNat n body.reportData.toNat
+  else BitVec.ofNat n body.reportData.toNat
 
 /-- **Reference DCAP verifier**: structural decoding + all five
     crypto substeps + collateral gates. Returns `some (mr, ud)` only
@@ -314,9 +339,8 @@ noncomputable def verifyDcap (n : Nat) (rawQuote : RawBytes)
     match verifyX509Chain q.authData.certificateData col.rootCaCert with
     | none => none
     | some pckLeafPubKey =>
-      let qeReportBytes : RawBytes := []  -- bit-blast of q.authData.qeReport;
-                                          -- cycle 7.2 supplies the conversion
-      if !verifyEcdsaP256 pckLeafPubKey qeReportBytes q.authData.qeReportSignature
+      if !verifyEcdsaP256 pckLeafPubKey (qeReportBytes q.authData.qeReport)
+          q.authData.qeReportSignature
       then none
       else if !verifyAttestationKeyBinding q.authData.qeReport q.authData.attestationKey
       then none
@@ -372,18 +396,10 @@ axiom signed_by_pck_holder : BitVec 512 → RawBytes → Prop
     Provisioning Certification Enclave). -/
 axiom legitimate_pck_leaf : BitVec 512 → Prop
 
-/-- **Abstract witness predicate**: the holder of a legitimate PCK
-    leaf key only signs messages produced by a TEE running dstack. -/
-axiom pck_holder_is_dstack_tee :
-    ∀ (leafKey : BitVec 512) (msg : RawBytes),
-      legitimate_pck_leaf leafKey →
-      signed_by_pck_holder leafKey msg →
-      -- The msg's content encodes a TdxQuote whose dstack-signed
-      -- property holds. At this spec level we connect via the
-      -- existential below in `dcapVerifier_sound_composed`.
-      True  -- final-link placeholder; refined in cycle 7.3.b to
-            -- expose the structural connection from (leafKey, msg)
-            -- to the quote-shape consumed by was_signed_by_dstack.
+-- `pck_holder_is_dstack_tee` (cycle 7.3.a placeholder with `True`
+-- body) was removed in cycle 7.3.b — its role is taken by
+-- `verified_chain_implies_dstack_signed` (below), which carries the
+-- full chain-to-quote-property connection with non-trivial type.
 
 /-- **(c)-bucket assumption (ECDSA-P256 EUF-CMA over Intel's PCK key
     population)**: a legitimate PCK leaf key signature on a message
@@ -420,43 +436,104 @@ axiom chain_verified_leafKey_is_legitimate
     verifyX509Chain certData rootCa = some leafKey →
     legitimate_pck_leaf leafKey
 
-/-- **(c)-bucket assumption (composed)**: a successful end-to-end DCAP
-    verification of a quote `q` under fresh collateral `col` implies
-    the quote was produced by a real dstack TEE.
+/-- **(c)-bucket assumption — the final chain link**: given the full
+    chain of cryptographic substep witnesses (QE report signed by a
+    legitimate PCK holder, attestation key bound to the QE report,
+    quote body signed by the attestation key, TCB and QE gates pass)
+    and a structural parse of the raw quote bytes, the quote was
+    produced by a real dstack TEE.
 
-    **Honest status under cycle 7.3.a**: this axiom is *load-bearing*
-    in `dcapVerifier_sound`'s closure. The three named (c)-bucket
-    assumptions above (`pckLeafKey_signs_imply_signed_by_pck_holder`,
-    `chain_verified_leafKey_is_legitimate`, `pck_holder_is_dstack_tee`)
-    are *declared* with meaningful witness-bearing types but are NOT
-    YET load-bearing — they would become load-bearing once cycle 7.3.b
-    refines the substep return types to expose their semantic content.
+    This is the bridge from the chain of signature-verification
+    witnesses to `was_signed_by_dstack q`. It encodes the production
+    dstack discipline: a quote chain-verified up to Intel's Root CA
+    plus a valid TCB level plus a matching QE identity means the
+    quote was produced by a TEE running attested dstack code.
 
-    Cycle 7.3.b will:
-    - Change `verifyEcdsaP256` from `Bool` to
-      `Bool × Option (signed_by_pck_holder leafKey msg)` (or similar
-      witness-carrying type).
-    - Change `verifyX509Chain` from `Option (BitVec 512)` to
-      `Option (Σ leafKey, legitimate_pck_leaf leafKey)`.
-    - Compose `dcapVerifier_sound_composed` from the three named
-      assumptions via the structural chain (parse → chain verify →
-      QE signature → attestation key binding → quote body signature
-      → TCB/QE gates → was_signed_by_dstack).
+    Cycle 7.3.b: now load-bearing in `dcapVerifier_sound_composed`'s
+    derivation. -/
+axiom verified_chain_implies_dstack_signed
+    (n : Nat) (q : RawBytes) (col : Collateral) (parsed : DcapQuote)
+    (pckLeafKey : BitVec 512) :
+    freshCollateral col →
+    parseDcapQuote q = some parsed →
+    legitimate_pck_leaf pckLeafKey →
+    signed_by_pck_holder pckLeafKey (qeReportBytes parsed.authData.qeReport) →
+    verifyAttestationKeyBinding parsed.authData.qeReport
+        parsed.authData.attestationKey = true →
+    verifyEcdsaP256 parsed.authData.attestationKey parsed.signedRegion
+        parsed.authData.ecdsaSignature = true →
+    checkTcbLevel parsed col.tcbInfo = true →
+    checkQeIdentity parsed col.qeIdentity = true →
+    was_signed_by_dstack q
 
-    Until 7.3.b lands, `dcapVerifier_sound_composed` is the bundled
-    statement and the three named axioms are *named-but-undeclared-
-    consumers* — declared so the audit trail of the future-cycle-7.3.b
-    derivation is visible, but currently not exercised by any theorem
-    in the closure.
+/-- **Soundness composition (cycle 7.3.b, derived theorem)**: a
+    successful end-to-end DCAP verification of a quote `q` under fresh
+    collateral `col` implies the quote was produced by a real dstack TEE.
 
-    Cycle 7.3.a adversarial-honesty note: a reviewer would correctly
-    point out that the named axioms with no consumers are "declared
-    but unused". The remediation is cycle 7.3.b, not removal — the
-    declarations document the intent of the in-progress refactor. -/
-axiom dcapVerifier_sound_composed (n : Nat) (q : RawBytes) (col : Collateral) :
+    Now a derived theorem (not an axiom) — derives from the chain of
+    named (c)-bucket assumptions by unfolding `verifyDcap` and
+    applying:
+
+    - `chain_verified_leafKey_is_legitimate` for the PCK chain walk
+    - `pckLeafKey_signs_imply_signed_by_pck_holder` for the QE report
+      signature under the PCK leaf
+    - `verified_chain_implies_dstack_signed` for the final composition
+      (attestation-key binding + quote body signature + TCB/QE gates →
+      `was_signed_by_dstack`).
+
+    The named axioms are now **load-bearing**: `#print axioms
+    dcapVerifier_sound_composed` reports them in the closure (verifiable
+    via `lean_verify`). Cycle 7.3.a's documented-but-unused state is
+    fixed. -/
+theorem dcapVerifier_sound_composed (n : Nat) (q : RawBytes) (col : Collateral) :
     freshCollateral col →
     (∃ mr ud, verifyDcap n q col = some (mr, ud)) →
-    was_signed_by_dstack q
+    was_signed_by_dstack q := by
+  intro h_fresh ⟨mr, ud, h_acc⟩
+  -- Unfold verifyDcap and split on each substep's result, forcing
+  -- each to its non-`none` branch via the `h_acc` hypothesis.
+  unfold verifyDcap at h_acc
+  -- parseDcapQuote q must return some parsed
+  match h_parse : parseDcapQuote q with
+  | none => rw [h_parse] at h_acc; simp at h_acc
+  | some parsed =>
+    rw [h_parse] at h_acc
+    simp only at h_acc
+    -- verifyX509Chain must return some pckLeafKey
+    match h_chain : verifyX509Chain parsed.authData.certificateData col.rootCaCert with
+    | none => rw [h_chain] at h_acc; simp at h_acc
+    | some pckLeafKey =>
+      rw [h_chain] at h_acc
+      simp only at h_acc
+      -- Get legitimate_pck_leaf pckLeafKey from the named axiom.
+      have h_legit : legitimate_pck_leaf pckLeafKey :=
+        chain_verified_leafKey_is_legitimate _ _ _ h_chain
+      -- QE report signature must verify (first if-then-else).
+      by_cases h_qe_sig : verifyEcdsaP256 pckLeafKey
+          (qeReportBytes parsed.authData.qeReport)
+          parsed.authData.qeReportSignature = true
+      · -- Get signed_by_pck_holder from the named axiom.
+        have h_signed : signed_by_pck_holder pckLeafKey
+            (qeReportBytes parsed.authData.qeReport) :=
+          pckLeafKey_signs_imply_signed_by_pck_holder _ _ _ h_legit h_qe_sig
+        simp [h_qe_sig] at h_acc
+        by_cases h_keybind : verifyAttestationKeyBinding parsed.authData.qeReport
+            parsed.authData.attestationKey = true
+        · simp [h_keybind] at h_acc
+          by_cases h_body_sig : verifyEcdsaP256 parsed.authData.attestationKey
+              parsed.signedRegion parsed.authData.ecdsaSignature = true
+          · simp [h_body_sig] at h_acc
+            by_cases h_tcb : checkTcbLevel parsed col.tcbInfo = true
+            · simp [h_tcb] at h_acc
+              by_cases h_qe_id : checkQeIdentity parsed col.qeIdentity = true
+              · -- All checks pass. Apply the final chain link.
+                exact verified_chain_implies_dstack_signed n q col parsed pckLeafKey
+                  h_fresh h_parse h_legit h_signed h_keybind h_body_sig h_tcb h_qe_id
+              · simp [h_qe_id] at h_acc
+            · simp [h_tcb] at h_acc
+          · simp [h_body_sig] at h_acc
+        · simp [h_keybind] at h_acc
+      · simp [h_qe_sig] at h_acc
 
 /-! ## Bridge to `TdxVerifier n`
 
