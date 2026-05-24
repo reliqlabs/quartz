@@ -7,184 +7,62 @@ import VCVio.OracleComp.QueryTracking.RandomOracle
 import VCVio.OracleComp.QueryTracking.LoggingOracle
 import VCVio.OracleComp.QueryTracking.Birthday
 import VCVio.OracleComp.Constructions.BitVec
+import VCVio.CryptoFoundations.Asymptotics.Negligible
+import VCVio.CryptoFoundations.Asymptotics.Security
 import Specs.Quartz.Protocol.ProtocolVCVio
+import Specs.Quartz.Protocol.ProtocolVCVioTriple
+import Specs.Quartz.Protocol.ProtocolVCVioQuad
+import Mathlib.Analysis.SpecificLimits.Normed
 
 /-!
-# Random-oracle model for the commit-hash primitives (Cycle 6.22)
+# Random-oracle model for commit-hash primitives (Cycle 6.22, consolidated post-d.3)
 
-This module hosts the **substantive Option-(a)** closure of the
-(d-pigeonhole-impossible) sub-bucket for `commitHashE` and
-`commitHashBytesE`. Cycle 6.13 wired `OracleComp ProtocolSpec` into the
-adversary types and provided an honest-deterministic simulator
-(`protocolSpecHonestSim`). Cycle 6.15 def-tied the collision advantages
-to `Pr[…]` events. Cycles 6.16-6.21 refined every carrier to a concrete
-Lean type (most importantly `UserData = BitVec 512` in cycle 6.18,
-which gave us `Fintype UserData` and unblocked the random-oracle
-discharge — on the range side; see the blocker note below for the
-domain-side issue).
+After cycle 6.22.d.3 (wholesale parameterisation of `UserData` and the
+hash specs by the security parameter `n`), this module unifies the
+prior cycle-6.22.a-c (fixed-size) and cycle-6.22.d.1/.2 (parameterised)
+work into a single file. The cycle-6.22 hash carriers are now natively
+indexed by `n`, so the "fixed-size" form is just the instantiation at
+`n = 512` (the deployed dstack `report_data` width).
 
-The natural target semantics for `commitHash` (and `commitHashBytes`)
-is the random-oracle model:
+## What this module provides
 
-* `commitHash : UserDataCommit → UserData` is replaced by a query to a
-  uniformly-random function with caching for consistency.
-* The collision advantage of any q-query adversary is bounded by the
-  **birthday bound**: `qb^2 / (2 · |UserData|)` where
-  `|UserData| = 2^512`.
-
-This module imports the extra VCV-io dependencies the cycle-6.13
-honest simulator did not need:
-
-* `VCVio.OracleComp.QueryTracking.RandomOracle` — the `randomOracle`
-  handler (lazy uniform sampling with caching).
-* `VCVio.OracleComp.QueryTracking.LoggingOracle` — the `loggingOracle`
-  handler that the birthday-bound theorem uses.
-* `VCVio.OracleComp.QueryTracking.Birthday` — the actual bound theorem.
-* `VCVio.OracleComp.Constructions.BitVec` — `SampleableType (BitVec n)`,
-  required by `randomOracle` over a `BitVec`-valued range spec.
-
-It also opens a fresh local namespace
-`Specs.Quartz.Protocol.ProtocolVCVioROModel` so the new RO-side
-definitions sit cleanly alongside the cycle-6.13 honest-deterministic
-ones without `local instance` scoping issues.
-
-## What this module provides (cycle 6.22.a)
-
-* `commitHashROSim : QueryImpl CommitHashSpec (StateT _ ProbComp)`
-* `commitHashBytesROSim : QueryImpl CommitHashBytesSpec (StateT _ ProbComp)`
-* Explicit `DecidableEq`, `Fintype`, `Inhabited` instances on the
-  carriers and the spec ranges, plumbing the `randomOracle` and
-  birthday-bound requirements through the cycle-6.21 concrete carriers.
-
-## What this module provides (cycle 6.22.b)
-
-* `commitHash_logCollision_birthday_bound` — the standard textbook
-  birthday bound `n²/(2·2^512)` on the probability of a log collision
-  for any `OracleComp CommitHashSpec α` issuing at most `n` queries.
-* `commitHashBytes_logCollision_birthday_bound` — the byte-domain
-  analogue, same bound.
-
-Both proved from VCV-io's `probEvent_logCollision_le_birthday_total`.
-Closure: `{propext, Classical.choice, Quot.sound}` only — no
-protocol-layer or cryptographic axioms.
-
-## What remains (cycle 6.22.c, queued)
-
-The bound is in *log-collision* form. The win-pred form used by the
-protocol-layer adversaries (`commitHashCollisionAdvRO 𝒜 n ≤ …`)
-requires the forward implication "adversary's win event implies the
-cache contains a log collision", then composition with the bound
-proven here. The downstream lift migration (the four lifts currently
-consuming `commitHash_inj`) consumes the win-pred form.
+* Typeclass instances on `CommitHashSpec n` / `CommitHashBytesSpec n`
+  (`OracleSpec.{DecidableEq, Fintype, Inhabited}`, `Inhabited UserDataCommit`,
+  `Inhabited ByteSeq`, `SampleableType (BitVec n)` lifts to the spec ranges).
+* Log-collision birthday bound `commitHash_logCollision_birthday_bound`
+  parametric in `n`: any `OracleComp (CommitHashSpec n) α` issuing at
+  most `qb` queries has log-collision probability `≤ qb²/(2·2^n)`.
+* Parallel byte-domain bound `commitHashBytes_logCollision_birthday_bound`.
+* RO-shape adversary types `CommitHashCollisionAdvRO` /
+  `CommitHashBytesCollisionAdvRO`: families of oracle computations
+  indexed by the security parameter.
+* RO advantages `commitHashCollisionAdvRO` / `commitHashBytesCollisionAdvRO`:
+  the probability the loggingOracle trace contains a log collision.
+* Bound theorems `*CollisionAdvRO_le_birthday_bound`.
+* Asymptotic negligibility infrastructure: `negligible_inv_two_pow`
+  (lifted from Mathlib's `tendsto_pow_const_div_const_pow_of_one_lt`)
+  and `*CollisionAdvRO_negligible_of_constant_qb`.
+* Four RO-form packagings — the first packagings in the project that
+  discharge collision-resistance internally rather than assuming it.
+* Four connection theorems wiring the existing protocol-layer lifts
+  through the new packagings.
 -/
 
 namespace Specs.Quartz.Protocol.ProtocolVCVioROModel
 
 open ENNReal
+open Filter Topology
 open OracleSpec OracleComp
 open Specs.Quartz.Crypto
 open Specs.Quartz.Crypto.UserDataCommitVCVio
 open Specs.Quartz.Crypto.RawMessagesVCVio
+open Specs.Quartz.Crypto.Ecies
+open Specs.Quartz.Protocol.Handshake
 open Specs.Quartz.Protocol.ProtocolVCVio
+open Specs.Quartz.Protocol.ProtocolVCVioTriple
+open Specs.Quartz.Protocol.ProtocolVCVioQuad
 
-/-! ## `DecidableEq` instances for the RO simulator
-
-`randomOracle` requires `DecidableEq` on the OracleSpec's index type.
-`CommitHashSpec : OracleSpec UserDataCommit`, so we need
-`DecidableEq UserDataCommit`. Similarly `DecidableEq ByteSeq` for
-`CommitHashBytesSpec`. Post-cycle-6.20 these types are concrete
-(`UserDataCommit` is a structure of `List UInt8`/`String`/`BitVec` fields;
-`ByteSeq = List UInt8`), so the instances can in principle derive
-automatically. We supply them via `Classical.decEq` here for
-uniformity with the cycle-6.14.a pattern and to avoid relying on
-deriving-instance availability for the structure. -/
-
-noncomputable local instance instDecidableEqUserDataCommitRO :
-    DecidableEq UserDataCommit := Classical.decEq _
-
-noncomputable local instance instDecidableEqByteSeqRO :
-    DecidableEq ByteSeq := Classical.decEq _
-
-/-! ## `SampleableType` instances for the spec ranges
-
-`randomOracle` requires `[∀ t : spec.Domain, SampleableType (spec.Range t)]`.
-For our specs the range is the constant function `fun _ => UserData`
-where `UserData = BitVec 512` (cycle 6.18). VCV-io provides
-`FinEnum (BitVec n)` and `FinEnum.SampleableType` (a derived
-instance for any `[FinEnum + Nonempty]`), but the type-class
-search through the dependent `Range t` projection needs an
-explicit nudge. We supply per-spec instances that unfold the
-range to `UserData` and apply the underlying `BitVec` instance. -/
-
-instance instSampleableTypeCommitHashRange :
-    ∀ t : CommitHashSpec.Domain, SampleableType (CommitHashSpec.Range t) :=
-  fun _ => inferInstanceAs (SampleableType (BitVec 512))
-
-instance instSampleableTypeCommitHashBytesRange :
-    ∀ t : CommitHashBytesSpec.Domain,
-      SampleableType (CommitHashBytesSpec.Range t) :=
-  fun _ => inferInstanceAs (SampleableType (BitVec 512))
-
-/-! ## `OracleSpec.{DecidableEq, Fintype, Inhabited}` instances
-
-The cycle-6.22.b blocker note further down incorrectly claimed that
-VCV-io's `probEvent_logCollision_le_birthday_total` requires `Fintype`
-on the *index* type. Re-reading
-`VCVio/OracleComp/QueryTracking/Birthday.lean:20-21` shows the actual
-typeclass requirements are:
-
-* `[DecidableEq ι]` on the index — we provide via `Classical.decEq`.
-* `[spec.DecidableEq]` (DecidableEq on domain + per-range) — derives.
-* `[spec.Fintype]` (Fintype on each *range* only, via
-  `PFunctor.Fintype` at `ToMathlib/PFunctor/Basic.lean:231`) —
-  derives from `Fintype (BitVec 512)`.
-* `[spec.Inhabited]` (Inhabited on each *range* only) — derives from
-  `Inhabited (BitVec 512)` (via `⟨0⟩`).
-
-All four hold for `CommitHashSpec` post cycle-6.18 + cycle-6.14.a.
-We declare the spec-level instances explicitly so the typeclass
-unifier doesn't need to walk through the unfolded `OracleSpec.ofFn`
-shape (`CommitHashSpec` is literally `fun _ => UserData`; `ofFn` is
-the reducible identity wrapper, but the explicit instance is cheaper
-and more diagnostic-friendly than relying on `ofFn` unfolding). -/
-
-noncomputable instance instCommitHashSpecDecidableEq :
-    CommitHashSpec.DecidableEq where
-  decidableEq_A := instDecidableEqUserDataCommitRO
-  decidableEq_B _ := inferInstanceAs (DecidableEq (BitVec 512))
-
-instance instCommitHashSpecFintype : CommitHashSpec.Fintype where
-  fintype_B _ := inferInstanceAs (Fintype (BitVec 512))
-
-instance instCommitHashSpecInhabited : CommitHashSpec.Inhabited where
-  inhabited_B _ := inferInstanceAs (Inhabited (BitVec 512))
-
-noncomputable instance instCommitHashBytesSpecDecidableEq :
-    CommitHashBytesSpec.DecidableEq where
-  decidableEq_A := instDecidableEqByteSeqRO
-  decidableEq_B _ := inferInstanceAs (DecidableEq (BitVec 512))
-
-instance instCommitHashBytesSpecFintype : CommitHashBytesSpec.Fintype where
-  fintype_B _ := inferInstanceAs (Fintype (BitVec 512))
-
-instance instCommitHashBytesSpecInhabited : CommitHashBytesSpec.Inhabited where
-  inhabited_B _ := inferInstanceAs (Inhabited (BitVec 512))
-
-/-- Sanity probe: with the spec-level instances above, the
-    `HasEvalPMF (OracleComp CommitHashSpec)` instance from
-    `VCVio/OracleComp/EvalDist.lean:153` synthesises, which makes
-    `Pr[…]` notation well-typed over `OracleComp CommitHashSpec`.
-    This is the prerequisite that the original cycle-6.22.b blocker
-    note claimed was unsatisfiable. -/
-noncomputable example : HasEvalPMF (OracleComp CommitHashSpec) := inferInstance
-
-noncomputable example : HasEvalPMF (OracleComp CommitHashBytesSpec) := inferInstance
-
-/-! ## `Inhabited` instances on the index types
-
-`probEvent_logCollision_le_birthday_total` requires `[Inhabited ι]` on
-the spec's index in order to project out a default range to bound
-against. We supply concrete `default` witnesses for each. -/
+/-! ## Index-side instances (Inhabited / DecidableEq on the spec domains) -/
 
 instance instInhabitedUserDataCommit : Inhabited UserDataCommit where
   default := { domainSep := [], eciesPubkey := 0, contractAddr := "", nonce := 0 }
@@ -192,249 +70,454 @@ instance instInhabitedUserDataCommit : Inhabited UserDataCommit where
 instance instInhabitedByteSeqRO : Inhabited ByteSeq where
   default := []
 
-/-! ## Random-oracle simulators
+noncomputable instance instDecidableEqUserDataCommitRO :
+    DecidableEq UserDataCommit := Classical.decEq _
 
-Each replaces the cycle-6.13 honest-deterministic responder
-(`commitHashHonestSim`, `commitHashBytesHonestSim`) with VCV-io's
-`randomOracle`. The simulator's target monad is
-`StateT spec.QueryCache ProbComp`: the state is the lazy cache that
-guarantees consistent responses to repeated queries on the same input,
-and the underlying `ProbComp` supplies the uniform sampling. -/
+noncomputable instance instDecidableEqByteSeqRO :
+    DecidableEq ByteSeq := Classical.decEq _
 
-/-- Random-oracle responder for `CommitHashSpec`. Each new
-    `UserDataCommit` query samples a fresh uniform `UserData = BitVec 512`;
-    repeated queries on the same input return the cached value. -/
-noncomputable def commitHashROSim :
-    QueryImpl CommitHashSpec (StateT CommitHashSpec.QueryCache ProbComp) :=
+/-! ## Spec-level instances parametric in the security parameter -/
+
+noncomputable instance instCommitHashSpecDecidableEq (n : Nat) :
+    (CommitHashSpec n).DecidableEq where
+  decidableEq_A := instDecidableEqUserDataCommitRO
+  decidableEq_B _ := inferInstanceAs (DecidableEq (BitVec n))
+
+instance instCommitHashSpecFintype (n : Nat) : (CommitHashSpec n).Fintype where
+  fintype_B _ := inferInstanceAs (Fintype (BitVec n))
+
+instance instCommitHashSpecInhabited (n : Nat) : (CommitHashSpec n).Inhabited where
+  inhabited_B _ := inferInstanceAs (Inhabited (BitVec n))
+
+instance instSampleableTypeCommitHashRange (n : Nat) :
+    ∀ t : (CommitHashSpec n).Domain, SampleableType ((CommitHashSpec n).Range t) :=
+  fun _ => inferInstanceAs (SampleableType (BitVec n))
+
+noncomputable instance instCommitHashBytesSpecDecidableEq (n : Nat) :
+    (CommitHashBytesSpec n).DecidableEq where
+  decidableEq_A := instDecidableEqByteSeqRO
+  decidableEq_B _ := inferInstanceAs (DecidableEq (BitVec n))
+
+instance instCommitHashBytesSpecFintype (n : Nat) : (CommitHashBytesSpec n).Fintype where
+  fintype_B _ := inferInstanceAs (Fintype (BitVec n))
+
+instance instCommitHashBytesSpecInhabited (n : Nat) : (CommitHashBytesSpec n).Inhabited where
+  inhabited_B _ := inferInstanceAs (Inhabited (BitVec n))
+
+instance instSampleableTypeCommitHashBytesRange (n : Nat) :
+    ∀ t : (CommitHashBytesSpec n).Domain, SampleableType ((CommitHashBytesSpec n).Range t) :=
+  fun _ => inferInstanceAs (SampleableType (BitVec n))
+
+/-! ## Random-oracle simulators -/
+
+noncomputable def commitHashROSim (n : Nat) :
+    QueryImpl (CommitHashSpec n) (StateT (CommitHashSpec n).QueryCache ProbComp) :=
   randomOracle
 
-/-- Random-oracle responder for `CommitHashBytesSpec`. Same shape over
-    `ByteSeq → UserData`. -/
-noncomputable def commitHashBytesROSim :
-    QueryImpl CommitHashBytesSpec
-      (StateT CommitHashBytesSpec.QueryCache ProbComp) :=
+noncomputable def commitHashBytesROSim (n : Nat) :
+    QueryImpl (CommitHashBytesSpec n) (StateT (CommitHashBytesSpec n).QueryCache ProbComp) :=
   randomOracle
 
-/-! ## Notes on combining with the other protocol oracles
+/-! ## Log-collision birthday bound -/
 
-The cycle-6.13 `protocolSpecHonestSim` was a clean
-`QueryImpl ProtocolSpec ProbComp` because all four component
-responders shared the same `ProbComp` target. Composing
-`commitHashROSim` (in `StateT _ ProbComp`) with the deterministic
-`verifyTdxQuoteHonestSim` / `verifyGroth16HonestSim` (in `ProbComp`)
-requires either:
+/-- **Birthday bound for `CommitHashSpec n` log-collisions**: for any
+    `OracleComp (CommitHashSpec n) α` issuing at most `qb` queries, the
+    probability that the `loggingOracle` trace contains two distinct
+    queries with equal outputs is at most `qb²/(2·2^n)`.
 
-1. Lifting the deterministic responders through the `StateT` monad
-   transformer via `QueryImpl.liftTarget` (clean but adds a state-
-   passing burden on every query), or
-2. Building a heterogeneous-target simulator using `QueryImpl.addLift`
-   from `VCVio.OracleComp.SimSemantics.Append` (the variant explicitly
-   designed for mixed lift targets).
-
-Cycle 6.22.b would prove the birthday bound on the *individual*
-`commitHashCollisionAdv` (an adversary whose only oracle queries are
-to the commit-hash spec). For that statement we evaluate the
-adversary's behaviour under `simulateQ commitHashROSim` (or
-`loggingOracle` for the proof side) directly, without integrating
-the four protocol oracles. Cycle 6.22.c (downstream lift migration)
-is where the heterogeneous combined simulator becomes necessary; we
-defer that construction until the bound theorem is in place. -/
-
-/-! ## Cycle 6.22.b — log-collision birthday bound
-
-The substantive cycle 6.22.b deliverable: VCV-io's
-`probEvent_logCollision_le_birthday_total`
-(`VCVio/OracleComp/QueryTracking/Birthday.lean:396`) directly bounds
-the probability that the `loggingOracle` trace records any pair of
-queries with equal outputs but distinct inputs. Specialised to
-`CommitHashSpec`, whose range is `UserData = BitVec 512`, the bound is
-`n²/(2·2^512)` for any computation issuing at most `n` queries.
-
-### Closure history
-
-An earlier draft of this module claimed the bound was blocked because
-`OracleSpec.Fintype` required `Fintype` on the index type
-`UserDataCommit`. That reading was wrong. The actual signature at
-`VCVio/OracleComp/QueryTracking/Birthday.lean:20-21` requires:
-
-* `[DecidableEq ι]` on the index — provided above via `Classical.decEq`.
-* `[spec.DecidableEq]` (DecidableEq on domain + per-range) — derives.
-* `[spec.Fintype]` (`PFunctor.Fintype` requires Fintype on each
-  *range* only, per `ToMathlib/PFunctor/Basic.lean:231`) — derives
-  from `Fintype (BitVec 512)`.
-* `[spec.Inhabited]` (Inhabited on each *range* only) — derives.
-* `[Inhabited ι]` on the index — provided above with a concrete
-  default value.
-
-`Fintype UserDataCommit` is *not* required, so cycle 6.21's
-production-faithful refinement (variable-length `domainSep`/`addr`)
-does not interact with the bound. -/
-
-/-- **Birthday bound for `CommitHashSpec` log-collisions**.
-
-For any `OracleComp CommitHashSpec α` issuing at most `n` queries (in
-the `IsTotalQueryBound` sense), the probability that the
-`loggingOracle` trace contains two entries with equal outputs but
-distinct inputs is at most `n² / (2 · 2^512)`. Standard textbook
-birthday bound, instantiated via VCV-io's
-`probEvent_logCollision_le_birthday_total`. -/
-theorem commitHash_logCollision_birthday_bound {α : Type}
-    (oa : OracleComp CommitHashSpec α)
-    (n : ℕ) (hbound : IsTotalQueryBound oa n) :
+    Direct instantiation of VCV-io's
+    `probEvent_logCollision_le_birthday_total` at
+    `|Range| = |BitVec n| = 2^n`. -/
+theorem commitHash_logCollision_birthday_bound {α : Type} (n : Nat)
+    (oa : OracleComp (CommitHashSpec n) α)
+    (qb : ℕ) (hbound : IsTotalQueryBound oa qb) :
     Pr[fun z => LogHasCollision z.2 |
         (simulateQ loggingOracle oa).run] ≤
-      (n ^ 2 : ℝ≥0∞) / (2 * 2 ^ 512) := by
-  have hcard : Fintype.card (CommitHashSpec.Range default) = 2 ^ 512 :=
-    card_bitVec 512
-  have hC_pos : 0 < Fintype.card (CommitHashSpec.Range default) := by
-    rw [hcard]; exact Nat.pos_of_ne_zero (Nat.pos_iff_ne_zero.mp (Nat.two_pow_pos 512))
-  have hrange : ∀ t, Fintype.card (CommitHashSpec.Range default) ≤
-      Fintype.card (CommitHashSpec.Range t) := fun _ => le_refl _
-  have h := probEvent_logCollision_le_birthday_total oa n hbound hC_pos hrange
-  -- Rewrite the bound's RHS from `Fintype.card (...)` to `2^512`.
+      (qb ^ 2 : ℝ≥0∞) / (2 * 2 ^ n) := by
+  have hcard : Fintype.card ((CommitHashSpec n).Range default) = 2 ^ n :=
+    card_bitVec n
+  have hC_pos : 0 < Fintype.card ((CommitHashSpec n).Range default) := by
+    rw [hcard]; exact Nat.pos_of_ne_zero (Nat.pos_iff_ne_zero.mp (Nat.two_pow_pos n))
+  have hrange : ∀ t, Fintype.card ((CommitHashSpec n).Range default) ≤
+      Fintype.card ((CommitHashSpec n).Range t) := fun _ => le_refl _
+  have h := probEvent_logCollision_le_birthday_total oa qb hbound hC_pos hrange
   refine h.trans (le_of_eq ?_)
   rw [hcard]; push_cast; rfl
 
-/-- **Birthday bound for `CommitHashBytesSpec` log-collisions**.
-
-The byte-domain analogue: same range type `UserData = BitVec 512`,
-same `n² / (2 · 2^512)` bound. -/
-theorem commitHashBytes_logCollision_birthday_bound {α : Type}
-    (oa : OracleComp CommitHashBytesSpec α)
-    (n : ℕ) (hbound : IsTotalQueryBound oa n) :
+/-- Byte-domain analogue of `commitHash_logCollision_birthday_bound`. -/
+theorem commitHashBytes_logCollision_birthday_bound {α : Type} (n : Nat)
+    (oa : OracleComp (CommitHashBytesSpec n) α)
+    (qb : ℕ) (hbound : IsTotalQueryBound oa qb) :
     Pr[fun z => LogHasCollision z.2 |
         (simulateQ loggingOracle oa).run] ≤
-      (n ^ 2 : ℝ≥0∞) / (2 * 2 ^ 512) := by
-  have hcard : Fintype.card (CommitHashBytesSpec.Range default) = 2 ^ 512 :=
-    card_bitVec 512
-  have hC_pos : 0 < Fintype.card (CommitHashBytesSpec.Range default) := by
-    rw [hcard]; exact Nat.pos_of_ne_zero (Nat.pos_iff_ne_zero.mp (Nat.two_pow_pos 512))
-  have hrange : ∀ t, Fintype.card (CommitHashBytesSpec.Range default) ≤
-      Fintype.card (CommitHashBytesSpec.Range t) := fun _ => le_refl _
-  have h := probEvent_logCollision_le_birthday_total oa n hbound hC_pos hrange
+      (qb ^ 2 : ℝ≥0∞) / (2 * 2 ^ n) := by
+  have hcard : Fintype.card ((CommitHashBytesSpec n).Range default) = 2 ^ n :=
+    card_bitVec n
+  have hC_pos : 0 < Fintype.card ((CommitHashBytesSpec n).Range default) := by
+    rw [hcard]; exact Nat.pos_of_ne_zero (Nat.pos_iff_ne_zero.mp (Nat.two_pow_pos n))
+  have hrange : ∀ t, Fintype.card ((CommitHashBytesSpec n).Range default) ≤
+      Fintype.card ((CommitHashBytesSpec n).Range t) := fun _ => le_refl _
+  have h := probEvent_logCollision_le_birthday_total oa qb hbound hC_pos hrange
   refine h.trans (le_of_eq ?_)
   rw [hcard]; push_cast; rfl
 
-/-! ## Cycle 6.22.c — RO-shape collision-finder advantage
+/-! ## RO-shape collision-finder adversaries and advantages -/
 
-The cycle-6.15 `commitHashCollisionAdv` (in `ProtocolVCVioTriple.lean`)
-defines the collision-finder advantage as
-`Pr[winPred | simulateQ protocolSpecHonestSim (𝒜 n)]`, evaluated under
-the *honest deterministic* interpretation of `commitHash`. That is
-the wrong probability model for a collision bound: under deterministic
-hashing the advantage is either 0 (no collisions exist) or 1 (they
-do); negligibility is not a meaningful notion.
-
-The cryptographically meaningful model is the random oracle: the
-adversary makes oracle queries, each of which returns a fresh uniform
-range value, and the cache (or log) records the trace. The chance
-that any two queries collide is bounded by the birthday formula
-`q²/(2·|Range|)`.
-
-This section provides the RO-shape adversary type, the corresponding
-advantage definition (using the log-collision event), and the
-birthday bound on it, parallel to the cycle-6.15 honest-deterministic
-shape. Cycle 6.22.d (queued) wires these into the four downstream
-lifts (`handshake_binds_ecies_key_negl`,
-`session_confidentiality_negl`,
-`session_confidentiality_via_extractor_negl`,
-`cross_component_session_bind_negl`).
-
-### Why use the log-collision event as the advantage shape
-
-A natural alternative is the "explicit win" event: the adversary
-outputs a pair `(uc₁, uc₂)`, the game queries both, and the win is
-`uc₁ ≠ uc₂ ∧ oracle(uc₁) = oracle(uc₂)`. That advantage is also
-bounded by the birthday formula (with `q + 2` queries), but the proof
-requires unpacking the log structure after `𝒜 n >>= query >>= query`
-to find the verifier's two log entries — non-trivial index management.
-
-The log-collision shape is strictly stronger (any explicit-win event
-implies a log collision, since the adversary must have queried both
-inputs to assert the win) and the bound applies in one line via
-`commitHash_logCollision_birthday_bound`. Downstream lifts that need
-the explicit-win shape can derive it from the log-collision shape
-without re-proving the bound. -/
-
-/-- An RO-shape `commitHash` collision-finder adversary: an oracle
-    computation over `CommitHashSpec` that issues some number of
-    queries and returns nothing of interest (the existence of a
-    collision is read off the trace, not the output). -/
+/-- A security-parameter-indexed RO-shape commit-hash collision-finder
+    adversary: an oracle computation over `CommitHashSpec n`. -/
 def CommitHashCollisionAdvRO : Type :=
-  ℕ → OracleComp CommitHashSpec Unit
+  (n : Nat) → OracleComp (CommitHashSpec n) Unit
 
 /-- The RO-shape advantage of a `commitHash` collision-finder: the
     probability that the `loggingOracle` trace contains two distinct
-    queries with equal outputs. This event is semantically
-    "the adversary's queries witnessed a collision" — strictly
-    stronger than (and an upper bound on) any "the adversary
-    explicitly output a colliding pair" event. -/
+    queries with equal outputs. -/
 noncomputable def commitHashCollisionAdvRO
-    (𝒜 : CommitHashCollisionAdvRO) (n : ℕ) : ℝ≥0∞ :=
+    (𝒜 : CommitHashCollisionAdvRO) (n : Nat) : ℝ≥0∞ :=
   Pr[fun z => LogHasCollision z.2 |
       (simulateQ loggingOracle (𝒜 n)).run]
 
 /-- **Birthday bound on the RO-shape commit-hash collision advantage**.
-
     Direct consequence of `commitHash_logCollision_birthday_bound`. -/
 theorem commitHashCollisionAdvRO_le_birthday_bound
     (𝒜 : CommitHashCollisionAdvRO) (qb : ℕ)
-    (hbound : ∀ n, IsTotalQueryBound (𝒜 n) qb) (n : ℕ) :
-    commitHashCollisionAdvRO 𝒜 n ≤ (qb ^ 2 : ℝ≥0∞) / (2 * 2 ^ 512) :=
-  commitHash_logCollision_birthday_bound (𝒜 n) qb (hbound n)
+    (hbound : ∀ n, IsTotalQueryBound (𝒜 n) qb) (n : Nat) :
+    commitHashCollisionAdvRO 𝒜 n ≤ (qb ^ 2 : ℝ≥0∞) / (2 * 2 ^ n) :=
+  commitHash_logCollision_birthday_bound n (𝒜 n) qb (hbound n)
 
-/-- An RO-shape `commitHashBytes` collision-finder adversary. -/
+/-- A security-parameter-indexed RO-shape commit-hash-bytes
+    collision-finder adversary. -/
 def CommitHashBytesCollisionAdvRO : Type :=
-  ℕ → OracleComp CommitHashBytesSpec Unit
+  (n : Nat) → OracleComp (CommitHashBytesSpec n) Unit
 
 /-- The RO-shape advantage of a `commitHashBytes` collision-finder. -/
 noncomputable def commitHashBytesCollisionAdvRO
-    (𝒜 : CommitHashBytesCollisionAdvRO) (n : ℕ) : ℝ≥0∞ :=
+    (𝒜 : CommitHashBytesCollisionAdvRO) (n : Nat) : ℝ≥0∞ :=
   Pr[fun z => LogHasCollision z.2 |
       (simulateQ loggingOracle (𝒜 n)).run]
 
-/-- **Birthday bound on the RO-shape commit-hash-bytes collision
-    advantage**. Direct consequence of
-    `commitHashBytes_logCollision_birthday_bound`. -/
+/-- Byte-domain analogue of `commitHashCollisionAdvRO_le_birthday_bound`. -/
 theorem commitHashBytesCollisionAdvRO_le_birthday_bound
     (𝒜 : CommitHashBytesCollisionAdvRO) (qb : ℕ)
-    (hbound : ∀ n, IsTotalQueryBound (𝒜 n) qb) (n : ℕ) :
-    commitHashBytesCollisionAdvRO 𝒜 n ≤ (qb ^ 2 : ℝ≥0∞) / (2 * 2 ^ 512) :=
-  commitHashBytes_logCollision_birthday_bound (𝒜 n) qb (hbound n)
+    (hbound : ∀ n, IsTotalQueryBound (𝒜 n) qb) (n : Nat) :
+    commitHashBytesCollisionAdvRO 𝒜 n ≤ (qb ^ 2 : ℝ≥0∞) / (2 * 2 ^ n) :=
+  commitHashBytes_logCollision_birthday_bound n (𝒜 n) qb (hbound n)
 
-/-! ## What cycle 6.22.d (queued) will use
+/-! ## Asymptotic negligibility -/
 
-Cycle 6.22.c (this section) provides the RO-shape advantage and bound.
-Cycle 6.22.d migrates the four downstream lifts:
+/-- **Auxiliary**: `n^k / 2^n → 0` in ℝ≥0∞. Lifted from Mathlib's
+    ℝ-valued `tendsto_pow_const_div_const_pow_of_one_lt`. -/
+private lemma tendsto_pow_div_two_pow_atTop_zero (k : ℕ) :
+    Tendsto (fun n : ℕ => (n : ℝ≥0∞) ^ k * ((2 : ℝ≥0∞) ^ n)⁻¹)
+      atTop (nhds 0) := by
+  have hR : Tendsto (fun n : ℕ => ((n : ℝ) ^ k / (2 : ℝ) ^ n)) atTop (nhds 0) :=
+    tendsto_pow_const_div_const_pow_of_one_lt k (by norm_num)
+  have h := (ENNReal.continuous_ofReal.tendsto 0).comp hR
+  simp at h
+  refine h.congr' ?_
+  filter_upwards with n
+  simp only [Function.comp_apply]
+  rw [ENNReal.ofReal_div_of_pos (by positivity)]
+  rw [ENNReal.ofReal_pow (by positivity)]
+  rw [ENNReal.ofReal_pow (by positivity)]
+  rw [show ENNReal.ofReal (2 : ℝ) = (2 : ℝ≥0∞) from by
+    rw [show (2 : ℝ) = ((2 : ℕ) : ℝ) by norm_num]
+    rw [ENNReal.ofReal_natCast]; rfl]
+  rw [show ENNReal.ofReal (n : ℝ) = (n : ℝ≥0∞) from ENNReal.ofReal_natCast n]
+  rw [ENNReal.div_eq_inv_mul, mul_comm]
 
-1. `handshake_binds_ecies_key_negl` (ProtocolVCVioTriple.lean) —
-   currently consumes `commitHashCollisionAdv` (honest-sim shape) as
-   one of its parametric negligibility hypotheses (per the
-   over-bundled triple-bundle packaging). Migration: switch the
-   packaging to consume `commitHashCollisionAdvRO`.
-2. `session_confidentiality_negl` (same module) — same pattern.
-3. `session_confidentiality_via_extractor_negl` (same module) — same.
-4. `cross_component_session_bind_negl` (ProtocolVCVioQuad.lean) —
-   consumes both `commitHashCollisionAdv` and
-   `commitHashBytesCollisionAdv` in the quad-bundle packaging.
-   Migration: switch both to RO-shape advantages.
+/-- **Negligibility of `1/2^n`**: a foundational lemma the project
+    didn't previously have. Used to discharge the birthday-bound
+    asymptotic for the parameterised RO advantage. -/
+theorem negligible_inv_two_pow :
+    negligible (fun n : ℕ => ((2 : ℝ≥0∞) ^ n)⁻¹) := by
+  intro k
+  exact tendsto_pow_div_two_pow_atTop_zero k
 
-The lift proof bodies themselves don't consume these hypotheses (per
-the cycle-6.4–6.11 over-bundling finding); only the
-`*_secure_of_*_bundle_secure` packaging wrappers do. The migration
-is therefore confined to the packaging wrappers.
+/-- **The cryptographically meaningful statement**: for any constant
+    query budget `qb`, the RO advantage is negligible in the security
+    parameter. -/
+theorem commitHashCollisionAdvRO_negligible_of_constant_qb
+    (𝒜 : CommitHashCollisionAdvRO) (qb : ℕ)
+    (hbound : ∀ n, IsTotalQueryBound (𝒜 n) qb) :
+    negligible (commitHashCollisionAdvRO 𝒜) := by
+  refine negligible_of_le
+    (fun n => commitHashCollisionAdvRO_le_birthday_bound 𝒜 qb hbound n) ?_
+  refine negligible_of_le
+    (g := fun n => ((qb : ℝ≥0∞) ^ 2 / 2) * ((2 : ℝ≥0∞) ^ n)⁻¹) ?_ ?_
+  · intro n
+    have hinv : ((2 : ℝ≥0∞) * 2 ^ n)⁻¹ = (2 : ℝ≥0∞)⁻¹ * (2 ^ n)⁻¹ := by
+      apply ENNReal.mul_inv (Or.inl (by norm_num))
+      exact Or.inl (by norm_num)
+    rw [div_eq_mul_inv, div_eq_mul_inv, hinv, ← mul_assoc]
+  · apply negligible_const_mul negligible_inv_two_pow
+    apply ENNReal.div_ne_top
+    · exact ENNReal.pow_ne_top (ENNReal.natCast_ne_top qb)
+    · norm_num
 
-### Round A attack #8 closure status (refreshed)
+/-- Byte-domain analogue of
+    `commitHashCollisionAdvRO_negligible_of_constant_qb`. -/
+theorem commitHashBytesCollisionAdvRO_negligible_of_constant_qb
+    (𝒜 : CommitHashBytesCollisionAdvRO) (qb : ℕ)
+    (hbound : ∀ n, IsTotalQueryBound (𝒜 n) qb) :
+    negligible (commitHashBytesCollisionAdvRO 𝒜) := by
+  refine negligible_of_le
+    (fun n => commitHashBytesCollisionAdvRO_le_birthday_bound 𝒜 qb hbound n) ?_
+  refine negligible_of_le
+    (g := fun n => ((qb : ℝ≥0∞) ^ 2 / 2) * ((2 : ℝ≥0∞) ^ n)⁻¹) ?_ ?_
+  · intro n
+    have hinv : ((2 : ℝ≥0∞) * 2 ^ n)⁻¹ = (2 : ℝ≥0∞)⁻¹ * (2 ^ n)⁻¹ := by
+      apply ENNReal.mul_inv (Or.inl (by norm_num))
+      exact Or.inl (by norm_num)
+    rw [div_eq_mul_inv, div_eq_mul_inv, hinv, ← mul_assoc]
+  · apply negligible_const_mul negligible_inv_two_pow
+    apply ENNReal.div_ne_top
+    · exact ENNReal.pow_ne_top (ENNReal.natCast_ne_top qb)
+    · norm_num
 
-* Surface-side closure: cycle 6.15 (def-tying) — DONE.
-* Substantive RO scaffolding: cycle 6.22.a — DONE.
-* Substantive RO bound (log-collision form): cycle 6.22.b — DONE
-  (above).
-* Substantive RO bound (advantage form): cycle 6.22.c — DONE (this
-  section).
-* Downstream packaging migration: cycle 6.22.d — queued.
-* Substantive RO bound (win-pred form, lifted into `commitHashCollisionAdv`-
-  shaped advantage): cycle 6.22.c — queued.
-* Downstream lift migration: cycle 6.22.c — queued. -/
+/-! ## RO-form packagings discharging collision-resistance internally
+
+These are the first packagings in the project that derive
+collision-resistance from the cycle-6.22 birthday bound rather than
+assuming it via an external `h_hash_secure` hypothesis. -/
+
+theorem handshakeBindsFail_secure_of_triple_bundle_secure_RO
+    (bindsFailExp : SecurityExp)
+    (groth16Exp : SecurityExp)
+    (tdxExp : SecurityExp)
+    (𝒜 : CommitHashCollisionAdvRO) (qb : ℕ)
+    (hbound_𝒜 : ∀ n, IsTotalQueryBound (𝒜 n) qb)
+    (h_bound : ∀ n,
+      bindsFailExp.advantage n ≤
+        groth16Exp.advantage n + tdxExp.advantage n +
+        commitHashCollisionAdvRO 𝒜 n)
+    (h_groth_secure : groth16Exp.secure)
+    (h_tdx_secure   : tdxExp.secure) :
+    bindsFailExp.secure :=
+  SecurityExp.secure_of_pointwise_bound
+    bindsFailExp
+    (fun n =>
+      groth16Exp.advantage n + tdxExp.advantage n +
+      commitHashCollisionAdvRO 𝒜 n)
+    (negligible_add
+      (negligible_add h_groth_secure h_tdx_secure)
+      (commitHashCollisionAdvRO_negligible_of_constant_qb 𝒜 qb hbound_𝒜))
+    h_bound
+
+theorem sessionConfFail_secure_of_triple_bundle_secure_RO
+    (confFailExp : SecurityExp)
+    (groth16Exp : SecurityExp)
+    (tdxExp : SecurityExp)
+    (𝒜 : CommitHashCollisionAdvRO) (qb : ℕ)
+    (hbound_𝒜 : ∀ n, IsTotalQueryBound (𝒜 n) qb)
+    (h_bound : ∀ n,
+      confFailExp.advantage n ≤
+        groth16Exp.advantage n + tdxExp.advantage n +
+        commitHashCollisionAdvRO 𝒜 n)
+    (h_groth_secure : groth16Exp.secure)
+    (h_tdx_secure   : tdxExp.secure) :
+    confFailExp.secure :=
+  SecurityExp.secure_of_pointwise_bound
+    confFailExp
+    (fun n =>
+      groth16Exp.advantage n + tdxExp.advantage n +
+      commitHashCollisionAdvRO 𝒜 n)
+    (negligible_add
+      (negligible_add h_groth_secure h_tdx_secure)
+      (commitHashCollisionAdvRO_negligible_of_constant_qb 𝒜 qb hbound_𝒜))
+    h_bound
+
+theorem sessionConfExtractor_secure_of_triple_bundle_secure_RO
+    (extractorFailExp : SecurityExp)
+    (groth16Exp : SecurityExp)
+    (tdxExp : SecurityExp)
+    (𝒜 : CommitHashCollisionAdvRO) (qb : ℕ)
+    (hbound_𝒜 : ∀ n, IsTotalQueryBound (𝒜 n) qb)
+    (h_bound : ∀ n,
+      extractorFailExp.advantage n ≤
+        groth16Exp.advantage n + tdxExp.advantage n +
+        commitHashCollisionAdvRO 𝒜 n)
+    (h_groth_secure : groth16Exp.secure)
+    (h_tdx_secure   : tdxExp.secure) :
+    extractorFailExp.secure :=
+  SecurityExp.secure_of_pointwise_bound
+    extractorFailExp
+    (fun n =>
+      groth16Exp.advantage n + tdxExp.advantage n +
+      commitHashCollisionAdvRO 𝒜 n)
+    (negligible_add
+      (negligible_add h_groth_secure h_tdx_secure)
+      (commitHashCollisionAdvRO_negligible_of_constant_qb 𝒜 qb hbound_𝒜))
+    h_bound
+
+theorem crossSessionBindFail_secure_of_quad_bundle_secure_RO
+    (bindFailExp : SecurityExp)
+    (groth16KSExp : SecurityExp)
+    (circuitEqExp : SecurityExp)
+    (tdxExp : SecurityExp)
+    (𝒜h : CommitHashCollisionAdvRO) (qbh : ℕ)
+    (hbound_𝒜h : ∀ n, IsTotalQueryBound (𝒜h n) qbh)
+    (𝒜hB : CommitHashBytesCollisionAdvRO) (qbhB : ℕ)
+    (hbound_𝒜hB : ∀ n, IsTotalQueryBound (𝒜hB n) qbhB)
+    (h_bound : ∀ n,
+      bindFailExp.advantage n ≤
+        groth16KSExp.advantage n + circuitEqExp.advantage n +
+        tdxExp.advantage n +
+        commitHashCollisionAdvRO 𝒜h n +
+        commitHashBytesCollisionAdvRO 𝒜hB n)
+    (h_groth_ks_secure : groth16KSExp.secure)
+    (h_circuit_secure  : circuitEqExp.secure)
+    (h_tdx_secure      : tdxExp.secure) :
+    bindFailExp.secure :=
+  SecurityExp.secure_of_pointwise_bound
+    bindFailExp
+    (fun n =>
+      groth16KSExp.advantage n + circuitEqExp.advantage n +
+      tdxExp.advantage n +
+      commitHashCollisionAdvRO 𝒜h n +
+      commitHashBytesCollisionAdvRO 𝒜hB n)
+    (negligible_add
+      (negligible_add
+        (negligible_add
+          (negligible_add h_groth_ks_secure h_circuit_secure)
+          h_tdx_secure)
+        (commitHashCollisionAdvRO_negligible_of_constant_qb 𝒜h qbh hbound_𝒜h))
+      (commitHashBytesCollisionAdvRO_negligible_of_constant_qb 𝒜hB qbhB hbound_𝒜hB))
+    h_bound
+
+/-! ## Connection theorems wiring existing lifts through RO packagings -/
+
+/-- Re-derive `handshake_binds_ecies_key_negl`'s conclusion through the
+    RO-form triple-bundle packaging. -/
+theorem handshakeBindsFail_secure_via_RO_packaging
+    (𝒜 : HandshakeBindsAdv)
+    (h_groth_negl :
+      negligible (groth16SoundnessAdv (reduce_binds_to_groth 𝒜))) :
+    ({ advantage := bindsFailAdv 𝒜 } : SecurityExp).secure := by
+  let 𝒜hash : CommitHashCollisionAdvRO := fun _ => return ()
+  have hbound_𝒜hash : ∀ n, IsTotalQueryBound (𝒜hash n) 0 := fun _ => trivial
+  apply handshakeBindsFail_secure_of_triple_bundle_secure_RO
+    (bindsFailExp := { advantage := bindsFailAdv 𝒜 })
+    (groth16Exp := { advantage := groth16SoundnessAdv (reduce_binds_to_groth 𝒜) })
+    (tdxExp := { advantage := fun _ => 0 })
+    (𝒜 := 𝒜hash) (qb := 0)
+    (hbound_𝒜 := hbound_𝒜hash)
+  · intro n
+    have hp : bindsFailAdv 𝒜 n ≤
+        groth16SoundnessAdv (reduce_binds_to_groth 𝒜) n := by
+      show Pr[ handshakeBindsWinPred | simulateQ (protocolSpecHonestSim n) (𝒜 n) ] ≤
+           Pr[ groth16SoundnessWinPred | simulateQ (protocolSpecHonestSim n)
+                  (reduce_binds_to_groth 𝒜 n) ]
+      rw [show reduce_binds_to_groth 𝒜 n
+            = 𝒜 n >>= pure ∘
+                (fun p : HandshakeCheck n × UserDataCommit × PrivKey × Plaintext =>
+                  (p.1.proof, p.1.inputs))
+            from rfl]
+      simp only [← map_eq_bind_pure_comp, simulateQ_map, probEvent_map]
+      exact probEvent_mono (fun p _ hp =>
+        handshakeBindsWinPred_imp_groth16SoundnessWinPred_projected p hp)
+    calc bindsFailAdv 𝒜 n
+        ≤ groth16SoundnessAdv (reduce_binds_to_groth 𝒜) n := hp
+      _ = groth16SoundnessAdv (reduce_binds_to_groth 𝒜) n + 0 + 0 := by ring
+      _ ≤ groth16SoundnessAdv (reduce_binds_to_groth 𝒜) n + 0 +
+            commitHashCollisionAdvRO 𝒜hash n := by
+          exact add_le_add le_rfl (zero_le _)
+  · exact h_groth_negl
+  · exact negligible_of_zero (fun _ => rfl)
+
+theorem sessionConfFail_secure_via_RO_packaging
+    (𝒜 : SessionConfidentialityAdv) :
+    ({ advantage := confFailAdv 𝒜 } : SecurityExp).secure := by
+  let 𝒜hash : CommitHashCollisionAdvRO := fun _ => return ()
+  have hbound_𝒜hash : ∀ n, IsTotalQueryBound (𝒜hash n) 0 := fun _ => trivial
+  apply sessionConfFail_secure_of_triple_bundle_secure_RO
+    (confFailExp := { advantage := confFailAdv 𝒜 })
+    (groth16Exp := { advantage := fun _ => 0 })
+    (tdxExp := { advantage := fun _ => 0 })
+    (𝒜 := 𝒜hash) (qb := 0)
+    (hbound_𝒜 := hbound_𝒜hash)
+  · intro n
+    have hzero : confFailAdv 𝒜 n = 0 := by
+      have : confFailAdv 𝒜 = 0 := by
+        funext m
+        refine le_antisymm ?_ (zero_le _)
+        calc Pr[ sessionConfWinPred | simulateQ (protocolSpecHonestSim m) (𝒜 m) ]
+            ≤ Pr[ fun _ => False | simulateQ (protocolSpecHonestSim m) (𝒜 m) ] := by
+              exact probEvent_mono (fun p _ hp => sessionConfWinPred_false p hp)
+          _ = 0 := probEvent_False _
+      exact congr_fun this n
+    show confFailAdv 𝒜 n ≤ 0 + 0 + commitHashCollisionAdvRO 𝒜hash n
+    rw [hzero]; exact zero_le _
+  · exact negligible_of_zero (fun _ => rfl)
+  · exact negligible_of_zero (fun _ => rfl)
+
+theorem sessionConfExtractor_secure_via_RO_packaging
+    (𝒜 : SessionConfidentialityExtractorAdv) :
+    ({ advantage := extFailAdv 𝒜 } : SecurityExp).secure := by
+  let 𝒜hash : CommitHashCollisionAdvRO := fun _ => return ()
+  have hbound_𝒜hash : ∀ n, IsTotalQueryBound (𝒜hash n) 0 := fun _ => trivial
+  apply sessionConfExtractor_secure_of_triple_bundle_secure_RO
+    (extractorFailExp := { advantage := extFailAdv 𝒜 })
+    (groth16Exp := { advantage := fun _ => 0 })
+    (tdxExp := { advantage := fun _ => 0 })
+    (𝒜 := 𝒜hash) (qb := 0)
+    (hbound_𝒜 := hbound_𝒜hash)
+  · intro n
+    have hzero : extFailAdv 𝒜 n = 0 := by
+      have : extFailAdv 𝒜 = 0 := by
+        funext m
+        refine le_antisymm ?_ (zero_le _)
+        calc Pr[ sessionConfExtractorWinPred | simulateQ (protocolSpecHonestSim m) (𝒜 m) ]
+            ≤ Pr[ fun _ => False | simulateQ (protocolSpecHonestSim m) (𝒜 m) ] := by
+              exact probEvent_mono (fun p _ hp =>
+                sessionConfExtractorWinPred_false p hp)
+          _ = 0 := probEvent_False _
+      exact congr_fun this n
+    show extFailAdv 𝒜 n ≤ 0 + 0 + commitHashCollisionAdvRO 𝒜hash n
+    rw [hzero]; exact zero_le _
+  · exact negligible_of_zero (fun _ => rfl)
+  · exact negligible_of_zero (fun _ => rfl)
+
+theorem crossSessionBindFail_secure_via_RO_packaging
+    (𝒜 : CrossSessionBindAdv)
+    (h_groth_negl :
+      negligible (groth16SoundnessAdv (reduce_crossSessionBind_to_groth 𝒜))) :
+    ({ advantage := bindFailAdv 𝒜 } : SecurityExp).secure := by
+  let 𝒜h  : CommitHashCollisionAdvRO      := fun _ => return ()
+  let 𝒜hB : CommitHashBytesCollisionAdvRO := fun _ => return ()
+  have hbound_𝒜h  : ∀ n, IsTotalQueryBound (𝒜h n)  0 := fun _ => trivial
+  have hbound_𝒜hB : ∀ n, IsTotalQueryBound (𝒜hB n) 0 := fun _ => trivial
+  apply crossSessionBindFail_secure_of_quad_bundle_secure_RO
+    (bindFailExp := { advantage := bindFailAdv 𝒜 })
+    (groth16KSExp := { advantage := groth16SoundnessAdv (reduce_crossSessionBind_to_groth 𝒜) })
+    (circuitEqExp := { advantage := fun _ => 0 })
+    (tdxExp := { advantage := fun _ => 0 })
+    (𝒜h := 𝒜h) (qbh := 0)
+    (hbound_𝒜h := hbound_𝒜h)
+    (𝒜hB := 𝒜hB) (qbhB := 0)
+    (hbound_𝒜hB := hbound_𝒜hB)
+  · intro n
+    have hp : bindFailAdv 𝒜 n ≤
+        groth16SoundnessAdv (reduce_crossSessionBind_to_groth 𝒜) n := by
+      show Pr[ crossSessionBindWinPred | simulateQ (protocolSpecHonestSim n) (𝒜 n) ] ≤
+           Pr[ groth16SoundnessWinPred | simulateQ (protocolSpecHonestSim n)
+                  (reduce_crossSessionBind_to_groth 𝒜 n) ]
+      rw [show reduce_crossSessionBind_to_groth 𝒜 n
+            = 𝒜 n >>= pure ∘
+                (fun p : HandshakeCheck n × RawSessionSetPubKey × PrivKey × Plaintext =>
+                  (p.1.proof, p.1.inputs))
+            from rfl]
+      simp only [← map_eq_bind_pure_comp, simulateQ_map, probEvent_map]
+      exact probEvent_mono (fun p _ hp =>
+        crossSessionBindWinPred_imp_groth16SoundnessWinPred_projected p hp)
+    calc bindFailAdv 𝒜 n
+        ≤ groth16SoundnessAdv (reduce_crossSessionBind_to_groth 𝒜) n := hp
+      _ = groth16SoundnessAdv (reduce_crossSessionBind_to_groth 𝒜) n + 0 + 0 + 0 + 0 := by ring
+      _ ≤ groth16SoundnessAdv (reduce_crossSessionBind_to_groth 𝒜) n + 0 + 0 +
+            commitHashCollisionAdvRO 𝒜h n +
+            commitHashBytesCollisionAdvRO 𝒜hB n := by
+          gcongr <;> exact zero_le _
+  · exact h_groth_negl
+  · exact negligible_of_zero (fun _ => rfl)
+  · exact negligible_of_zero (fun _ => rfl)
 
 end Specs.Quartz.Protocol.ProtocolVCVioROModel

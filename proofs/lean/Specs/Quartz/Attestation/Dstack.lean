@@ -166,11 +166,15 @@ abbrev MrEnclave : Type := BitVec 384
     codomain of both `commitHashE` and `commitHashBytesE`; with
     `Fintype UserData` available, the random-oracle birthday-bound
     discharge of those (d-pigeonhole-impossible) axioms becomes
-    statable (though discharge also requires `Fintype` on the
-    *domain*, which remains pending — `UserDataCommit` cardinality
-    is still abstract because `DomainSep`, `Addr`, `PubKey` have
-    not been refined yet). -/
-abbrev UserData : Type := BitVec 512
+    statable.
+
+    **Cycle 6.22.d.3 (aggressive parameterisation, 2026-05-24)**:
+    refined further from `BitVec 512` to `BitVec n` with `n` the
+    security parameter. The production deployment instantiates at
+    `n = 512` (the dstack quote's 64-byte `report_data` field); the
+    cryptographic guarantees scale super-polynomially in `n` via the
+    cycle-6.22.d.1 birthday bound. -/
+abbrev UserData (n : Nat) : Type := BitVec n
 
 /-- Abstract soundness predicate.
 
@@ -202,9 +206,9 @@ axiom was_signed_by_dstack : TdxQuote → Prop
     "with negligible probability of forgery / under valid collateral"
     qualifiers cryptography actually provides. The truthful
     `OracleComp` formulation is sketched in `DstackVCVio.lean`. -/
-structure TdxVerifier where
-  verify : TdxQuote → Option (MrEnclave × UserData)
-  sound (q : TdxQuote) (mr : MrEnclave) (ud : UserData) :
+structure TdxVerifier (n : Nat) where
+  verify : TdxQuote → Option (MrEnclave × UserData n)
+  sound (q : TdxQuote) (mr : MrEnclave) (ud : UserData n) :
     verify q = some (mr, ud) → was_signed_by_dstack q
   complete (q : TdxQuote) :
     was_signed_by_dstack q → ∃ mr ud, verify q = some (mr, ud)
@@ -221,7 +225,7 @@ structure TdxVerifier where
     docstring — the bundled record's `sound` / `complete` fields
     are classical-Prop implications that hide a probabilistic gap;
     the truthful formulation lives in `DstackVCVio.lean`. -/
-axiom tdxVerifier : TdxVerifier
+axiom tdxVerifier (n : Nat) : TdxVerifier n
 
 /-- Decode and verify a TDX quote.
 
@@ -235,8 +239,9 @@ axiom tdxVerifier : TdxVerifier
 
     Previously an axiom; now a derived definition. Marked
     `noncomputable` because `tdxVerifier` is an axiom. -/
-noncomputable def verifyTdxQuote (q : TdxQuote) : Option (MrEnclave × UserData) :=
-  tdxVerifier.verify q
+noncomputable def verifyTdxQuote (n : Nat) (q : TdxQuote) :
+    Option (MrEnclave × UserData n) :=
+  (tdxVerifier n).verify q
 
 /-- **Theorem (formerly an axiom): Soundness** of TDX quote
     verification — a quote that verifies must have been signed by
@@ -254,9 +259,9 @@ noncomputable def verifyTdxQuote (q : TdxQuote) : Option (MrEnclave × UserData)
     consumers should eventually migrate to the
     `tdxVerifier_soundness_negl` shape sketched in
     `DstackVCVio.lean`. -/
-theorem verifyTdxQuote_sound (q : TdxQuote) (mr : MrEnclave) (ud : UserData) :
-    verifyTdxQuote q = some (mr, ud) → was_signed_by_dstack q :=
-  tdxVerifier.sound q mr ud
+theorem verifyTdxQuote_sound (n : Nat) (q : TdxQuote) (mr : MrEnclave) (ud : UserData n) :
+    verifyTdxQuote n q = some (mr, ud) → was_signed_by_dstack q :=
+  (tdxVerifier n).sound q mr ud
 
 /-- **Theorem (formerly an axiom): Completeness** of TDX quote
     verification — a genuine dstack quote can be decoded to its
@@ -273,26 +278,26 @@ theorem verifyTdxQuote_sound (q : TdxQuote) (mr : MrEnclave) (ud : UserData) :
     Intel collateral and non-revocation of the PCK chain. The
     classical-Prop form drops those preconditions; the truthful
     formulation is in `DstackVCVio.lean`. -/
-theorem verifyTdxQuote_complete (q : TdxQuote) :
-    was_signed_by_dstack q → ∃ mr ud, verifyTdxQuote q = some (mr, ud) :=
-  tdxVerifier.complete q
+theorem verifyTdxQuote_complete (n : Nat) (q : TdxQuote) :
+    was_signed_by_dstack q → ∃ mr ud, verifyTdxQuote n q = some (mr, ud) :=
+  (tdxVerifier n).complete q
 
 /-- Extract the user-data field from a successfully verified quote.
 
     Convenience wrapper used by composition theorems. -/
-noncomputable def userDataOf (q : TdxQuote) : Option UserData :=
-  (verifyTdxQuote q).map Prod.snd
+noncomputable def userDataOf (n : Nat) (q : TdxQuote) : Option (UserData n) :=
+  (verifyTdxQuote n q).map Prod.snd
 
 /-- Extract the measurement from a successfully verified quote. -/
-noncomputable def mrEnclaveOf (q : TdxQuote) : Option MrEnclave :=
-  (verifyTdxQuote q).map Prod.fst
+noncomputable def mrEnclaveOf (n : Nat) (q : TdxQuote) : Option MrEnclave :=
+  (verifyTdxQuote n q).map Prod.fst
 
 /-- **Derived corollary**: if a quote verifies, both projections
     succeed. -/
 theorem projections_some_of_verify
-    (q : TdxQuote) (mr : MrEnclave) (ud : UserData)
-    (h : verifyTdxQuote q = some (mr, ud)) :
-    mrEnclaveOf q = some mr ∧ userDataOf q = some ud := by
+    (n : Nat) (q : TdxQuote) (mr : MrEnclave) (ud : UserData n)
+    (h : verifyTdxQuote n q = some (mr, ud)) :
+    mrEnclaveOf n q = some mr ∧ userDataOf n q = some ud := by
   refine ⟨?_, ?_⟩ <;> simp [mrEnclaveOf, userDataOf, h]
 
 end Specs.Quartz.Attestation.Dstack

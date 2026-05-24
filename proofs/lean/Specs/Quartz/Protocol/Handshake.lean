@@ -38,20 +38,20 @@ open Specs.Quartz.Attestation.Zkdcap
 
 /-- A pending handshake check, exactly mirroring the three contract
     predicates from `Attested<M,A>::handle`. -/
-structure HandshakeCheck where
+structure HandshakeCheck (n : Nat) where
   proof          : Groth16Proof
   inputs         : PublicInputs
   /-- The MR_ENCLAVE declared by the contract's configured `Config`. -/
   expectedMr     : MrEnclave
   /-- The `user_data` carried by the inbound message. -/
-  msgUserData    : UserData
+  msgUserData    : UserData n
 
 /-- The contract's combined acceptance predicate. Mirror of the
     boolean conjunction the `Attested` handler enforces. -/
-def Accepted (h : HandshakeCheck) : Prop :=
+def Accepted {n : Nat} (h : HandshakeCheck n) : Prop :=
   verifyGroth16 zkdcapVKey h.proof h.inputs = true ∧
-  mrEnclaveOf (inputs_to_quote h.inputs) = some h.expectedMr ∧
-  userDataOf (inputs_to_quote h.inputs) = some h.msgUserData
+  mrEnclaveOf n (inputs_to_quote h.inputs) = some h.expectedMr ∧
+  userDataOf n (inputs_to_quote h.inputs) = some h.msgUserData
 
 /-- **Soundness of handshake acceptance**.
 
@@ -61,11 +61,11 @@ def Accepted (h : HandshakeCheck) : Prop :=
 
     This composes all three trust-boundary axioms into a single
     consumable lemma for downstream protocol reasoning. -/
-theorem handshake_sound (h : HandshakeCheck) (acc : Accepted h) :
+theorem handshake_sound {n : Nat} (h : HandshakeCheck n) (acc : Accepted h) :
     ∃ q : TdxQuote,
       was_signed_by_dstack q ∧
-      mrEnclaveOf q = some h.expectedMr ∧
-      userDataOf q  = some h.msgUserData := by
+      mrEnclaveOf n q = some h.expectedMr ∧
+      userDataOf n q  = some h.msgUserData := by
   obtain ⟨hZk, hMr, hUd⟩ := acc
   refine ⟨inputs_to_quote h.inputs, ?_, hMr, hUd⟩
   exact verifyGroth16_sound h.proof h.inputs hZk
@@ -88,19 +88,19 @@ theorem handshake_sound (h : HandshakeCheck) (acc : Accepted h) :
     from `UserDataCommit.lean`. The only remaining trust-boundary
     assumption used in this chain is `commitHash_inj`. -/
 theorem handshake_binds_ecies_key
-    (h : HandshakeCheck) (acc : Accepted h)
+    {n : Nat} (h : HandshakeCheck n) (acc : Accepted h)
     (c : UserDataCommit)
-    (h_commit : h.msgUserData = commitHash c)
+    (h_commit : h.msgUserData = commitHash n c)
     (sk : PrivKey)
     (h_sk : keyOf sk = c.eciesPubkey)
     (pt : Plaintext) :
-    (∃ q, was_signed_by_dstack q ∧ userDataOf q = some h.msgUserData) ∧
-    pkOfUserData h.msgUserData = some c.eciesPubkey ∧
+    (∃ q, was_signed_by_dstack q ∧ userDataOf n q = some h.msgUserData) ∧
+    pkOfUserData n h.msgUserData = some c.eciesPubkey ∧
     decrypt sk (encrypt c.eciesPubkey pt) = some pt := by
   refine ⟨?_, ?_, ?_⟩
   · obtain ⟨q, hq, _, hUd⟩ := handshake_sound h acc
     exact ⟨q, hq, hUd⟩
-  · rw [h_commit]; exact pkOfUserData_commitHash c
+  · rw [h_commit]; exact pkOfUserData_commitHash n c
   · rw [← h_sk]; exact roundtrip sk pt
 
 end Specs.Quartz.Protocol.Handshake

@@ -117,8 +117,8 @@ axiom serializeTransferRequest_inj :
     composed with the trailing-32-byte-zero padding the Rust code
     applies. Spec-level definition — `noncomputable` because
     `commitHashBytes` is an axiom. -/
-noncomputable def userDataOfTransferRequest (req : TransferRequest) : UserData :=
-  commitHashBytes (serializeTransferRequest req)
+noncomputable def userDataOfTransferRequest (n : Nat) (req : TransferRequest) : UserData n :=
+  commitHashBytes n (serializeTransferRequest req)
 
 /-- **Structural correspondence**: distinct `TransferRequest`s
     produce distinct `user_data`.
@@ -128,17 +128,17 @@ noncomputable def userDataOfTransferRequest (req : TransferRequest) : UserData :
     handler relies on when it compares `msg.user_data() ==
     attestation.user_data()`. -/
 theorem distinct_transfer_request_gives_distinct_user_data
-    (r1 r2 : TransferRequest) (hne : r1 ≠ r2) :
-    userDataOfTransferRequest r1 ≠ userDataOfTransferRequest r2 := by
+    (n : Nat) (r1 r2 : TransferRequest) (hne : r1 ≠ r2) :
+    userDataOfTransferRequest n r1 ≠ userDataOfTransferRequest n r2 := by
   intro h
   apply hne
-  exact serializeTransferRequest_inj (commitHashBytes_inj h)
+  exact serializeTransferRequest_inj (commitHashBytes_inj n h)
 
 /-- Injectivity of `userDataOfTransferRequest` repackaged as a
     `Function.Injective` statement. -/
-theorem userDataOfTransferRequest_inj :
-    Function.Injective userDataOfTransferRequest := by
+theorem userDataOfTransferRequest_inj (n : Nat) :
+    Function.Injective (userDataOfTransferRequest n) := by
   intro r1 r2 h
-  exact serializeTransferRequest_inj (commitHashBytes_inj h)
+  exact serializeTransferRequest_inj (commitHashBytes_inj n h)
 
 end Specs.Quartz.Crypto

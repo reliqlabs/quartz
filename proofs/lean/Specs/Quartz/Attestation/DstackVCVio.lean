@@ -130,7 +130,7 @@ open Specs.Quartz.Attestation.Dstack
     deterministic given the underlying primitive's public state
     (verification key, collateral), whereas a random oracle's
     response is lazily-uniform-random per query. -/
-def VerifyTdxQuoteSpec : OracleSpec TdxQuote := fun _ => Option (MrEnclave × UserData)
+def VerifyTdxQuoteSpec (n : Nat) : OracleSpec TdxQuote := fun _ => Option (MrEnclave × UserData n)
 
 /-- The `verifyTdxQuote` operation, expressed as an `OracleComp`
     query against `VerifyTdxQuoteSpec`.
@@ -154,9 +154,9 @@ def VerifyTdxQuoteSpec : OracleSpec TdxQuote := fun _ => Option (MrEnclave × Us
     requires the `[Fintype]` / `[Inhabited]` instances mentioned
     above plus a concrete reduction to PCK-signature
     unforgeability. -/
-noncomputable def verifyTdxQuoteOC (q : TdxQuote) :
-    OracleComp VerifyTdxQuoteSpec (Option (MrEnclave × UserData)) :=
-  OracleComp.lift (OracleQuery.query (spec := VerifyTdxQuoteSpec) q)
+noncomputable def verifyTdxQuoteOC (n : Nat) (q : TdxQuote) :
+    OracleComp (VerifyTdxQuoteSpec n) (Option (MrEnclave × UserData n)) :=
+  OracleComp.lift (OracleQuery.query (spec := VerifyTdxQuoteSpec n) q)
 
 /-
   **Honesty target (sketch, unproved): soundness negligibility**

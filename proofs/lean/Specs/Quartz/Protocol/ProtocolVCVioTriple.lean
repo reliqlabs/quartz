@@ -191,7 +191,7 @@ collision (`x₁ ≠ x₂ ∧ H x₁ = H x₂`).
     `OracleComp`-valued adversary and the placeholder `IsPPT`
     swapped for `PolyQueries`. -/
 def CommitHashCollisionAdv : Type :=
-  ℕ → OracleComp ProtocolSpec (UserDataCommit × UserDataCommit)
+  (n : ℕ) → OracleComp (ProtocolSpec n) (UserDataCommit × UserDataCommit)
 
 /-- The advantage of a `commitHash` collision-finder at security
     parameter `n`, parametrised on an opaque bound.
@@ -219,7 +219,7 @@ def commitHashCollisionGame (adv : CommitHashCollisionAdvantage) :
     "win" condition is that the pair is a collision under the
     byte-domain hash. -/
 def CommitHashBytesCollisionAdv : Type :=
-  ℕ → OracleComp ProtocolSpec (ByteSeq × ByteSeq)
+  (n : ℕ) → OracleComp (ProtocolSpec n) (ByteSeq × ByteSeq)
 
 /-- The advantage of a `commitHashBytes` collision-finder at security
     parameter `n`. Parametric on an opaque bound for the same
@@ -277,8 +277,8 @@ sub-bucket of the ledger. -/
 /-- **Win predicate for the `commitHash` collision-resistance game**:
     the adversary's output pair `(uc₁, uc₂)` is a genuine collision —
     distinct inputs with equal hashes. -/
-def commitHashCollisionWinPred (p : UserDataCommit × UserDataCommit) : Prop :=
-  p.1 ≠ p.2 ∧ commitHash p.1 = commitHash p.2
+def commitHashCollisionWinPred (n : Nat) (p : UserDataCommit × UserDataCommit) : Prop :=
+  p.1 ≠ p.2 ∧ commitHash n p.1 = commitHash n p.2
 
 /-- **Content-bearing advantage** for the `commitHash` collision-
     resistance game (Cycle 6.15). Replaces the `Type`-only
@@ -286,21 +286,21 @@ def commitHashCollisionWinPred (p : UserDataCommit × UserDataCommit) : Prop :=
     over the adversary's `OracleComp ProtocolSpec` output. -/
 noncomputable def commitHashCollisionAdv
     (𝒜 : CommitHashCollisionAdv) (n : ℕ) : ℝ≥0∞ :=
-  Pr[ commitHashCollisionWinPred |
-      simulateQ protocolSpecHonestSim (𝒜 n) ]
+  Pr[ commitHashCollisionWinPred n |
+      simulateQ (protocolSpecHonestSim n) (𝒜 n) ]
 
 /-- **Win predicate for the `commitHashBytes` collision-resistance
     game**: same shape as `commitHashCollisionWinPred`, with the
     byte-domain hash. -/
-def commitHashBytesCollisionWinPred (p : ByteSeq × ByteSeq) : Prop :=
-  p.1 ≠ p.2 ∧ commitHashBytes p.1 = commitHashBytes p.2
+def commitHashBytesCollisionWinPred (n : Nat) (p : ByteSeq × ByteSeq) : Prop :=
+  p.1 ≠ p.2 ∧ commitHashBytes n p.1 = commitHashBytes n p.2
 
 /-- **Content-bearing advantage** for the `commitHashBytes`
     collision-resistance game (Cycle 6.15). -/
 noncomputable def commitHashBytesCollisionAdv
     (𝒜 : CommitHashBytesCollisionAdv) (n : ℕ) : ℝ≥0∞ :=
-  Pr[ commitHashBytesCollisionWinPred |
-      simulateQ protocolSpecHonestSim (𝒜 n) ]
+  Pr[ commitHashBytesCollisionWinPred n |
+      simulateQ (protocolSpecHonestSim n) (𝒜 n) ]
 
 /-! ## Composite triple-bundle adversaries -/
 
@@ -311,7 +311,7 @@ noncomputable def commitHashBytesCollisionAdv
     (signed-quote-existence ∧ pubkey-extraction ∧ ECIES roundtrip)
     fails. -/
 def HandshakeBindsAdv : Type :=
-  ℕ → OracleComp ProtocolSpec (HandshakeCheck × UserDataCommit × PrivKey × Plaintext)
+  (n : ℕ) → OracleComp (ProtocolSpec n) (HandshakeCheck n × UserDataCommit × PrivKey × Plaintext)
 
 /-- The advantage of a `handshake_binds_ecies_key`-attack adversary. -/
 abbrev HandshakeBindsAdvantage : Type :=
@@ -323,7 +323,7 @@ abbrev HandshakeBindsAdvantage : Type :=
     that the contract accepts but ECIES decryption fails to
     recover the plaintext. -/
 def SessionConfidentialityAdv : Type :=
-  ℕ → OracleComp ProtocolSpec (HandshakeCheck × UserDataCommit × PrivKey × Plaintext)
+  (n : ℕ) → OracleComp (ProtocolSpec n) (HandshakeCheck n × UserDataCommit × PrivKey × Plaintext)
 
 /-- The advantage of a `session_confidentiality`-attack adversary. -/
 abbrev SessionConfidentialityAdvantage : Type :=
@@ -333,7 +333,7 @@ abbrev SessionConfidentialityAdvantage : Type :=
     shape as `SessionConfidentialityAdv`; the difference is the
     win-condition formulation (extractor-mediated). -/
 def SessionConfidentialityExtractorAdv : Type :=
-  ℕ → OracleComp ProtocolSpec (HandshakeCheck × UserDataCommit × PrivKey × Plaintext)
+  (n : ℕ) → OracleComp (ProtocolSpec n) (HandshakeCheck n × UserDataCommit × PrivKey × Plaintext)
 
 /-- The advantage of a `session_confidentiality_via_extractor`-attack
     adversary. -/
@@ -345,7 +345,7 @@ abbrev SessionConfidentialityExtractorAdvantage : Type :=
     `(HandshakeCheck × TransferRequest)` such that the contract
     accepts but the conservation invariant fails to propagate. -/
 def TransfersConservationAdv : Type :=
-  ℕ → OracleComp ProtocolSpec (HandshakeCheck × TransferRequest)
+  (n : ℕ) → OracleComp (ProtocolSpec n) (HandshakeCheck n × TransferRequest)
 
 /-- The advantage of a `cross_component_transfers_conservation`-attack
     adversary. -/
@@ -358,7 +358,7 @@ abbrev TransfersConservationAdvantage : Type :=
     contract accepts but the claimed winner does not match the
     canonical Vickrey resolution. -/
 def AuctionDeterminismAdv : Type :=
-  ℕ → OracleComp ProtocolSpec (HandshakeCheck × AuctionRound × ResolveMessage)
+  (n : ℕ) → OracleComp (ProtocolSpec n) (HandshakeCheck n × AuctionRound × ResolveMessage)
 
 /-- The advantage of a `cross_component_auction_winner_determinism`-
     attack adversary. -/
@@ -399,14 +399,14 @@ behind a collision-resistance hypothesis on the concrete hash).
     the three-conjunct conclusion fails. Per the analysis above, the
     only realisable failure mode is the P1 (signed-quote-existence)
     failure — P2 and P3 are unconditional in the current carrier model. -/
-def handshakeBindsWinPred
-    (p : HandshakeCheck × UserDataCommit × PrivKey × Plaintext) : Prop :=
+def handshakeBindsWinPred {n : Nat}
+    (p : HandshakeCheck n × UserDataCommit × PrivKey × Plaintext) : Prop :=
   let (h, c, sk, pt) := p
   Accepted h ∧
-  h.msgUserData = commitHash c ∧
+  h.msgUserData = commitHash n c ∧
   keyOf sk = c.eciesPubkey ∧
-  ¬ ( (∃ q, was_signed_by_dstack q ∧ userDataOf q = some h.msgUserData) ∧
-      pkOfUserData h.msgUserData = some c.eciesPubkey ∧
+  ¬ ( (∃ q, was_signed_by_dstack q ∧ userDataOf n q = some h.msgUserData) ∧
+      pkOfUserData n h.msgUserData = some c.eciesPubkey ∧
       decrypt sk (encrypt c.eciesPubkey pt) = some pt )
 
 /-- **Reduction**: from a binds-attack adversary, construct a
@@ -414,29 +414,34 @@ def handshakeBindsWinPred
     `(proof, inputs)` pair. -/
 def reduce_binds_to_groth (𝒜 : HandshakeBindsAdv) : Groth16SoundAdv :=
   fun n => do
-    let p : HandshakeCheck × UserDataCommit × PrivKey × Plaintext ← 𝒜 n
+    let p : HandshakeCheck n × UserDataCommit × PrivKey × Plaintext ← 𝒜 n
     pure (p.1.proof, p.1.inputs)
 
 /-- **Cycle 6.14.b — `IsPPT_proper`-preservation under
     `reduce_binds_to_groth`**. Same structure as
     `reduce_handshake_to_groth_preserves_IsPPT_proper`. -/
 theorem reduce_binds_to_groth_preserves_IsPPT_proper
-    (𝒜 : HandshakeBindsAdv) (h : IsPPT_proper 𝒜) :
-    IsPPT_proper (reduce_binds_to_groth 𝒜) :=
-  IsPPT_proper_of_bind_pure_comp 𝒜
-    (fun p : HandshakeCheck × UserDataCommit × PrivKey × Plaintext =>
+    (𝒜 : HandshakeBindsAdv)
+    (h : IsPPT_proper (T := fun n => HandshakeCheck n × UserDataCommit × PrivKey × Plaintext) 𝒜) :
+    IsPPT_proper (T := fun _ => Groth16Proof × PublicInputs)
+      (reduce_binds_to_groth 𝒜) :=
+  IsPPT_proper_of_bind_pure_comp
+    (S := fun n => HandshakeCheck n × UserDataCommit × PrivKey × Plaintext)
+    (T := fun _ => Groth16Proof × PublicInputs) 𝒜
+    (fun n (p : HandshakeCheck n × UserDataCommit × PrivKey × Plaintext) =>
       (p.1.proof, p.1.inputs)) h
 
 /-- **Content-bearing advantage** for the handshake-binds game. -/
 noncomputable def bindsFailAdv (𝒜 : HandshakeBindsAdv) (n : ℕ) : ℝ≥0∞ :=
-  Pr[ handshakeBindsWinPred | simulateQ protocolSpecHonestSim (𝒜 n) ]
+  Pr[ handshakeBindsWinPred | simulateQ (protocolSpecHonestSim n) (𝒜 n) ]
 
 /-- Forward implication: a binds-attack win on `(h, c, sk, pt)` implies
     a Groth16-soundness win on the projected `(h.proof, h.inputs)`.
     The proof uses `pkOfUserData_commitHash` and `roundtrip` to eliminate
     the P2 and P3 failure cases, leaving only the P1 (Groth16) break. -/
 theorem handshakeBindsWinPred_imp_groth16SoundnessWinPred_projected
-    (p : HandshakeCheck × UserDataCommit × PrivKey × Plaintext)
+    {n : Nat}
+    (p : HandshakeCheck n × UserDataCommit × PrivKey × Plaintext)
     (hp : handshakeBindsWinPred p) :
     groth16SoundnessWinPred (p.1.proof, p.1.inputs) := by
   obtain ⟨⟨hZk, hMr, hUd⟩, h_commit, h_sk, h_neg⟩ := hp
@@ -444,7 +449,7 @@ theorem handshakeBindsWinPred_imp_groth16SoundnessWinPred_projected
   intro h_signed
   apply h_neg
   refine ⟨⟨inputs_to_quote p.1.inputs, h_signed, hUd⟩, ?_, ?_⟩
-  · rw [h_commit]; exact pkOfUserData_commitHash p.2.1
+  · rw [h_commit]; exact pkOfUserData_commitHash n p.2.1
   · rw [← h_sk]; exact roundtrip p.2.2.1 p.2.2.2
 
 /-! ## Triple-bundle lifted theorem 1: `handshake_binds_ecies_key` -/
@@ -458,14 +463,14 @@ theorem handshakeBindsWinPred_imp_groth16SoundnessWinPred_projected
     The classical chain remains unchanged: this corollary preserves
     the original axiom closure. -/
 theorem handshake_binds_ecies_key_classical
-    (h : HandshakeCheck) (acc : Accepted h)
+    {n : Nat} (h : HandshakeCheck n) (acc : Accepted h)
     (c : UserDataCommit)
-    (h_commit : h.msgUserData = commitHash c)
+    (h_commit : h.msgUserData = commitHash n c)
     (sk : PrivKey)
     (h_sk : keyOf sk = c.eciesPubkey)
     (pt : Plaintext) :
-    (∃ q, was_signed_by_dstack q ∧ userDataOf q = some h.msgUserData) ∧
-    pkOfUserData h.msgUserData = some c.eciesPubkey ∧
+    (∃ q, was_signed_by_dstack q ∧ userDataOf n q = some h.msgUserData) ∧
+    pkOfUserData n h.msgUserData = some c.eciesPubkey ∧
     decrypt sk (encrypt c.eciesPubkey pt) = some pt :=
   handshake_binds_ecies_key h acc c h_commit sk h_sk pt
 
@@ -491,11 +496,11 @@ theorem handshake_binds_ecies_key_negl
     negligible (bindsFailAdv 𝒜) := by
   refine negligible_of_le ?_ h_groth_negl
   intro n
-  show Pr[ handshakeBindsWinPred | simulateQ protocolSpecHonestSim (𝒜 n) ] ≤
-       Pr[ groth16SoundnessWinPred | simulateQ protocolSpecHonestSim (reduce_binds_to_groth 𝒜 n) ]
+  show Pr[ handshakeBindsWinPred | simulateQ (protocolSpecHonestSim n) (𝒜 n) ] ≤
+       Pr[ groth16SoundnessWinPred | simulateQ (protocolSpecHonestSim n) (reduce_binds_to_groth 𝒜 n) ]
   rw [show reduce_binds_to_groth 𝒜 n
         = 𝒜 n >>= pure ∘
-            (fun p : HandshakeCheck × UserDataCommit × PrivKey × Plaintext =>
+            (fun p : HandshakeCheck n × UserDataCommit × PrivKey × Plaintext =>
               (p.1.proof, p.1.inputs))
         from rfl]
   simp only [← map_eq_bind_pure_comp, simulateQ_map, probEvent_map]
@@ -610,19 +615,19 @@ has probability zero.
 
 /-- **Classical form (preserved as a corollary)**: `session_confidentiality`. -/
 theorem session_confidentiality_classical
-    (h : HandshakeCheck) (acc : Accepted h)
-    (c : UserDataCommit) (h_commit : h.msgUserData = commitHash c)
+    {n : Nat} (h : HandshakeCheck n) (acc : Accepted h)
+    (c : UserDataCommit) (h_commit : h.msgUserData = commitHash n c)
     (sk : PrivKey) (h_sk : keyOf sk = c.eciesPubkey)
     (msg : Plaintext) :
     decrypt sk (encrypt c.eciesPubkey msg) = some msg :=
   session_confidentiality h acc c h_commit sk h_sk msg
 
 /-- **Win predicate**: hypotheses hold but the ECIES roundtrip fails. -/
-def sessionConfWinPred
-    (p : HandshakeCheck × UserDataCommit × PrivKey × Plaintext) : Prop :=
+def sessionConfWinPred {n : Nat}
+    (p : HandshakeCheck n × UserDataCommit × PrivKey × Plaintext) : Prop :=
   let (h, c, sk, msg) := p
   Accepted h ∧
-  h.msgUserData = commitHash c ∧
+  h.msgUserData = commitHash n c ∧
   keyOf sk = c.eciesPubkey ∧
   ¬ decrypt sk (encrypt c.eciesPubkey msg) = some msg
 
@@ -630,8 +635,8 @@ def sessionConfWinPred
     c.eciesPubkey`, the ECIES roundtrip `decrypt sk (encrypt
     c.eciesPubkey msg) = some msg` holds (rewriting via `h_sk` and
     applying `roundtrip sk msg`). -/
-theorem sessionConfWinPred_false
-    (p : HandshakeCheck × UserDataCommit × PrivKey × Plaintext)
+theorem sessionConfWinPred_false {n : Nat}
+    (p : HandshakeCheck n × UserDataCommit × PrivKey × Plaintext)
     (hp : sessionConfWinPred p) : False := by
   obtain ⟨_, _, h_sk, h_neg⟩ := hp
   apply h_neg
@@ -642,7 +647,7 @@ theorem sessionConfWinPred_false
     game. Identically zero under the current spec abstraction. -/
 noncomputable def confFailAdv
     (𝒜 : SessionConfidentialityAdv) (n : ℕ) : ℝ≥0∞ :=
-  Pr[ sessionConfWinPred | simulateQ protocolSpecHonestSim (𝒜 n) ]
+  Pr[ sessionConfWinPred | simulateQ (protocolSpecHonestSim n) (𝒜 n) ]
 
 /-- **Probabilistic form (Step 6.2 lift, Cycle-6.7-corrected)**:
     `session_confidentiality_negl`.
@@ -657,12 +662,11 @@ noncomputable def confFailAdv
 theorem session_confidentiality_negl
     (𝒜 : SessionConfidentialityAdv) :
     negligible (confFailAdv 𝒜) := by
-  -- `confFailAdv 𝒜 n ≤ Pr[ fun _ => False | simulateQ protocolSpecHonestSim (𝒜 n) ] = 0`
   have h_zero : ∀ n, confFailAdv 𝒜 n = 0 := by
     intro n
     refine le_antisymm ?_ (zero_le _)
-    calc Pr[ sessionConfWinPred | simulateQ protocolSpecHonestSim (𝒜 n) ]
-        ≤ Pr[ fun _ => False | simulateQ protocolSpecHonestSim (𝒜 n) ] := by
+    calc Pr[ sessionConfWinPred | simulateQ (protocolSpecHonestSim n) (𝒜 n) ]
+        ≤ Pr[ fun _ => False | simulateQ (protocolSpecHonestSim n) (𝒜 n) ] := by
           exact probEvent_mono (fun p _ hp => sessionConfWinPred_false p hp)
       _ = 0 := probEvent_False _
   have h_fun_zero : confFailAdv 𝒜 = 0 := by
@@ -772,43 +776,43 @@ the failure event is unconditionally impossible.
 /-- **Classical form (preserved as a corollary)**:
     `session_confidentiality_via_extractor`. -/
 theorem session_confidentiality_via_extractor_classical
-    (h : HandshakeCheck) (acc : Accepted h)
-    (c : UserDataCommit) (h_commit : h.msgUserData = commitHash c)
+    {n : Nat} (h : HandshakeCheck n) (acc : Accepted h)
+    (c : UserDataCommit) (h_commit : h.msgUserData = commitHash n c)
     (sk : PrivKey) (h_sk : keyOf sk = c.eciesPubkey)
     (msg : Plaintext) :
-    ∃ pk, pkOfUserData h.msgUserData = some pk ∧
+    ∃ pk, pkOfUserData n h.msgUserData = some pk ∧
           decrypt sk (encrypt pk msg) = some msg :=
   session_confidentiality_via_extractor h acc c h_commit sk h_sk msg
 
 /-- **Win predicate**: hypotheses hold but no `pk` exists witnessing
     the `∃ pk, pkOfUserData = some pk ∧ decrypt = some msg`
     conclusion. -/
-def sessionConfExtractorWinPred
-    (p : HandshakeCheck × UserDataCommit × PrivKey × Plaintext) : Prop :=
+def sessionConfExtractorWinPred {n : Nat}
+    (p : HandshakeCheck n × UserDataCommit × PrivKey × Plaintext) : Prop :=
   let (h, c, sk, msg) := p
   Accepted h ∧
-  h.msgUserData = commitHash c ∧
+  h.msgUserData = commitHash n c ∧
   keyOf sk = c.eciesPubkey ∧
-  ¬ ∃ pk, pkOfUserData h.msgUserData = some pk ∧
+  ¬ ∃ pk, pkOfUserData n h.msgUserData = some pk ∧
           decrypt sk (encrypt pk msg) = some msg
 
 /-- The win predicate is unconditionally false. Witness `pk :=
     c.eciesPubkey`; both conjuncts hold by `pkOfUserData_commitHash`
     (after rewriting via `h_commit`) and `roundtrip` (after rewriting
     via `h_sk`). -/
-theorem sessionConfExtractorWinPred_false
-    (p : HandshakeCheck × UserDataCommit × PrivKey × Plaintext)
+theorem sessionConfExtractorWinPred_false {n : Nat}
+    (p : HandshakeCheck n × UserDataCommit × PrivKey × Plaintext)
     (hp : sessionConfExtractorWinPred p) : False := by
   obtain ⟨_, h_commit, h_sk, h_neg⟩ := hp
   apply h_neg
   refine ⟨p.2.1.eciesPubkey, ?_, ?_⟩
-  · rw [h_commit]; exact pkOfUserData_commitHash p.2.1
+  · rw [h_commit]; exact pkOfUserData_commitHash n p.2.1
   · rw [← h_sk]; exact roundtrip p.2.2.1 p.2.2.2
 
 /-- **Content-bearing failure advantage**, identically zero. -/
 noncomputable def extFailAdv
     (𝒜 : SessionConfidentialityExtractorAdv) (n : ℕ) : ℝ≥0∞ :=
-  Pr[ sessionConfExtractorWinPred | simulateQ protocolSpecHonestSim (𝒜 n) ]
+  Pr[ sessionConfExtractorWinPred | simulateQ (protocolSpecHonestSim n) (𝒜 n) ]
 
 /-- **Probabilistic form (Step 6.2 lift, Cycle-6.8-corrected)**:
     `session_confidentiality_via_extractor_negl`. Degenerate
@@ -819,8 +823,8 @@ theorem session_confidentiality_via_extractor_negl
   have h_zero : ∀ n, extFailAdv 𝒜 n = 0 := by
     intro n
     refine le_antisymm ?_ (zero_le _)
-    calc Pr[ sessionConfExtractorWinPred | simulateQ protocolSpecHonestSim (𝒜 n) ]
-        ≤ Pr[ fun _ => False | simulateQ protocolSpecHonestSim (𝒜 n) ] := by
+    calc Pr[ sessionConfExtractorWinPred | simulateQ (protocolSpecHonestSim n) (𝒜 n) ]
+        ≤ Pr[ fun _ => False | simulateQ (protocolSpecHonestSim n) (𝒜 n) ] := by
           exact probEvent_mono (fun p _ hp =>
             sessionConfExtractorWinPred_false p hp)
       _ = 0 := probEvent_False _
@@ -924,17 +928,17 @@ summand. Otherwise the union-bound pattern is identical.
 /-- **Classical form (preserved as a corollary)**:
     `cross_component_transfers_conservation`. -/
 theorem cross_component_transfers_conservation_classical
-    (h : HandshakeCheck) (acc : Accepted h)
+    {n : Nat} (h : HandshakeCheck n) (acc : Accepted h)
     (req : TransferRequest)
-    (h_raw : h.msgUserData = userDataOfTransferRequest req)
+    (h_raw : h.msgUserData = userDataOfTransferRequest n req)
     (b : EnclaveBalances)
     (hInv : conservationInvariant b)
     (b' : EnclaveBalances)
     (hApp : applyTransferRequest b req = some b') :
     (∃ q : TdxQuote,
         was_signed_by_dstack q ∧
-        mrEnclaveOf q = some h.expectedMr ∧
-        userDataOf q  = some (userDataOfTransferRequest req)) ∧
+        mrEnclaveOf n q = some h.expectedMr ∧
+        userDataOf n q  = some (userDataOfTransferRequest n req)) ∧
     conservationInvariant b' :=
   cross_component_transfers_conservation h acc req h_raw b hInv b' hApp
 
@@ -962,42 +966,47 @@ cycle 6.6's `reduce_binds_to_groth`. -/
     transfer-request user_data, but no signed quote witnesses the
     binding. Part 2 (conservation) is omitted from the win event
     because it cannot fail. -/
-def transfersConsWinPred
-    (p : HandshakeCheck × TransferRequest) : Prop :=
+def transfersConsWinPred {n : Nat}
+    (p : HandshakeCheck n × TransferRequest) : Prop :=
   let (h, req) := p
   Accepted h ∧
-  h.msgUserData = userDataOfTransferRequest req ∧
+  h.msgUserData = userDataOfTransferRequest n req ∧
   ¬ ∃ q : TdxQuote,
       was_signed_by_dstack q ∧
-      mrEnclaveOf q = some h.expectedMr ∧
-      userDataOf q  = some (userDataOfTransferRequest req)
+      mrEnclaveOf n q = some h.expectedMr ∧
+      userDataOf n q  = some (userDataOfTransferRequest n req)
 
 /-- **Reduction** to Groth16-soundness adversary by projecting
     `(h.proof, h.inputs)`. -/
 def reduce_transfers_to_groth
     (𝒜 : TransfersConservationAdv) : Groth16SoundAdv :=
   fun n => do
-    let p : HandshakeCheck × TransferRequest ← 𝒜 n
+    let p : HandshakeCheck n × TransferRequest ← 𝒜 n
     pure (p.1.proof, p.1.inputs)
 
 /-- **Cycle 6.14.b — `IsPPT_proper`-preservation under
     `reduce_transfers_to_groth`**. -/
 theorem reduce_transfers_to_groth_preserves_IsPPT_proper
-    (𝒜 : TransfersConservationAdv) (h : IsPPT_proper 𝒜) :
-    IsPPT_proper (reduce_transfers_to_groth 𝒜) :=
-  IsPPT_proper_of_bind_pure_comp 𝒜
-    (fun p : HandshakeCheck × TransferRequest => (p.1.proof, p.1.inputs)) h
+    (𝒜 : TransfersConservationAdv)
+    (h : IsPPT_proper (T := fun n => HandshakeCheck n × TransferRequest) 𝒜) :
+    IsPPT_proper (T := fun _ => Groth16Proof × PublicInputs)
+      (reduce_transfers_to_groth 𝒜) :=
+  IsPPT_proper_of_bind_pure_comp
+    (S := fun n => HandshakeCheck n × TransferRequest)
+    (T := fun _ => Groth16Proof × PublicInputs) 𝒜
+    (fun n (p : HandshakeCheck n × TransferRequest) => (p.1.proof, p.1.inputs)) h
 
 /-- **Content-bearing failure advantage**. -/
 noncomputable def consFailAdv
     (𝒜 : TransfersConservationAdv) (n : ℕ) : ℝ≥0∞ :=
-  Pr[ transfersConsWinPred | simulateQ protocolSpecHonestSim (𝒜 n) ]
+  Pr[ transfersConsWinPred | simulateQ (protocolSpecHonestSim n) (𝒜 n) ]
 
 /-- Forward implication: a transfers-conservation win on `(h, req)`
     implies a Groth16-soundness win on the projected
     `(h.proof, h.inputs)`. -/
 theorem transfersConsWinPred_imp_groth16SoundnessWinPred_projected
-    (p : HandshakeCheck × TransferRequest)
+    {n : Nat}
+    (p : HandshakeCheck n × TransferRequest)
     (hp : transfersConsWinPred p) :
     groth16SoundnessWinPred (p.1.proof, p.1.inputs) := by
   obtain ⟨⟨hZk, hMr, hUd⟩, h_raw, h_neg⟩ := hp
@@ -1016,11 +1025,11 @@ theorem cross_component_transfers_conservation_negl
     negligible (consFailAdv 𝒜) := by
   refine negligible_of_le ?_ h_groth_negl
   intro n
-  show Pr[ transfersConsWinPred | simulateQ protocolSpecHonestSim (𝒜 n) ] ≤
-       Pr[ groth16SoundnessWinPred | simulateQ protocolSpecHonestSim (reduce_transfers_to_groth 𝒜 n) ]
+  show Pr[ transfersConsWinPred | simulateQ (protocolSpecHonestSim n) (𝒜 n) ] ≤
+       Pr[ groth16SoundnessWinPred | simulateQ (protocolSpecHonestSim n) (reduce_transfers_to_groth 𝒜 n) ]
   rw [show reduce_transfers_to_groth 𝒜 n
         = 𝒜 n >>= pure ∘
-            (fun p : HandshakeCheck × TransferRequest =>
+            (fun p : HandshakeCheck n × TransferRequest =>
               (p.1.proof, p.1.inputs))
         from rfl]
   simp only [← map_eq_bind_pure_comp, simulateQ_map, probEvent_map]
@@ -1114,18 +1123,18 @@ theorem transfersConsGame_secure_of_triple_bundle_secure_AGAINST_PPT_ADVERSARIES
 /-- **Classical form (preserved as a corollary)**:
     `cross_component_auction_winner_determinism`. -/
 theorem cross_component_auction_winner_determinism_classical
-    (h : HandshakeCheck) (acc : Accepted h)
+    {n : Nat} (h : HandshakeCheck n) (acc : Accepted h)
     (round : AuctionRound)
     (claimed : ResolveMessage)
-    (h_raw : h.msgUserData = userDataOfResolveMessage claimed)
+    (h_raw : h.msgUserData = userDataOfResolveMessage n claimed)
     (h_round : claimed.roundId = round.roundId)
     (h_canon : claimed = resolveAuction round) :
     claimed.winner = (resolveAuction round).winner ∧
     claimed.price  = (resolveAuction round).price ∧
     (∃ q : TdxQuote,
         was_signed_by_dstack q ∧
-        mrEnclaveOf q = some h.expectedMr ∧
-        userDataOf q  = some (userDataOfResolveMessage claimed)) :=
+        mrEnclaveOf n q = some h.expectedMr ∧
+        userDataOf n q  = some (userDataOfResolveMessage n claimed)) :=
   cross_component_auction_winner_determinism h acc round claimed h_raw h_round h_canon
 
 /-! ### Cycle-6.10 framing
@@ -1140,47 +1149,52 @@ Single-bundle (Groth16-only). Conclusion parts:
 Same shape as cycle 6.9. -/
 
 /-- **Win predicate**: hypotheses hold but the conclusion fails. -/
-def auctionDetermWinPred
-    (p : HandshakeCheck × AuctionRound × ResolveMessage) : Prop :=
+def auctionDetermWinPred {n : Nat}
+    (p : HandshakeCheck n × AuctionRound × ResolveMessage) : Prop :=
   let (h, round, claimed) := p
   Accepted h ∧
-  h.msgUserData = userDataOfResolveMessage claimed ∧
+  h.msgUserData = userDataOfResolveMessage n claimed ∧
   claimed.roundId = round.roundId ∧
   claimed = resolveAuction round ∧
   ¬ ( claimed.winner = (resolveAuction round).winner ∧
       claimed.price  = (resolveAuction round).price ∧
       ∃ q : TdxQuote,
         was_signed_by_dstack q ∧
-        mrEnclaveOf q = some h.expectedMr ∧
-        userDataOf q  = some (userDataOfResolveMessage claimed) )
+        mrEnclaveOf n q = some h.expectedMr ∧
+        userDataOf n q  = some (userDataOfResolveMessage n claimed) )
 
 /-- **Reduction** to Groth16-soundness adversary. -/
 def reduce_auctionDeterm_to_groth
     (𝒜 : AuctionDeterminismAdv) : Groth16SoundAdv :=
   fun n => do
-    let p : HandshakeCheck × AuctionRound × ResolveMessage ← 𝒜 n
+    let p : HandshakeCheck n × AuctionRound × ResolveMessage ← 𝒜 n
     pure (p.1.proof, p.1.inputs)
 
 /-- **Cycle 6.14.b — `IsPPT_proper`-preservation under
     `reduce_auctionDeterm_to_groth`**. -/
 theorem reduce_auctionDeterm_to_groth_preserves_IsPPT_proper
-    (𝒜 : AuctionDeterminismAdv) (h : IsPPT_proper 𝒜) :
-    IsPPT_proper (reduce_auctionDeterm_to_groth 𝒜) :=
-  IsPPT_proper_of_bind_pure_comp 𝒜
-    (fun p : HandshakeCheck × AuctionRound × ResolveMessage =>
+    (𝒜 : AuctionDeterminismAdv)
+    (h : IsPPT_proper (T := fun n => HandshakeCheck n × AuctionRound × ResolveMessage) 𝒜) :
+    IsPPT_proper (T := fun _ => Groth16Proof × PublicInputs)
+      (reduce_auctionDeterm_to_groth 𝒜) :=
+  IsPPT_proper_of_bind_pure_comp
+    (S := fun n => HandshakeCheck n × AuctionRound × ResolveMessage)
+    (T := fun _ => Groth16Proof × PublicInputs) 𝒜
+    (fun n (p : HandshakeCheck n × AuctionRound × ResolveMessage) =>
       (p.1.proof, p.1.inputs)) h
 
 /-- **Content-bearing failure advantage**. -/
 noncomputable def auctFailAdv
     (𝒜 : AuctionDeterminismAdv) (n : ℕ) : ℝ≥0∞ :=
-  Pr[ auctionDetermWinPred | simulateQ protocolSpecHonestSim (𝒜 n) ]
+  Pr[ auctionDetermWinPred | simulateQ (protocolSpecHonestSim n) (𝒜 n) ]
 
 /-- Forward implication: hypotheses + ¬conclusion implies a
     Groth16-soundness break on the projected `(h.proof, h.inputs)`.
     Parts 1 & 2 of the conclusion are forced by `h_canon`; the only
     real failure mode is Part 3. -/
 theorem auctionDetermWinPred_imp_groth16SoundnessWinPred_projected
-    (p : HandshakeCheck × AuctionRound × ResolveMessage)
+    {n : Nat}
+    (p : HandshakeCheck n × AuctionRound × ResolveMessage)
     (hp : auctionDetermWinPred p) :
     groth16SoundnessWinPred (p.1.proof, p.1.inputs) := by
   obtain ⟨⟨hZk, hMr, hUd⟩, h_raw, _, h_canon, h_neg⟩ := hp
@@ -1202,11 +1216,11 @@ theorem cross_component_auction_winner_determinism_negl
     negligible (auctFailAdv 𝒜) := by
   refine negligible_of_le ?_ h_groth_negl
   intro n
-  show Pr[ auctionDetermWinPred | simulateQ protocolSpecHonestSim (𝒜 n) ] ≤
-       Pr[ groth16SoundnessWinPred | simulateQ protocolSpecHonestSim (reduce_auctionDeterm_to_groth 𝒜 n) ]
+  show Pr[ auctionDetermWinPred | simulateQ (protocolSpecHonestSim n) (𝒜 n) ] ≤
+       Pr[ groth16SoundnessWinPred | simulateQ (protocolSpecHonestSim n) (reduce_auctionDeterm_to_groth 𝒜 n) ]
   rw [show reduce_auctionDeterm_to_groth 𝒜 n
         = 𝒜 n >>= pure ∘
-            (fun p : HandshakeCheck × AuctionRound × ResolveMessage =>
+            (fun p : HandshakeCheck n × AuctionRound × ResolveMessage =>
               (p.1.proof, p.1.inputs))
         from rfl]
   simp only [← map_eq_bind_pure_comp, simulateQ_map, probEvent_map]

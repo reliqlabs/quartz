@@ -27,4 +27,3 @@ import Specs.Quartz.Protocol.ProtocolVCVioDual
 import Specs.Quartz.Protocol.ProtocolVCVioTriple
 import Specs.Quartz.Protocol.ProtocolVCVioQuad
 import Specs.Quartz.Protocol.ProtocolVCVioROModel
-import Specs.Quartz.Protocol.ProtocolVCVioROModelParam

@@ -332,9 +332,9 @@ theorem verifyGroth16_sound (proof : Groth16Proof) (inputs : PublicInputs) :
     `DstackZkAttestation` handler soundness) will consume: ZK
     acceptance entails the existence of decodable DCAP evidence. -/
 theorem verifyGroth16_yields_decoded
-    (proof : Groth16Proof) (inputs : PublicInputs)
+    (n : Nat) (proof : Groth16Proof) (inputs : PublicInputs)
     (h : verifyGroth16 zkdcapVKey proof inputs = true) :
-    ∃ mr ud, verifyTdxQuote (inputs_to_quote inputs) = some (mr, ud) :=
-  verifyTdxQuote_complete _ (verifyGroth16_sound proof inputs h)
+    ∃ mr ud, verifyTdxQuote n (inputs_to_quote inputs) = some (mr, ud) :=
+  verifyTdxQuote_complete n _ (verifyGroth16_sound proof inputs h)
 
 end Specs.Quartz.Attestation.Zkdcap

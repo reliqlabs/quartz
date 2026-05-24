@@ -198,9 +198,9 @@ open Specs.Quartz.Protocol.Handshake
     primitive does **not** appear as a query branch here — its
     roundtrip is a deterministic property of `eciesAlg`, not an
     oracle query. -/
-def ProtocolSpec : OracleSpec
+def ProtocolSpec (n : Nat) : OracleSpec
     (((UserDataCommit ⊕ ByteSeq) ⊕ TdxQuote) ⊕ VerifyGroth16Query) :=
-  ((CommitHashSpec + CommitHashBytesSpec) + VerifyTdxQuoteSpec) + VerifyGroth16Spec
+  ((CommitHashSpec n + CommitHashBytesSpec n) + VerifyTdxQuoteSpec n) + VerifyGroth16Spec
 
 /-! ## Honest deterministic simulator for `ProtocolSpec` (Cycle 6.13)
 
@@ -282,22 +282,23 @@ polynomial query bound) because the adversary type is now an
 /-- Honest deterministic responder for `CommitHashSpec`.
     Each `commitHash`-oracle query returns the classical
     `commitHash` value via `pure`. -/
-noncomputable def commitHashHonestSim : QueryImpl CommitHashSpec ProbComp :=
-  fun uc => (pure (commitHash uc) : ProbComp UserData)
+noncomputable def commitHashHonestSim (n : Nat) :
+    QueryImpl (CommitHashSpec n) ProbComp :=
+  fun uc => (pure (commitHash n uc) : ProbComp (UserData n))
 
 /-- Honest deterministic responder for `CommitHashBytesSpec`.
     Each `commitHashBytes`-oracle query returns the classical
     `commitHashBytes` value via `pure`. -/
-noncomputable def commitHashBytesHonestSim :
-    QueryImpl CommitHashBytesSpec ProbComp :=
-  fun b => (pure (commitHashBytes b) : ProbComp UserData)
+noncomputable def commitHashBytesHonestSim (n : Nat) :
+    QueryImpl (CommitHashBytesSpec n) ProbComp :=
+  fun b => (pure (commitHashBytes n b) : ProbComp (UserData n))
 
 /-- Honest deterministic responder for `VerifyTdxQuoteSpec`.
     Each `verifyTdxQuote`-oracle query returns the classical
     `verifyTdxQuote` value via `pure`. -/
-noncomputable def verifyTdxQuoteHonestSim :
-    QueryImpl VerifyTdxQuoteSpec ProbComp :=
-  fun q => (pure (verifyTdxQuote q) : ProbComp (Option (MrEnclave × UserData)))
+noncomputable def verifyTdxQuoteHonestSim (n : Nat) :
+    QueryImpl (VerifyTdxQuoteSpec n) ProbComp :=
+  fun q => (pure (verifyTdxQuote n q) : ProbComp (Option (MrEnclave × UserData n)))
 
 /-- Honest deterministic responder for `VerifyGroth16Spec`.
     Each `verifyGroth16`-oracle query returns the classical
@@ -321,8 +322,8 @@ noncomputable def verifyGroth16HonestSim :
     Used by every cycle-6.13+ lift to convert
     `𝒜 n : OracleComp ProtocolSpec T` into a `ProbComp T` over
     which `Pr[winPred | ...]` is well-defined. -/
-noncomputable def protocolSpecHonestSim : QueryImpl ProtocolSpec ProbComp :=
-  ((commitHashHonestSim + commitHashBytesHonestSim) + verifyTdxQuoteHonestSim)
+noncomputable def protocolSpecHonestSim (n : Nat) : QueryImpl (ProtocolSpec n) ProbComp :=
+  ((commitHashHonestSim n + commitHashBytesHonestSim n) + verifyTdxQuoteHonestSim n)
     + verifyGroth16HonestSim
 
 /-! ## Random-oracle migration path (Cycle 6.22, documentation only)
@@ -585,12 +586,12 @@ noncomputable local instance instDecidableEqVerifyGroth16Query :
     Currently consumed only by `IsPPT_proper.*` documentation
     (no `*_AGAINST_PPT_ADVERSARIES` packagings yet) — those land
     in cycle 6.15 along with per-reduction preservation lemmas. -/
-noncomputable def IsPPT_proper {T : Type}
-    (𝒜 : ℕ → OracleComp ProtocolSpec T) : Prop :=
+noncomputable def IsPPT_proper {T : ℕ → Type}
+    (𝒜 : (n : ℕ) → OracleComp (ProtocolSpec n) (T n)) : Prop :=
   Nonempty (PolyQueries
     (ι := (((UserDataCommit ⊕ ByteSeq) ⊕ TdxQuote) ⊕ VerifyGroth16Query))
-    (spec := fun _ : ℕ => ProtocolSpec)
-    (α := fun _ : ℕ => PUnit) (β := fun _ : ℕ => T)
+    (spec := fun n : ℕ => ProtocolSpec n)
+    (α := fun _ : ℕ => PUnit) (β := T)
     (fun n (_ : PUnit) => 𝒜 n))
 
 /-! ## `IsPPT_proper`-preservation under reductions (Cycle 6.14.b)
@@ -620,14 +621,15 @@ build.
     `← map_eq_bind_pure_comp`; `isPerIndexQueryBound_map_iff` reduces
     the per-index query bound on the mapped computation to the bound
     on the source. -/
-theorem IsPPT_proper_of_bind_pure_comp {S T : Type}
-    (𝒜 : ℕ → OracleComp ProtocolSpec S) (f : S → T)
+theorem IsPPT_proper_of_bind_pure_comp {S T : ℕ → Type}
+    (𝒜 : (n : ℕ) → OracleComp (ProtocolSpec n) (S n))
+    (f : (n : ℕ) → S n → T n)
     (h : IsPPT_proper 𝒜) :
-    IsPPT_proper (fun n => 𝒜 n >>= pure ∘ f) := by
+    IsPPT_proper (fun n => 𝒜 n >>= pure ∘ f n) := by
   obtain ⟨⟨qb, hqb⟩⟩ := h
   refine ⟨⟨qb, ?_⟩⟩
   intro n _
-  show IsPerIndexQueryBound (𝒜 n >>= pure ∘ f) _
+  show IsPerIndexQueryBound (𝒜 n >>= pure ∘ f n) _
   rw [← map_eq_bind_pure_comp, isPerIndexQueryBound_map_iff]
   exact hqb n PUnit.unit
 
@@ -773,7 +775,7 @@ is what ArkLib (cryptographic side) and a reference DCAP verifier
     measuring the win-probability, so the four protocol oracles
     are interpreted by the honest-deterministic responder defined
     above. -/
-def Groth16SoundAdv : Type := ℕ → OracleComp ProtocolSpec (Groth16Proof × PublicInputs)
+def Groth16SoundAdv : Type := (n : ℕ) → OracleComp (ProtocolSpec n) (Groth16Proof × PublicInputs)
 
 /-- The advantage of a Groth16 soundness adversary at security
     parameter `n`, parametrised on an opaque bound.
@@ -843,9 +845,9 @@ def groth16SoundnessWinPred (p : Groth16Proof × PublicInputs) : Prop :=
 /-- **Protocol-fail predicate**: the verifier accepts but the TDX quote
     does not decode (no `(mr, ud)` is recovered). This is the event whose
     probability `verifyGroth16_yields_decoded_negl` bounds. -/
-def verifyGroth16FailPred (p : Groth16Proof × PublicInputs) : Prop :=
+def verifyGroth16FailPred (n : Nat) (p : Groth16Proof × PublicInputs) : Prop :=
   verifyGroth16 zkdcapVKey p.1 p.2 = true ∧
-  ¬ ∃ mr ud, verifyTdxQuote (inputs_to_quote p.2) = some (mr, ud)
+  ¬ ∃ mr ud, verifyTdxQuote n (inputs_to_quote p.2) = some (mr, ud)
 
 /-- **Content-bearing advantage** for the Groth16 soundness game: the
     probability that the adversary's `(proof, inputs)` output causes the
@@ -863,7 +865,7 @@ def verifyGroth16FailPred (p : Groth16Proof × PublicInputs) : Prop :=
     simulation is the identity, so this advantage agrees with the
     pre-cycle-6.13 `Pr[winPred | 𝒜 n]` form. -/
 noncomputable def groth16SoundnessAdv (𝒜 : Groth16SoundAdv) (n : ℕ) : ℝ≥0∞ :=
-  Pr[ groth16SoundnessWinPred | simulateQ protocolSpecHonestSim (𝒜 n) ]
+  Pr[ groth16SoundnessWinPred | simulateQ (protocolSpecHonestSim n) (𝒜 n) ]
 
 /-- **Content-bearing advantage** for the protocol-fail event: the
     probability that the adversary's `(proof, inputs)` output causes the
@@ -871,7 +873,7 @@ noncomputable def groth16SoundnessAdv (𝒜 : Groth16SoundAdv) (n : ℕ) : ℝ�
 
     **Cycle 6.13**: same simulator-wrapping as `groth16SoundnessAdv`. -/
 noncomputable def verifyGroth16FailAdv (𝒜 : Groth16SoundAdv) (n : ℕ) : ℝ≥0∞ :=
-  Pr[ verifyGroth16FailPred | simulateQ protocolSpecHonestSim (𝒜 n) ]
+  Pr[ verifyGroth16FailPred n | simulateQ (protocolSpecHonestSim n) (𝒜 n) ]
 
 /-- The protocol-fail event implies the Groth16 soundness-win event:
     if the verifier accepts but no `(mr, ud)` is decoded, then the quote
@@ -879,10 +881,10 @@ noncomputable def verifyGroth16FailAdv (𝒜 : Groth16SoundAdv) (n : ℕ) : ℝ�
     would otherwise produce the decoding). This is the pointwise
     implication that the Round A-corrected `verifyGroth16_yields_decoded_negl`
     closes over via `probEvent_mono`. -/
-theorem verifyGroth16FailPred_imp_groth16SoundnessWinPred
+theorem verifyGroth16FailPred_imp_groth16SoundnessWinPred (n : Nat)
     (p : Groth16Proof × PublicInputs)
-    (h : verifyGroth16FailPred p) : groth16SoundnessWinPred p :=
-  ⟨h.1, fun h_signed => h.2 (verifyTdxQuote_complete _ h_signed)⟩
+    (h : verifyGroth16FailPred n p) : groth16SoundnessWinPred p :=
+  ⟨h.1, fun h_signed => h.2 (verifyTdxQuote_complete n _ h_signed)⟩
 
 /-! ## Lifted protocol theorem: `verifyGroth16_yields_decoded_negl`
 
@@ -925,11 +927,11 @@ the bound passes through with equality.
     Re-exported from `Zkdcap.lean` for convenience. Rides on the
     bundled `groth16Verifier` (Step 5) + `tdxVerifier` (Step 4)
     classical-`Prop` axioms. -/
-theorem verifyGroth16_yields_decoded_classical
+theorem verifyGroth16_yields_decoded_classical (n : Nat)
     (proof : Groth16Proof) (inputs : PublicInputs)
     (h : verifyGroth16 zkdcapVKey proof inputs = true) :
-    ∃ mr ud, verifyTdxQuote (inputs_to_quote inputs) = some (mr, ud) :=
-  verifyGroth16_yields_decoded proof inputs h
+    ∃ mr ud, verifyTdxQuote n (inputs_to_quote inputs) = some (mr, ud) :=
+  verifyGroth16_yields_decoded n proof inputs h
 
 /-- **Probabilistic form (the Step 6.0 lift, Cycle-6.4-corrected)**:
     `verifyGroth16_yields_decoded_negl`.
@@ -974,7 +976,7 @@ theorem verifyGroth16_yields_decoded_negl
   refine negligible_of_le ?_ h_negl
   intro n
   exact probEvent_mono (fun p _ hp =>
-    verifyGroth16FailPred_imp_groth16SoundnessWinPred p hp)
+    verifyGroth16FailPred_imp_groth16SoundnessWinPred n p hp)
 
 /-- **Convenience packaging**: the lifted protocol theorem expressed
     as a `SecurityExp` (asymptotic security experiment), reducing the

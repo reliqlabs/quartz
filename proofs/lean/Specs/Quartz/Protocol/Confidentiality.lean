@@ -53,8 +53,8 @@ open Specs.Quartz.Protocol.Handshake
     rewritten through `h_sk`. The structural content is that the
     *same* `c.eciesPubkey` appears on both ends of the chain. -/
 theorem session_confidentiality
-    (h : HandshakeCheck) (acc : Accepted h)
-    (c : UserDataCommit) (h_commit : h.msgUserData = commitHash c)
+    {n : Nat} (h : HandshakeCheck n) (acc : Accepted h)
+    (c : UserDataCommit) (h_commit : h.msgUserData = commitHash n c)
     (sk : PrivKey) (h_sk : keyOf sk = c.eciesPubkey)
     (msg : Plaintext) :
     decrypt sk (encrypt c.eciesPubkey msg) = some msg := by
@@ -73,14 +73,14 @@ theorem session_confidentiality
     consistency check) and wants to skip re-introducing the
     `UserDataCommit` witness. -/
 theorem session_confidentiality_via_extractor
-    (h : HandshakeCheck) (acc : Accepted h)
-    (c : UserDataCommit) (h_commit : h.msgUserData = commitHash c)
+    {n : Nat} (h : HandshakeCheck n) (acc : Accepted h)
+    (c : UserDataCommit) (h_commit : h.msgUserData = commitHash n c)
     (sk : PrivKey) (h_sk : keyOf sk = c.eciesPubkey)
     (msg : Plaintext) :
-    ∃ pk, pkOfUserData h.msgUserData = some pk ∧
+    ∃ pk, pkOfUserData n h.msgUserData = some pk ∧
           decrypt sk (encrypt pk msg) = some msg := by
   refine ⟨c.eciesPubkey, ?_, ?_⟩
-  · rw [h_commit]; exact pkOfUserData_commitHash c
+  · rw [h_commit]; exact pkOfUserData_commitHash n c
   · exact session_confidentiality h acc c h_commit sk h_sk msg
 
 end Specs.Quartz.Protocol.Confidentiality

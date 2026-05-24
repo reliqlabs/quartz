@@ -90,20 +90,20 @@ open Specs.Quartz.Protocol.Handshake
     through `h_raw` discharges (4); `Ecies.roundtrip` rewritten
     through `h_sk` discharges (5). No new axioms are needed. -/
 theorem cross_component_session_bind
-    (h : HandshakeCheck) (acc : Accepted h)
+    {n : Nat} (h : HandshakeCheck n) (acc : Accepted h)
     (raw : RawSessionSetPubKey)
-    (h_raw : h.msgUserData = userDataOfSessionSetPubKey raw)
+    (h_raw : h.msgUserData = userDataOfSessionSetPubKey n raw)
     (sk : PrivKey) (h_sk : keyOf sk = raw.pubKey) :
     ∃ q : TdxQuote,
       was_signed_by_dstack q ∧
-      mrEnclaveOf q = some h.expectedMr ∧
-      userDataOf q = some h.msgUserData ∧
-      pkOfUserData h.msgUserData = some raw.pubKey ∧
+      mrEnclaveOf n q = some h.expectedMr ∧
+      userDataOf n q = some h.msgUserData ∧
+      pkOfUserData n h.msgUserData = some raw.pubKey ∧
       (∀ msg : Plaintext, decrypt sk (encrypt raw.pubKey msg) = some msg) := by
   obtain ⟨q, hSigned, hMr, hUd⟩ := handshake_sound h acc
   refine ⟨q, hSigned, hMr, hUd, ?_, ?_⟩
   · rw [h_raw]
-    exact userData_session_set_pub_key_binds_ecies raw
+    exact userData_session_set_pub_key_binds_ecies n raw
   · intro msg
     rw [← h_sk]
     exact roundtrip sk msg

@@ -187,18 +187,18 @@ theorem resolveAuction_deterministic (r : AuctionRound) :
 
     No new axioms beyond `decryptBid` are introduced. -/
 theorem cross_component_auction_winner_determinism
-    (h : HandshakeCheck) (acc : Accepted h)
+    {n : Nat} (h : HandshakeCheck n) (acc : Accepted h)
     (round : AuctionRound)
     (claimed : ResolveMessage)
-    (h_raw : h.msgUserData = userDataOfResolveMessage claimed)
+    (h_raw : h.msgUserData = userDataOfResolveMessage n claimed)
     (_h_round : claimed.roundId = round.roundId)
     (h_canon : claimed = resolveAuction round) :
     claimed.winner = (resolveAuction round).winner ∧
     claimed.price  = (resolveAuction round).price ∧
     (∃ q : TdxQuote,
         was_signed_by_dstack q ∧
-        mrEnclaveOf q = some h.expectedMr ∧
-        userDataOf q  = some (userDataOfResolveMessage claimed)) := by
+        mrEnclaveOf n q = some h.expectedMr ∧
+        userDataOf n q  = some (userDataOfResolveMessage n claimed)) := by
   -- Discharge (1) and (2) by rewriting via `h_canon`.
   refine ⟨?_, ?_, ?_⟩
   · rw [h_canon]

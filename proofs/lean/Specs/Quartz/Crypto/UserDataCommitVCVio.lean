@@ -89,7 +89,7 @@ open Specs.Quartz.Attestation.Dstack
     derivable because `UserData` (the response type) and
     `UserDataCommit` (the index type, via its abstract carriers)
     are not `Fintype`. -/
-def CommitHashSpec : OracleSpec UserDataCommit := fun _ => UserData
+def CommitHashSpec (n : Nat) : OracleSpec UserDataCommit := fun _ => UserData n
 
 /-- The `commitHash` operation, expressed as an `OracleComp` query
     against `CommitHashSpec`.
@@ -103,9 +103,9 @@ def CommitHashSpec : OracleSpec UserDataCommit := fun _ => UserData
     Currently kept as a documentary definition; full integration
     requires the `[Fintype]` / `[Inhabited]` instances mentioned
     above. -/
-noncomputable def commitHashOC (uc : UserDataCommit) :
-    OracleComp CommitHashSpec UserData :=
-  OracleComp.lift (OracleQuery.query (spec := CommitHashSpec) uc)
+noncomputable def commitHashOC (n : Nat) (uc : UserDataCommit) :
+    OracleComp (CommitHashSpec n) (UserData n) :=
+  OracleComp.lift (OracleQuery.query (spec := CommitHashSpec n) uc)
 
 /-
   **Honesty target (sketch, unproved)**: collisions in the random-

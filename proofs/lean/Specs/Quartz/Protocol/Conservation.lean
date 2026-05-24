@@ -225,17 +225,17 @@ theorem applyTransferRequest_preserves_conservation
 
     No new axioms; pure composition. -/
 theorem cross_component_transfers_conservation
-    (h : HandshakeCheck) (acc : Accepted h)
+    {n : Nat} (h : HandshakeCheck n) (acc : Accepted h)
     (req : TransferRequest)
-    (h_raw : h.msgUserData = userDataOfTransferRequest req)
+    (h_raw : h.msgUserData = userDataOfTransferRequest n req)
     (b : EnclaveBalances)
     (hInv : conservationInvariant b)
     (b' : EnclaveBalances)
     (hApp : applyTransferRequest b req = some b') :
     (∃ q : TdxQuote,
         was_signed_by_dstack q ∧
-        mrEnclaveOf q = some h.expectedMr ∧
-        userDataOf q  = some (userDataOfTransferRequest req)) ∧
+        mrEnclaveOf n q = some h.expectedMr ∧
+        userDataOf n q  = some (userDataOfTransferRequest n req)) ∧
     conservationInvariant b' := by
   obtain ⟨q, hSigned, hMr, hUd⟩ := handshake_sound h acc
   refine ⟨⟨q, hSigned, hMr, ?_⟩, ?_⟩

@@ -260,14 +260,14 @@ theorem serializeRawSessionSetPubKey_inj :
     `commitHashBytes_inj` axiom) into a single embedding-shaped
     axiom. The bundling does NOT fix the impossibility — it
     surfaces it as the load-bearing trust assumption. -/
-axiom commitHashBytesE : ByteSeq ↪ UserData
+axiom commitHashBytesE (n : Nat) : ByteSeq ↪ UserData n
 
 /-- SHA-256–based byte hash producing a `UserData` blob. Public
     API preserved from the pre-refactor axiom; now a derived `def`
     projecting the bundled `commitHashBytesE` embedding. Marked
     `noncomputable` because the underlying embedding is an axiom. -/
-noncomputable def commitHashBytes (b : ByteSeq) : UserData :=
-  commitHashBytesE b
+noncomputable def commitHashBytes (n : Nat) (b : ByteSeq) : UserData n :=
+  commitHashBytesE n b
 
 /-- **Theorem (formerly an axiom)**: `commitHashBytes` is injective.
     Derived as a projection of the bundled `commitHashBytesE`
@@ -282,9 +282,9 @@ noncomputable def commitHashBytes (b : ByteSeq) : UserData :=
     standard set-theoretic sense. Downstream theorems consuming
     this should eventually migrate to the random-oracle
     negligibility shape sketched in `RawMessagesVCVio.lean`. -/
-theorem commitHashBytes_inj : Function.Injective commitHashBytes := by
+theorem commitHashBytes_inj (n : Nat) : Function.Injective (commitHashBytes n) := by
   intro a b h
-  exact commitHashBytesE.injective h
+  exact (commitHashBytesE n).injective h
 
 /-- `user_data` produced by Quartz from a `RawSessionCreate`,
     matching the Rust path
@@ -296,12 +296,12 @@ theorem commitHashBytes_inj : Function.Injective commitHashBytes := by
     `noncomputable` because `commitHashBytes` is derived from an
     axiom — the code generator cannot lower it, but it is still
     usable in proofs. -/
-noncomputable def userDataOfSessionCreate (raw : RawSessionCreate) : UserData :=
-  commitHashBytes (serializeRawSessionCreate raw)
+noncomputable def userDataOfSessionCreate (n : Nat) (raw : RawSessionCreate) : UserData n :=
+  commitHashBytes n (serializeRawSessionCreate raw)
 
 /-- `user_data` produced by Quartz from a `RawSessionSetPubKey`. -/
-noncomputable def userDataOfSessionSetPubKey (raw : RawSessionSetPubKey) : UserData :=
-  commitHashBytes (serializeRawSessionSetPubKey raw)
+noncomputable def userDataOfSessionSetPubKey (n : Nat) (raw : RawSessionSetPubKey) : UserData n :=
+  commitHashBytes n (serializeRawSessionSetPubKey raw)
 
 /-- **Structural correspondence (SessionCreate)**: distinct Rust
     `RawSessionCreate` values produce distinct `user_data`.
@@ -312,34 +312,34 @@ noncomputable def userDataOfSessionSetPubKey (raw : RawSessionSetPubKey) : UserD
     attestation.user_data()` — the comparison is unambiguous
     because the Rust struct → `user_data` map is injective. -/
 theorem distinct_raw_session_create_gives_distinct_user_data
-    (r1 r2 : RawSessionCreate) (hne : r1 ≠ r2) :
-    userDataOfSessionCreate r1 ≠ userDataOfSessionCreate r2 := by
+    (n : Nat) (r1 r2 : RawSessionCreate) (hne : r1 ≠ r2) :
+    userDataOfSessionCreate n r1 ≠ userDataOfSessionCreate n r2 := by
   intro h
   apply hne
-  exact serializeRawSessionCreate_inj (commitHashBytes_inj h)
+  exact serializeRawSessionCreate_inj (commitHashBytes_inj n h)
 
 /-- **Structural correspondence (SessionSetPubKey)**: distinct
     Rust `RawSessionSetPubKey` values produce distinct `user_data`.
     -/
 theorem distinct_raw_session_set_pub_key_gives_distinct_user_data
-    (r1 r2 : RawSessionSetPubKey) (hne : r1 ≠ r2) :
-    userDataOfSessionSetPubKey r1 ≠ userDataOfSessionSetPubKey r2 := by
+    (n : Nat) (r1 r2 : RawSessionSetPubKey) (hne : r1 ≠ r2) :
+    userDataOfSessionSetPubKey n r1 ≠ userDataOfSessionSetPubKey n r2 := by
   intro h
   apply hne
-  exact serializeRawSessionSetPubKey_inj (commitHashBytes_inj h)
+  exact serializeRawSessionSetPubKey_inj (commitHashBytes_inj n h)
 
 /-- Injectivity of `userDataOfSessionCreate` repackaged as a
     `Function.Injective` statement. -/
-theorem userDataOfSessionCreate_inj :
-    Function.Injective userDataOfSessionCreate := by
+theorem userDataOfSessionCreate_inj (n : Nat) :
+    Function.Injective (userDataOfSessionCreate n) := by
   intro r1 r2 h
-  exact serializeRawSessionCreate_inj (commitHashBytes_inj h)
+  exact serializeRawSessionCreate_inj (commitHashBytes_inj n h)
 
 /-- Injectivity of `userDataOfSessionSetPubKey`. -/
-theorem userDataOfSessionSetPubKey_inj :
-    Function.Injective userDataOfSessionSetPubKey := by
+theorem userDataOfSessionSetPubKey_inj (n : Nat) :
+    Function.Injective (userDataOfSessionSetPubKey n) := by
   intro r1 r2 h
-  exact serializeRawSessionSetPubKey_inj (commitHashBytes_inj h)
+  exact serializeRawSessionSetPubKey_inj (commitHashBytes_inj n h)
 
 /-
   Bridge from the abstract `UserDataCommit` hash domain to the
@@ -441,13 +441,13 @@ noncomputable def commitOfRawSessionCreate
     structs *and* a constructive definition of `commitHash` over
     the same byte stream. Both are out of scope here. -/
 axiom userDataOfSessionSetPubKey_eq_commitHash
-    (raw : RawSessionSetPubKey) :
-  userDataOfSessionSetPubKey raw = commitHash (commitOfRawSessionSetPubKey raw)
+    (n : Nat) (raw : RawSessionSetPubKey) :
+  userDataOfSessionSetPubKey n raw = commitHash n (commitOfRawSessionSetPubKey raw)
 
 /-- **Trust-boundary axiom (hash-domain bridge, SessionCreate)**. -/
 axiom userDataOfSessionCreate_eq_commitHash
-    (raw : RawSessionCreate) :
-  userDataOfSessionCreate raw = commitHash (commitOfRawSessionCreate raw)
+    (n : Nat) (raw : RawSessionCreate) :
+  userDataOfSessionCreate n raw = commitHash n (commitOfRawSessionCreate raw)
 
 /-- **Bridge theorem (load-bearing)**: a `RawSessionSetPubKey`'s
     on-the-wire `user_data` matches the structured commitment for
@@ -458,10 +458,10 @@ axiom userDataOfSessionCreate_eq_commitHash
     (modulo the bridge axioms above) instead of the abstract
     `UserDataCommit` witness. -/
 theorem userData_session_set_pub_key_binds_ecies
-    (raw : RawSessionSetPubKey) :
-    pkOfUserData (userDataOfSessionSetPubKey raw) = some raw.pubKey := by
-  rw [userDataOfSessionSetPubKey_eq_commitHash raw]
-  have := pkOfUserData_commitHash (commitOfRawSessionSetPubKey raw)
+    (n : Nat) (raw : RawSessionSetPubKey) :
+    pkOfUserData n (userDataOfSessionSetPubKey n raw) = some raw.pubKey := by
+  rw [userDataOfSessionSetPubKey_eq_commitHash n raw]
+  have := pkOfUserData_commitHash n (commitOfRawSessionSetPubKey raw)
   simpa [commitOfRawSessionSetPubKey] using this
 
 /-- **Bridge theorem (SessionCreate)**: the extractor on a
@@ -470,10 +470,10 @@ theorem userData_session_set_pub_key_binds_ecies
     that the extraction definition still terminates on
     SessionCreate-shaped `user_data` blobs. -/
 theorem userData_session_create_extracts_placeholder
-    (raw : RawSessionCreate) :
-    pkOfUserData (userDataOfSessionCreate raw) = some rawPlaceholderPubKey := by
-  rw [userDataOfSessionCreate_eq_commitHash raw]
-  have := pkOfUserData_commitHash (commitOfRawSessionCreate raw)
+    (n : Nat) (raw : RawSessionCreate) :
+    pkOfUserData n (userDataOfSessionCreate n raw) = some rawPlaceholderPubKey := by
+  rw [userDataOfSessionCreate_eq_commitHash n raw]
+  have := pkOfUserData_commitHash n (commitOfRawSessionCreate raw)
   simpa [commitOfRawSessionCreate] using this
 
 end Specs.Quartz.Crypto

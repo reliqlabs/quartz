@@ -167,7 +167,7 @@ structure UserDataCommit where
     shape; demoting this axiom to a negligibility theorem requires
     rewriting the protocol-layer theorems to live inside `OracleComp`.
     Out of scope for Step 2 of the refactor plan. -/
-axiom commitHashE : UserDataCommit ↪ UserData
+axiom commitHashE (n : Nat) : UserDataCommit ↪ UserData n
 
 /-- The commitment hash: structured tuple → 64-byte `user_data`.
 
@@ -179,7 +179,7 @@ axiom commitHashE : UserDataCommit ↪ UserData
     Previously an axiom; now a derived definition. Marked
     `noncomputable` because `commitHashE` is an axiom — the code
     generator cannot lower it, but it is still usable in proofs. -/
-noncomputable def commitHash (c : UserDataCommit) : UserData := commitHashE c
+noncomputable def commitHash (n : Nat) (c : UserDataCommit) : UserData n := commitHashE n c
 
 /-- **Theorem (formerly an axiom)**: `commitHash` is injective.
 
@@ -195,9 +195,9 @@ noncomputable def commitHash (c : UserDataCommit) : UserData := commitHashE c
     theoretic sense. Downstream theorems consuming this should
     eventually migrate to the random-oracle negligibility shape
     sketched in `UserDataCommitVCVio.lean`. -/
-theorem commitHash_inj : Function.Injective commitHash := by
+theorem commitHash_inj (n : Nat) : Function.Injective (commitHash n) := by
   intro a b h
-  exact commitHashE.injective h
+  exact (commitHashE n).injective h
 
 /-- Extract the committed ECIES pubkey from a `user_data` blob,
     if one exists.
@@ -206,9 +206,9 @@ theorem commitHash_inj : Function.Injective commitHash := by
     most one `UserDataCommit` value can hash to any given `ud`,
     so the extraction is well-defined. We use classical choice
     to pick that unique preimage (if any). -/
-noncomputable def pkOfUserData (ud : UserData) : Option PubKey :=
+noncomputable def pkOfUserData (n : Nat) (ud : UserData n) : Option PubKey :=
   open Classical in
-  if h : ∃ c : UserDataCommit, commitHash c = ud then
+  if h : ∃ c : UserDataCommit, commitHash n c = ud then
     some (Classical.choose h).eciesPubkey
   else
     none
@@ -226,14 +226,14 @@ noncomputable def pkOfUserData (ud : UserData) : Option PubKey :=
     theorem (derived from the bundled `commitHashE` embedding)
     rather than an independent axiom. Same call shape, so
     downstream theorems re-prove unchanged. -/
-theorem pkOfUserData_commitHash (c : UserDataCommit) :
-    pkOfUserData (commitHash c) = some c.eciesPubkey := by
+theorem pkOfUserData_commitHash (n : Nat) (c : UserDataCommit) :
+    pkOfUserData n (commitHash n c) = some c.eciesPubkey := by
   unfold pkOfUserData
-  have hex : ∃ c' : UserDataCommit, commitHash c' = commitHash c := ⟨c, rfl⟩
+  have hex : ∃ c' : UserDataCommit, commitHash n c' = commitHash n c := ⟨c, rfl⟩
   rw [dif_pos hex]
   congr 1
-  have hspec : commitHash (Classical.choose hex) = commitHash c :=
+  have hspec : commitHash n (Classical.choose hex) = commitHash n c :=
     Classical.choose_spec hex
-  exact congrArg UserDataCommit.eciesPubkey (commitHash_inj hspec)
+  exact congrArg UserDataCommit.eciesPubkey (commitHash_inj n hspec)
 
 end Specs.Quartz.Crypto

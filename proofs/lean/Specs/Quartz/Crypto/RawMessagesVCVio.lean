@@ -106,7 +106,7 @@ open Specs.Quartz.Attestation.Dstack
     derivable because `UserData` (the response type) and
     `ByteSeq` (the index type) are abstract axioms with no
     `Fintype`/`Inhabited` content. -/
-def CommitHashBytesSpec : OracleSpec ByteSeq := fun _ => UserData
+def CommitHashBytesSpec (n : Nat) : OracleSpec ByteSeq := fun _ => UserData n
 
 /-- The `commitHashBytes` operation, expressed as an `OracleComp`
     query against `CommitHashBytesSpec`.
@@ -121,9 +121,9 @@ def CommitHashBytesSpec : OracleSpec ByteSeq := fun _ => UserData
     Currently kept as a documentary definition; full integration
     requires the `[Fintype]` / `[Inhabited]` instances mentioned
     above. -/
-noncomputable def commitHashBytesOC (b : ByteSeq) :
-    OracleComp CommitHashBytesSpec UserData :=
-  OracleComp.lift (OracleQuery.query (spec := CommitHashBytesSpec) b)
+noncomputable def commitHashBytesOC (n : Nat) (b : ByteSeq) :
+    OracleComp (CommitHashBytesSpec n) (UserData n) :=
+  OracleComp.lift (OracleQuery.query (spec := CommitHashBytesSpec n) b)
 
 /-
   **Honesty target (sketch, unproved)**: collisions in the random-

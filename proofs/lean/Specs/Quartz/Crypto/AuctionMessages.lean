@@ -84,24 +84,24 @@ axiom serializeResolveMessage_inj :
 
     composed with the trailing-32-byte-zero padding the Rust code
     applies. `noncomputable` because `commitHashBytes` is an axiom. -/
-noncomputable def userDataOfResolveMessage (m : ResolveMessage) : UserData :=
-  commitHashBytes (serializeResolveMessage m)
+noncomputable def userDataOfResolveMessage (n : Nat) (m : ResolveMessage) : UserData n :=
+  commitHashBytes n (serializeResolveMessage m)
 
 /-- **Structural correspondence**: distinct `ResolveMessage`s
     produce distinct `user_data`. Composition of
     `serializeResolveMessage_inj` and `commitHashBytes_inj`. -/
 theorem distinct_resolve_message_gives_distinct_user_data
-    (m1 m2 : ResolveMessage) (hne : m1 ≠ m2) :
-    userDataOfResolveMessage m1 ≠ userDataOfResolveMessage m2 := by
+    (n : Nat) (m1 m2 : ResolveMessage) (hne : m1 ≠ m2) :
+    userDataOfResolveMessage n m1 ≠ userDataOfResolveMessage n m2 := by
   intro h
   apply hne
-  exact serializeResolveMessage_inj (commitHashBytes_inj h)
+  exact serializeResolveMessage_inj (commitHashBytes_inj n h)
 
 /-- Injectivity of `userDataOfResolveMessage` repackaged as a
     `Function.Injective` statement. -/
-theorem userDataOfResolveMessage_inj :
-    Function.Injective userDataOfResolveMessage := by
+theorem userDataOfResolveMessage_inj (n : Nat) :
+    Function.Injective (userDataOfResolveMessage n) := by
   intro m1 m2 h
-  exact serializeResolveMessage_inj (commitHashBytes_inj h)
+  exact serializeResolveMessage_inj (commitHashBytes_inj n h)
 
 end Specs.Quartz.Crypto
