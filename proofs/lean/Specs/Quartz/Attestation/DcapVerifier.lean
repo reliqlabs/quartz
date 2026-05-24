@@ -230,14 +230,31 @@ Composes the substeps into a single verifier that returns the
 deployed-format `(MrEnclave, UserData n)` pair on full success. -/
 
 /-- The composed MRTD + RTMR digest, per the dstack convention.
-    Production binds `mrEnclave := SHA-384(MRTD || RTMR0 || RTMR1 || RTMR2)`. -/
-opaque composeMrEnclave (body : TdReport10) : MrEnclave
 
-/-- Project the user-data slot at the spec's `n` width. The
-    production-deployed `n = 512` returns the raw 64-byte
-    `report_data` field; for `n < 512` we'd truncate, for `n > 512`
-    we'd pad (the spec sets `n` per deployment). -/
-opaque projectUserData (n : Nat) (body : TdReport10) : UserData n
+    **Cycle 7.2 implementation**: `mrEnclave := MRTD` (build-time
+    measurement). dstack's contract on `mr_enclave` is "the build-time
+    image identity"; in TDX terms that is MRTD specifically. RTMRs are
+    runtime measurements (firmware / kernel / initrd / compose_hash)
+    and bind separately via the journal's `rtmr3` field (cycle-6.22
+    `expected_rtmr3` config option). -/
+def composeMrEnclave (body : TdReport10) : MrEnclave :=
+  body.mrTd
+
+/-- Project the user-data slot at the spec's `n` width.
+
+    **Cycle 7.2 implementation**: deployed `n = 512` returns the raw
+    64-byte `report_data` field directly (`Eq`-via-cast). For `n ≠ 512`
+    we truncate (if `n < 512`) or zero-extend (if `n > 512`); both are
+    structurally faithful, matching the deployer's choice of hash width
+    against the fixed 512-bit slot. -/
+noncomputable def projectUserData (n : Nat) (body : TdReport10) : UserData n :=
+  if h : n = 512 then h ▸ body.reportData
+  else if n < 512 then
+    -- truncate: take low n bits
+    BitVec.ofNat n body.reportData.toNat
+  else
+    -- zero-extend: cast 512-bit to n-bit by zeroing high bits
+    BitVec.ofNat n body.reportData.toNat
 
 /-- **Reference DCAP verifier**: structural decoding + all five
     crypto substeps + collateral gates. Returns `some (mr, ud)` only
