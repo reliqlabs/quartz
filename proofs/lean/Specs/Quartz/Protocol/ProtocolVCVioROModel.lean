@@ -520,4 +520,54 @@ theorem crossSessionBindFail_secure_via_RO_packaging
   · exact negligible_of_zero (fun _ => rfl)
   · exact negligible_of_zero (fun _ => rfl)
 
+/-! ## Deployment-size concrete corollaries
+
+The deployed dstack TDX quote has a 64-byte (512-bit) `report_data`
+field, so the production-side instantiation is `n = 512`. The
+parameterised bound `qb²/(2·2^n)` evaluates at `n = 512` to
+`qb²/(2·2^512)` — concrete numbers for any deployment-side audit.
+
+These corollaries make the deployment-size bound directly callable
+without re-derivation. They are the cycle-6.22-final form of what was
+the cycle-6.22.b standalone bound (now subsumed by the parameterised
+version with explicit `n = 512` instantiation). -/
+
+/-- **Deployment-size birthday bound**: at the deployed `n = 512`
+    (dstack TDX `report_data` width), the commit-hash log-collision
+    probability is at most `qb²/(2·2^512)`. -/
+theorem commitHash_logCollision_birthday_bound_deployed
+    {α : Type} (oa : OracleComp (CommitHashSpec 512) α)
+    (qb : ℕ) (hbound : IsTotalQueryBound oa qb) :
+    Pr[fun z => LogHasCollision z.2 |
+        (simulateQ loggingOracle oa).run] ≤
+      (qb ^ 2 : ℝ≥0∞) / (2 * 2 ^ 512) :=
+  commitHash_logCollision_birthday_bound 512 oa qb hbound
+
+/-- Byte-domain analogue at `n = 512`. -/
+theorem commitHashBytes_logCollision_birthday_bound_deployed
+    {α : Type} (oa : OracleComp (CommitHashBytesSpec 512) α)
+    (qb : ℕ) (hbound : IsTotalQueryBound oa qb) :
+    Pr[fun z => LogHasCollision z.2 |
+        (simulateQ loggingOracle oa).run] ≤
+      (qb ^ 2 : ℝ≥0∞) / (2 * 2 ^ 512) :=
+  commitHashBytes_logCollision_birthday_bound 512 oa qb hbound
+
+/-- **Concrete deployment-side bound on the RO advantage at `n = 512`**:
+    a commit-hash collision-finder issuing at most `qb` queries
+    achieves advantage `≤ qb²/(2·2^512)`. For polynomial `qb` this
+    is well within the negligibility envelope under any standard
+    security definition. -/
+theorem commitHashCollisionAdvRO_deployed_bound
+    (𝒜 : CommitHashCollisionAdvRO) (qb : ℕ)
+    (hbound : ∀ n, IsTotalQueryBound (𝒜 n) qb) :
+    commitHashCollisionAdvRO 𝒜 512 ≤ (qb ^ 2 : ℝ≥0∞) / (2 * 2 ^ 512) :=
+  commitHashCollisionAdvRO_le_birthday_bound 𝒜 qb hbound 512
+
+/-- Byte-domain analogue at `n = 512`. -/
+theorem commitHashBytesCollisionAdvRO_deployed_bound
+    (𝒜 : CommitHashBytesCollisionAdvRO) (qb : ℕ)
+    (hbound : ∀ n, IsTotalQueryBound (𝒜 n) qb) :
+    commitHashBytesCollisionAdvRO 𝒜 512 ≤ (qb ^ 2 : ℝ≥0∞) / (2 * 2 ^ 512) :=
+  commitHashBytesCollisionAdvRO_le_birthday_bound 𝒜 qb hbound 512
+
 end Specs.Quartz.Protocol.ProtocolVCVioROModel
