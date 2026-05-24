@@ -406,7 +406,15 @@ theorem commitHashBytesCollisionAdvRO_negligible_of_polynomial_qb
 
 These are the first packagings in the project that derive
 collision-resistance from the cycle-6.22 birthday bound rather than
-assuming it via an external `h_hash_secure` hypothesis. -/
+assuming it via an external `h_hash_secure` hypothesis.
+
+The original four packagings (`*_secure_of_*_bundle_secure_RO`) take a
+**constant** query budget `qb : ℕ`. The polynomial variants
+(`*_secure_of_*_bundle_secure_RO_polyQb`) take a per-`n` query budget
+`qb : Nat → Nat` bounded by a polynomial `p`. The polynomial variants
+are the cryptographically meaningful shape — real PPT adversaries
+scale their query count polynomially in the security parameter, not
+constantly. -/
 
 theorem handshakeBindsFail_secure_of_triple_bundle_secure_RO
     (bindsFailExp : SecurityExp)
@@ -510,6 +518,124 @@ theorem crossSessionBindFail_secure_of_quad_bundle_secure_RO
           h_tdx_secure)
         (commitHashCollisionAdvRO_negligible_of_constant_qb 𝒜h qbh hbound_𝒜h))
       (commitHashBytesCollisionAdvRO_negligible_of_constant_qb 𝒜hB qbhB hbound_𝒜hB))
+    h_bound
+
+/-! ## Polynomial-qb packaging variants
+
+The four packagings below are the cryptographically meaningful shape:
+they take a per-`n` query budget bounded by a polynomial in `n`,
+matching the real PPT adversary model. They discharge the hash
+collision-resistance hypothesis via
+`commitHashCollisionAdvRO_negligible_of_polynomial_qb` rather than
+the constant-qb variant. -/
+
+theorem handshakeBindsFail_secure_of_triple_bundle_secure_RO_polyQb
+    (bindsFailExp : SecurityExp)
+    (groth16Exp : SecurityExp)
+    (tdxExp : SecurityExp)
+    (𝒜 : CommitHashCollisionAdvRO) (qb : Nat → Nat)
+    (p : Polynomial Nat) (hp_bound : ∀ n : Nat, qb n ≤ p.eval n)
+    (hbound_𝒜 : ∀ n : Nat, IsTotalQueryBound (𝒜 n) (qb n))
+    (h_bound : ∀ n,
+      bindsFailExp.advantage n ≤
+        groth16Exp.advantage n + tdxExp.advantage n +
+        commitHashCollisionAdvRO 𝒜 n)
+    (h_groth_secure : groth16Exp.secure)
+    (h_tdx_secure   : tdxExp.secure) :
+    bindsFailExp.secure :=
+  SecurityExp.secure_of_pointwise_bound
+    bindsFailExp
+    (fun n =>
+      groth16Exp.advantage n + tdxExp.advantage n +
+      commitHashCollisionAdvRO 𝒜 n)
+    (negligible_add
+      (negligible_add h_groth_secure h_tdx_secure)
+      (commitHashCollisionAdvRO_negligible_of_polynomial_qb 𝒜 qb p hp_bound hbound_𝒜))
+    h_bound
+
+theorem sessionConfFail_secure_of_triple_bundle_secure_RO_polyQb
+    (confFailExp : SecurityExp)
+    (groth16Exp : SecurityExp)
+    (tdxExp : SecurityExp)
+    (𝒜 : CommitHashCollisionAdvRO) (qb : Nat → Nat)
+    (p : Polynomial Nat) (hp_bound : ∀ n : Nat, qb n ≤ p.eval n)
+    (hbound_𝒜 : ∀ n : Nat, IsTotalQueryBound (𝒜 n) (qb n))
+    (h_bound : ∀ n,
+      confFailExp.advantage n ≤
+        groth16Exp.advantage n + tdxExp.advantage n +
+        commitHashCollisionAdvRO 𝒜 n)
+    (h_groth_secure : groth16Exp.secure)
+    (h_tdx_secure   : tdxExp.secure) :
+    confFailExp.secure :=
+  SecurityExp.secure_of_pointwise_bound
+    confFailExp
+    (fun n =>
+      groth16Exp.advantage n + tdxExp.advantage n +
+      commitHashCollisionAdvRO 𝒜 n)
+    (negligible_add
+      (negligible_add h_groth_secure h_tdx_secure)
+      (commitHashCollisionAdvRO_negligible_of_polynomial_qb 𝒜 qb p hp_bound hbound_𝒜))
+    h_bound
+
+theorem sessionConfExtractor_secure_of_triple_bundle_secure_RO_polyQb
+    (extractorFailExp : SecurityExp)
+    (groth16Exp : SecurityExp)
+    (tdxExp : SecurityExp)
+    (𝒜 : CommitHashCollisionAdvRO) (qb : Nat → Nat)
+    (p : Polynomial Nat) (hp_bound : ∀ n : Nat, qb n ≤ p.eval n)
+    (hbound_𝒜 : ∀ n : Nat, IsTotalQueryBound (𝒜 n) (qb n))
+    (h_bound : ∀ n,
+      extractorFailExp.advantage n ≤
+        groth16Exp.advantage n + tdxExp.advantage n +
+        commitHashCollisionAdvRO 𝒜 n)
+    (h_groth_secure : groth16Exp.secure)
+    (h_tdx_secure   : tdxExp.secure) :
+    extractorFailExp.secure :=
+  SecurityExp.secure_of_pointwise_bound
+    extractorFailExp
+    (fun n =>
+      groth16Exp.advantage n + tdxExp.advantage n +
+      commitHashCollisionAdvRO 𝒜 n)
+    (negligible_add
+      (negligible_add h_groth_secure h_tdx_secure)
+      (commitHashCollisionAdvRO_negligible_of_polynomial_qb 𝒜 qb p hp_bound hbound_𝒜))
+    h_bound
+
+theorem crossSessionBindFail_secure_of_quad_bundle_secure_RO_polyQb
+    (bindFailExp : SecurityExp)
+    (groth16KSExp : SecurityExp)
+    (circuitEqExp : SecurityExp)
+    (tdxExp : SecurityExp)
+    (𝒜h : CommitHashCollisionAdvRO) (qbh : Nat → Nat)
+    (ph : Polynomial Nat) (hph_bound : ∀ n : Nat, qbh n ≤ ph.eval n)
+    (hbound_𝒜h : ∀ n : Nat, IsTotalQueryBound (𝒜h n) (qbh n))
+    (𝒜hB : CommitHashBytesCollisionAdvRO) (qbhB : Nat → Nat)
+    (phB : Polynomial Nat) (hphB_bound : ∀ n : Nat, qbhB n ≤ phB.eval n)
+    (hbound_𝒜hB : ∀ n : Nat, IsTotalQueryBound (𝒜hB n) (qbhB n))
+    (h_bound : ∀ n,
+      bindFailExp.advantage n ≤
+        groth16KSExp.advantage n + circuitEqExp.advantage n +
+        tdxExp.advantage n +
+        commitHashCollisionAdvRO 𝒜h n +
+        commitHashBytesCollisionAdvRO 𝒜hB n)
+    (h_groth_ks_secure : groth16KSExp.secure)
+    (h_circuit_secure  : circuitEqExp.secure)
+    (h_tdx_secure      : tdxExp.secure) :
+    bindFailExp.secure :=
+  SecurityExp.secure_of_pointwise_bound
+    bindFailExp
+    (fun n =>
+      groth16KSExp.advantage n + circuitEqExp.advantage n +
+      tdxExp.advantage n +
+      commitHashCollisionAdvRO 𝒜h n +
+      commitHashBytesCollisionAdvRO 𝒜hB n)
+    (negligible_add
+      (negligible_add
+        (negligible_add
+          (negligible_add h_groth_ks_secure h_circuit_secure)
+          h_tdx_secure)
+        (commitHashCollisionAdvRO_negligible_of_polynomial_qb 𝒜h qbh ph hph_bound hbound_𝒜h))
+      (commitHashBytesCollisionAdvRO_negligible_of_polynomial_qb 𝒜hB qbhB phB hphB_bound hbound_𝒜hB))
     h_bound
 
 /-! ## Connection theorems — type-shape compatibility demonstrations
