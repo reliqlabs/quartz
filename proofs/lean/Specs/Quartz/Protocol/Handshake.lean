@@ -143,4 +143,29 @@ theorem handshake_sound_pinned {n : Nat} (h : HandshakeCheck n) (acc : Accepted 
   exact (verifyDcap_output_committed_by_signed_region n q
     productionCollateral mr_pair ud h_verify).1
 
+/-- **Cycle 7.17: byte-binding extension of `handshake_binds_ecies_key`**.
+
+    Like `handshake_sound_pinned` (cycle 7.15) but for the ECIES-key
+    custody composition. Extends the conclusion with the cycle 7.13
+    byte-binding for `expectedMr` AND the user-data extraction. Adds
+    one more Protocol-layer consumer of the cycle 7.7/7.9/7.13
+    parser-pinning chain. -/
+theorem handshake_binds_ecies_key_pinned
+    {n : Nat} (h : HandshakeCheck n) (acc : Accepted h)
+    (c : UserDataCommit)
+    (h_commit : h.msgUserData = commitHash n c)
+    (sk : PrivKey)
+    (h_sk : keyOf sk = c.eciesPubkey)
+    (pt : Plaintext) :
+    (∃ q, was_signed_by_dstack q ∧ userDataOf n q = some h.msgUserData ∧
+      h.expectedMr = (extractBitVec (q.take 632) 184 384,
+                      extractBitVec (q.take 632) 520 384)) ∧
+    pkOfUserData n h.msgUserData = some c.eciesPubkey ∧
+    decrypt sk (encrypt c.eciesPubkey pt) = some pt := by
+  refine ⟨?_, ?_, ?_⟩
+  · obtain ⟨q, hq, _, hUd, hMrPin⟩ := handshake_sound_pinned h acc
+    exact ⟨q, hq, hUd, hMrPin⟩
+  · rw [h_commit]; exact pkOfUserData_commitHash n c
+  · rw [← h_sk]; exact roundtrip sk pt
+
 end Specs.Quartz.Protocol.Handshake
