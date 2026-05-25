@@ -529,35 +529,117 @@ axiom chain_verified_leafKey_is_legitimate
     verifyX509Chain certData rootCa = some leafKey →
     legitimate_pck_leaf leafKey
 
-/-- **(c)-bucket assumption — the final chain link**: given the full
-    chain of cryptographic substep witnesses (QE report signed by a
-    legitimate PCK holder, attestation key bound to the QE report,
-    quote body signed by the attestation key, TCB and QE gates pass)
-    and a structural parse of the raw quote bytes, the quote was
-    produced by a real dstack TEE.
+/-! ### Cycle 7.3.c — decompose the chain-link axiom (addresses review H2)
 
-    This is the bridge from the chain of signature-verification
-    witnesses to `was_signed_by_dstack q`. It encodes the production
-    dstack discipline: a quote chain-verified up to Intel's Root CA
-    plus a valid TCB level plus a matching QE identity means the
-    quote was produced by a TEE running attested dstack code.
+The original cycle-7.3.b axiom `verified_chain_implies_dstack_signed`
+bundled the entire trust chain into a single 8-hypothesis assumption,
+which review H2 critiqued as monolithic. Cycle 7.3.c (this section)
+splits it into two narrower (c)-bucket assumptions tied to SGX-spec
+content, with one intermediate witness predicate, and derives the
+original monolith as a theorem.
 
-    Cycle 7.3.b: now load-bearing in `dcapVerifier_sound_composed`'s
-    derivation. -/
-axiom verified_chain_implies_dstack_signed
-    (n : Nat) (q : RawBytes) (col : Collateral) (parsed : DcapQuote)
-    (pckLeafKey : BitVec 512) :
-    freshCollateral col →
-    parseDcapQuote q = some parsed →
+The decomposition mirrors the production DCAP trust flow:
+
+1. **First link (QE attestation chain)**: a legitimate PCK leaf
+   signing the QE report, plus a verified attestation-key binding
+   inside the QE report's `report_data`, implies the QE is a
+   genuine Intel-attested QE that endorses the attestation key.
+
+2. **Second link (TEE signing)**: a genuine QE endorsing an
+   attestation key that signs the quote body, plus matching TCB
+   and QE identity gates, implies the quote was produced by a TEE
+   running attested code (i.e., dstack).
+
+The intermediate `signed_by_qe` witness predicate makes the
+hand-off between the two links explicit. -/
+
+/-- **Abstract witness predicate (cycle 7.3.c)**: a parsed DCAP
+    quote was signed by a genuine Intel-attested Quoting Enclave
+    (the `parsed.authData.attestationKey` is the bound attestation
+    key of a real QE, and `parsed.signedRegion` was signed by that
+    key). Bridges between the PCK-attestation chain link (axiom A
+    below) and the TEE-signing chain link (axiom B below). -/
+axiom signed_by_qe : DcapQuote → Prop
+
+/-- **(c)-bucket assumption A (cycle 7.3.c — QE attestation chain)**:
+    given a parsed quote whose `qeReport` was signed by the holder of
+    a legitimate PCK leaf key (i.e., Intel certified the QE's signing
+    chain), AND whose `attestationKey` is bound by the `qeReport`'s
+    `report_data` slot (the SGX spec's attestation-key endorsement
+    mechanism), the parsed quote `signed_by_qe` predicate holds.
+
+    Concretely: the chain `Intel Root CA → PCK leaf → QE report
+    endorses attestation key` is the SGX attestation-key endorsement
+    discipline. This axiom encodes that following the chain to
+    completion produces a genuine-QE-signed quote witness.
+
+    This is narrower than the cycle-7.3.b monolith: it only assumes
+    the QE attestation chain, not the TCB-current / QE-identity-match
+    gates, and not the final dstack-image-attested step. -/
+axiom qe_attestation_chain_implies_signed_by_qe
+    (parsed : DcapQuote) (pckLeafKey : BitVec 512) :
     legitimate_pck_leaf pckLeafKey →
     signed_by_pck_holder pckLeafKey (qeReportBytes parsed.authData.qeReport) →
     verifyAttestationKeyBinding parsed.authData.qeReport
         parsed.authData.attestationKey = true →
     verifyEcdsaP256 parsed.authData.attestationKey parsed.signedRegion
         parsed.authData.ecdsaSignature = true →
+    signed_by_qe parsed
+
+/-- **(c)-bucket assumption B (cycle 7.3.c — TEE signing → dstack)**:
+    given a parsed quote signed by a genuine QE, AND the TCB level
+    matches the collateral threshold (TCB is current), AND the QE
+    identity matches the collateral's QE identity, AND the collateral
+    is fresh, AND the raw quote bytes parse to `parsed`, then the
+    raw quote bytes were signed by a dstack TEE.
+
+    This is the second SGX-spec link: a genuine QE will only sign
+    `signedRegion` bytes that correspond to a quote produced by an
+    attested TEE running the dstack image (the dstack image identity
+    is encoded in the MRTD / RTMRs of `parsed.body`; the deployer's
+    `Collateral` constrains which TCB levels and QE identities are
+    accepted).
+
+    Narrower than the monolith: this assumes the QE attestation
+    chain has already been collapsed into the `signed_by_qe`
+    witness, so it only encodes the TEE-attests-dstack-image step
+    plus the freshness gates. -/
+axiom qe_signed_tcb_match_implies_signed_by_dstack
+    (n : Nat) (q : RawBytes) (col : Collateral) (parsed : DcapQuote) :
+    freshCollateral col →
+    parseDcapQuote q = some parsed →
+    signed_by_qe parsed →
     checkTcbLevel parsed col.tcbInfo = true →
     checkQeIdentity parsed col.qeIdentity = true →
     was_signed_by_dstack q
+
+/-- **Derived chain link (cycle 7.3.c, was an axiom in cycle 7.3.b)**:
+    the original monolithic chain link is now derived from the two
+    narrower (c)-bucket assumptions above (A: QE attestation chain;
+    B: TEE signing → dstack) plus the intermediate `signed_by_qe`
+    witness predicate.
+
+    Provides backward-compatible API for `dcapVerifier_sound_composed`
+    which was written against the bundled form. -/
+theorem verified_chain_implies_dstack_signed
+    (n : Nat) (q : RawBytes) (col : Collateral) (parsed : DcapQuote)
+    (pckLeafKey : BitVec 512)
+    (h_fresh : freshCollateral col)
+    (h_parse : parseDcapQuote q = some parsed)
+    (h_legit : legitimate_pck_leaf pckLeafKey)
+    (h_qe_sig : signed_by_pck_holder pckLeafKey
+        (qeReportBytes parsed.authData.qeReport))
+    (h_keybind : verifyAttestationKeyBinding parsed.authData.qeReport
+        parsed.authData.attestationKey = true)
+    (h_body_sig : verifyEcdsaP256 parsed.authData.attestationKey
+        parsed.signedRegion parsed.authData.ecdsaSignature = true)
+    (h_tcb : checkTcbLevel parsed col.tcbInfo = true)
+    (h_qe_id : checkQeIdentity parsed col.qeIdentity = true) :
+    was_signed_by_dstack q :=
+  qe_signed_tcb_match_implies_signed_by_dstack n q col parsed h_fresh h_parse
+    (qe_attestation_chain_implies_signed_by_qe parsed pckLeafKey
+      h_legit h_qe_sig h_keybind h_body_sig)
+    h_tcb h_qe_id
 
 /-- **Soundness composition (cycle 7.3.b, derived theorem)**: a
     successful end-to-end DCAP verification of a quote `q` under fresh
