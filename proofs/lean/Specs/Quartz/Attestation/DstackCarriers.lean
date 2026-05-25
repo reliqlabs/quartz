@@ -25,6 +25,14 @@
   pre-split forms (cycles 6.17-6.21 + cycle 6.22.d.3 history applies).
 -/
 
+-- LAYER INVARIANT (cycle 7.7 review M2): this file must remain free
+-- of any import of `DcapVerifier` or any `Specs.Quartz.Attestation.*`
+-- module other than itself. It is the lowest layer in the attestation
+-- file dependency graph; both `Dstack.lean` and `DcapVerifier.lean`
+-- import it. Re-introducing an import from this file into
+-- `DcapVerifier` would recreate the file-dependency cycle that cycle
+-- 7.5 carved this module out to break.
+
 namespace Specs.Quartz.Attestation.Dstack
 
 /-- An abstract TDX quote. In wire format this is the
