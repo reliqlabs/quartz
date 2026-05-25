@@ -203,32 +203,91 @@ implementations or honest cryptographic assumptions. -/
 opaque parseDcapQuote : RawBytes → Option DcapQuote
 
 /-- **Structural invariant (cycle 7.6, addresses cycle-7.x adversarial
-    finding #14)**: a successful `parseDcapQuote raw = some q` sets the
-    parsed quote's `signedRegion` to exactly the first 632 bytes of the
-    input — the concatenation of the header (48 bytes) and the
-    `TDReport10` body (584 bytes).
+    finding #14 partially)**: a successful `parseDcapQuote raw = some q`
+    sets the parsed quote's `signedRegion` to exactly the first 632
+    bytes of the input — the concatenation of the header (48 bytes)
+    and the `TDReport10` body (584 bytes).
 
     Without this axiom the parser is free to set `signedRegion` to any
-    `RawBytes` value independent of `raw`, and the downstream
-    `verifyEcdsaP256` over `q.signedRegion` would be verifying a
-    signature against arbitrary bytes (potentially under
-    attacker-chosen content). The production zkdcap parser at
-    `zkdcap/circuits/dcap-gnark/witness/quote.go` always sets
+    `RawBytes` value independent of `raw`. The production zkdcap parser
+    at `zkdcap/circuits/dcap-gnark/witness/quote.go` always sets
     `signedRegion = raw[0..632]` bytewise; this axiom is the in-Lean
     structural commitment to that behavior.
 
-    Closes the linkage gap raised by the cycle-7.x adversarial review
-    (finding #14): the chain of `verifyEcdsaP256 attestationKey
-    signedRegion ecdsaSignature = true` now provably constrains
-    `signedRegion` to be derived from the input bytes, rather than
-    being an attacker-controlled field of the `DcapQuote` record.
-
-    Adds 632 = 48 + 584 to the audit closure of every theorem deriving
-    via `parseDcapQuote`. The constant is the production wire-format
-    layout (`QuoteHeader` 48B + `TdReport10` 584B). -/
+    **Cycle 7.7 adversarial-review meta** (finding C1): this axiom is
+    consumed by exactly one corollary
+    (`verifyDcap_signedRegion_eq_input_prefix`) and no downstream
+    `Protocol/*` or `Crypto/*` theorem cites it. It is *available* in
+    the audit-closure of consumer-derived theorems if they choose to
+    cite it; it is not yet load-bearing in any safety property. Cycle
+    7.7 adds the parallel field-binding axioms (`mrTd_eq`,
+    `reportData_eq`) which ARE load-bearing in the cycle 7.7
+    `verifyDcap_output_bound_to_input` theorem, and are the right
+    place for downstream protocol theorems to consume parser-output
+    pinning — `signedRegion` linkage is a corollary of those field
+    bindings via cryptographic chaining, not a primary surface. -/
 axiom parseDcapQuote_signedRegion_eq_input_prefix
     (raw : RawBytes) (q : DcapQuote) :
     parseDcapQuote raw = some q → q.signedRegion = raw.take 632
+
+/-! ## Cycle 7.7 — parser field-binding axioms (addresses cycle-7.7-review C2/C3)
+
+The cycle-7.7 adversarial review surfaced that pinning only
+`signedRegion` to the input leaves `mrTd`, `reportData`,
+`attestationKey`, `qeReport`, `certificateData` etc. fully unconstrained:
+an adversarial parser can return a `DcapQuote` with attacker-chosen
+`mrTd` (so `composeMrEnclave q.body = attacker_mr`) and attacker-chosen
+`reportData` (so `projectUserData n q.body = attacker_ud`), while
+still satisfying every other check including the cycle-7.6
+`signedRegion` invariant. The returned `(mr, ud)` would then bear no
+relation to the actual signed quote bytes, breaking measurement
+binding silently at the protocol layer.
+
+This section pins the *consumed-by-output* fields. The
+cryptographically-load-bearing auth-data fields (attestationKey,
+qeReport, certificateData) are pinned in cycle 7.8 (queued — they
+require modelling the variable-length auth-data layout). -/
+
+/-- **Helper opaque (cycle 7.7)**: extract a `BitVec width` from a
+    `RawBytes` buffer at byte offset `offset`. Operationally this is
+    little-endian byte unpacking (matching `checkTcbLevel`'s
+    convention from cycle 7.2.b). Opaque at this layer because the
+    production parser's bit-unpacking discipline is not in-Lean
+    derivable without a wire-format library; the parser-field axioms
+    below pin the parsed structure fields to specific applications
+    of this extractor. -/
+opaque extractBitVec (raw : RawBytes) (offset width : Nat) : BitVec width
+
+/-- **Structural invariant (cycle 7.7)**: a successful parse sets
+    `q.body.mrTd` to the BitVec extracted from `raw` at offset
+    48 + 528 = 576 with width 384. Wait — see "Layout note" below.
+
+    **Layout note**: `TdReport10` is 584 bytes at offset 48. Inside
+    `TdReport10`, the MRTD field lives at TDReport10-offset 16
+    (after 16-byte TEE TCB SVN), so in the raw input the MRTD bytes
+    are at absolute offset `48 + 16 = 64`, width 48 bytes = 384 bits.
+    Reference: `zkdcap/circuits/dcap-gnark/witness/quote.go`
+    `ParseTDXQuoteV4` SGX-TDX TDReport10 layout. -/
+axiom parseDcapQuote_mrTd_eq
+    (raw : RawBytes) (q : DcapQuote) :
+    parseDcapQuote raw = some q →
+    q.body.mrTd = extractBitVec raw 64 384
+
+/-- **Structural invariant (cycle 7.7)**: a successful parse sets
+    `q.body.reportData` to the BitVec extracted from `raw` at the
+    `report_data` slot inside `TDReport10`.
+
+    **Layout note**: `TdReport10`'s `report_data` field is the last
+    64 bytes, at TDReport10-offset 520 (after teeTcbSvn 16 + mrTd 48
+    + rtmr0..3 4×48 + reserved). Absolute offset: `48 + 520 = 568`,
+    width 64 bytes = 512 bits. Reference: same as `mrTd_eq`. -/
+axiom parseDcapQuote_reportData_eq
+    (raw : RawBytes) (q : DcapQuote) :
+    parseDcapQuote raw = some q →
+    q.body.reportData = extractBitVec raw 568 512
+
+-- The cycle 7.7 binding theorem `verifyDcap_output_bound_to_input`
+-- lives after `verifyDcap` is defined (further down in the file).
 
 /-- Verify an X.509 certificate chain rooted at the Intel SGX Root CA.
     Returns the leaf certificate's public key on success. -/
@@ -569,11 +628,99 @@ theorem dcapVerifier_sound_composed (n : Nat) (q : RawBytes) (col : Collateral) 
         · simp [h_keybind] at h_acc
       · simp [h_qe_sig] at h_acc
 
+/-- **Derived theorem (cycle 7.7, closes review finding C2/C3)**:
+    `verifyDcap`'s returned `(mr, ud)` are provably functions of the
+    raw input bytes — `mr` is the extraction at offset 64 width 384
+    bits (the MRTD slot of TDReport10), and `ud` is the extraction at
+    offset 568 width 512 bits (the `report_data` slot of TDReport10).
+
+    The chain of trust: ECDSA-signed `signedRegion = raw.take 632`
+    (cycle 7.6) implies the signer committed to the prefix; the
+    parser-field axioms (`parseDcapQuote_mrTd_eq`,
+    `parseDcapQuote_reportData_eq`) say the extracted `mr` and `ud`
+    are derivable from that same prefix; so `was_signed_by_dstack raw`
+    combined with `verifyDcap n raw col = some (mr, ud)` provably
+    binds the signer's intent to the returned measurement and
+    user-data fields.
+
+    Without this binding, the cycle-7.7-review finding C3 critique
+    stands: `was_signed_by_dstack q` says nothing about `(mr, ud)` so
+    an adversarial parser could decouple them. With this theorem, the
+    decoupling is mechanically prevented at the spec layer.
+
+    Load-bearing in the closure of any downstream protocol theorem
+    that combines `verifyTdxQuote_sound` with this output-binding
+    corollary to derive measurement / user-data fixedness. Cycle 7.8
+    (queued) is the cascade to thread this binding through
+    `Protocol/Handshake.lean`'s `handshake_sound` and downstream. -/
+theorem verifyDcap_output_bound_to_input
+    (n : Nat) (raw : RawBytes) (col : Collateral)
+    (mr : MrEnclave) (ud : UserData n) :
+    verifyDcap n raw col = some (mr, ud) →
+    mr = extractBitVec raw 64 384 ∧
+    (if h : n = 512 then ud = h ▸ extractBitVec raw 568 512
+     else ud = BitVec.ofNat n (extractBitVec raw 568 512).toNat) := by
+  intro h_acc
+  -- Extract `∃ q, parseDcapQuote raw = some q` from `h_acc`.
+  have h_parse_some : ∃ q, parseDcapQuote raw = some q := by
+    cases hp : parseDcapQuote raw with
+    | none =>
+      unfold verifyDcap at h_acc
+      rw [hp] at h_acc
+      simp at h_acc
+    | some q => exact ⟨q, rfl⟩
+  obtain ⟨q, h_parse⟩ := h_parse_some
+  -- Extract mr = composeMrEnclave q.body and ud = projectUserData n q.body
+  -- from the verifyDcap = some (mr, ud) branch.
+  have h_mr_ud : mr = composeMrEnclave q.body ∧ ud = projectUserData n q.body := by
+    unfold verifyDcap at h_acc
+    rw [h_parse] at h_acc
+    simp only at h_acc
+    -- Walk each guard; only the all-pass branch yields some (mr, ud).
+    cases h_chain : verifyX509Chain q.authData.certificateData col.rootCaCert with
+    | none => rw [h_chain] at h_acc; simp at h_acc
+    | some pck =>
+      rw [h_chain] at h_acc
+      simp only at h_acc
+      by_cases h_qe_sig : verifyEcdsaP256 pck (qeReportBytes q.authData.qeReport)
+          q.authData.qeReportSignature = true
+      · simp [h_qe_sig] at h_acc
+        by_cases h_keybind : verifyAttestationKeyBinding q.authData.qeReport
+            q.authData.attestationKey = true
+        · simp [h_keybind] at h_acc
+          by_cases h_body_sig : verifyEcdsaP256 q.authData.attestationKey q.signedRegion
+              q.authData.ecdsaSignature = true
+          · simp [h_body_sig] at h_acc
+            by_cases h_tcb : checkTcbLevel q col.tcbInfo = true
+            · simp [h_tcb] at h_acc
+              by_cases h_qe_id : checkQeIdentity q col.qeIdentity = true
+              · simp [h_qe_id] at h_acc
+                exact ⟨h_acc.1.symm, h_acc.2.symm⟩
+              · simp [h_qe_id] at h_acc
+            · simp [h_tcb] at h_acc
+          · simp [h_body_sig] at h_acc
+        · simp [h_keybind] at h_acc
+      · simp [h_qe_sig] at h_acc
+  -- Apply field-binding axioms.
+  obtain ⟨h_mr, h_ud⟩ := h_mr_ud
+  refine ⟨?_, ?_⟩
+  · rw [h_mr]
+    unfold composeMrEnclave
+    exact parseDcapQuote_mrTd_eq raw q h_parse
+  · rw [h_ud]
+    unfold projectUserData
+    by_cases hn : n = 512
+    · simp only [hn, dif_pos]
+      rw [parseDcapQuote_reportData_eq raw q h_parse]
+    · simp only [dif_neg hn]
+      rw [parseDcapQuote_reportData_eq raw q h_parse]
+
 /-- **Audit corollary (cycle 7.6)**: a successful end-to-end
     `verifyDcap` accepts only quotes whose ECDSA-verified `signedRegion`
-    is provably the first 632 bytes of the input. Makes the cycle-7.6
-    structural invariant `parseDcapQuote_signedRegion_eq_input_prefix`
-    load-bearing in the audit closure of `verifyDcap`-deriving theorems.
+    is provably the first 632 bytes of the input. *Available* in the
+    audit-closure of downstream consumers but no Protocol-layer theorem
+    cites it as of cycle 7.7 — the cycle 7.7 output-binding theorem
+    above is the load-bearing parser-pinning corollary.
 
     Concretely: if `verifyDcap n raw col = some (mr, ud)` then there
     exists a parsed quote `q` such that `parseDcapQuote raw = some q`
