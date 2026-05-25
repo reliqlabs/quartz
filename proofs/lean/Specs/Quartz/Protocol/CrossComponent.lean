@@ -36,6 +36,7 @@ import Specs.Quartz.Crypto.Ecies
 import Specs.Quartz.Crypto.UserDataCommit
 import Specs.Quartz.Crypto.RawMessages
 import Specs.Quartz.Attestation.Dstack
+import Specs.Quartz.Attestation.DcapVerifier
 import Specs.Quartz.Attestation.Zkdcap
 import Specs.Quartz.Protocol.Handshake
 import Specs.Quartz.Protocol.Confidentiality
@@ -45,6 +46,7 @@ namespace Specs.Quartz.Protocol.CrossComponent
 open Specs.Quartz.Crypto.Ecies
 open Specs.Quartz.Crypto
 open Specs.Quartz.Attestation.Dstack
+open Specs.Quartz.Attestation.DcapVerifier
 open Specs.Quartz.Attestation.Zkdcap
 open Specs.Quartz.Protocol.Handshake
 
@@ -102,6 +104,34 @@ theorem cross_component_session_bind
       (∀ msg : Plaintext, decrypt sk (encrypt raw.pubKey msg) = some msg) := by
   obtain ⟨q, hSigned, hMr, hUd⟩ := handshake_sound h acc
   refine ⟨q, hSigned, hMr, hUd, ?_, ?_⟩
+  · rw [h_raw]
+    exact userData_session_set_pub_key_binds_ecies n raw
+  · intro msg
+    rw [← h_sk]
+    exact roundtrip sk msg
+
+/-- **Cycle 7.17: byte-binding extension of `cross_component_session_bind`**.
+
+    Strengthens the cross-component-session-bind composition with the
+    cycle 7.13 byte-binding: `h.expectedMr` is provably the byte
+    extraction pair `(extractBitVec (q.take 632) 184 384,
+    extractBitVec (q.take 632) 520 384)`. Third Protocol-layer
+    consumer of the cycle 7.7+7.9+7.13 parser-pinning chain. -/
+theorem cross_component_session_bind_pinned
+    {n : Nat} (h : HandshakeCheck n) (acc : Accepted h)
+    (raw : RawSessionSetPubKey)
+    (h_raw : h.msgUserData = userDataOfSessionSetPubKey n raw)
+    (sk : PrivKey) (h_sk : keyOf sk = raw.pubKey) :
+    ∃ q : TdxQuote,
+      was_signed_by_dstack q ∧
+      mrEnclaveOf n q = some h.expectedMr ∧
+      userDataOf n q = some h.msgUserData ∧
+      h.expectedMr = (extractBitVec (q.take 632) 184 384,
+                      extractBitVec (q.take 632) 520 384) ∧
+      pkOfUserData n h.msgUserData = some raw.pubKey ∧
+      (∀ msg : Plaintext, decrypt sk (encrypt raw.pubKey msg) = some msg) := by
+  obtain ⟨q, hSigned, hMr, hUd, hMrPin⟩ := handshake_sound_pinned h acc
+  refine ⟨q, hSigned, hMr, hUd, hMrPin, ?_, ?_⟩
   · rw [h_raw]
     exact userData_session_set_pub_key_binds_ecies n raw
   · intro msg
