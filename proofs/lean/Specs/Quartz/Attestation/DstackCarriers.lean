@@ -44,15 +44,29 @@ namespace Specs.Quartz.Attestation.Dstack
     on the PCK certificate chain inlined in the quote. -/
 abbrev TdxQuote : Type := List UInt8
 
-/-- The measurement of the enclave image (MRTD / RTMR composition).
-    Used in `state.rs::Config::mr_enclave`.
+/-- The measurement of the enclave image: a pair `(MRTD, RTMR3)`.
+    Used in `state.rs::Config::mr_enclave` and the journal's
+    `rtmr3` binding gate (`expected_rtmr3`).
 
     **Cycle 6.17 (carrier refinement, 2026-05-20)**: refined from
     `axiom MrEnclave : Type` to `abbrev MrEnclave : Type := BitVec 384`.
     Intel TDX's MRTD (build-time measurement) is a 48-byte / 384-bit
-    SHA-384 digest. `BitVec 384` mirrors this exactly and provides
-    automatic `Fintype`/`DecidableEq`/`Inhabited` instances. -/
-abbrev MrEnclave : Type := BitVec 384
+    SHA-384 digest.
+
+    **Cycle 7.9 (extended carrier, 2026-05-25, addresses cycle-7.7
+    review M3)**: refined further to `BitVec 384 × BitVec 384` —
+    the pair `(MRTD, RTMR3)`. Production dstack binds enclave
+    identity via BOTH the MRTD (build-time image digest) AND RTMR3
+    (the `compose_hash` runtime measurement of the deployed image's
+    docker-compose). The `DstackZkAttestation` handler in
+    `crates/contracts/core/src/handler/execute/attested.rs` enforces
+    `journal.rtmr3 == config.expected_rtmr3` precisely to bind the
+    deployed image identity beyond MRTD alone.
+
+    Prior to cycle 7.9 the spec modelled `MrEnclave := BitVec 384`
+    (MRTD only), making the spec under-bind a degree of identity that
+    production verifies. Cycle 7.9 closes that gap. -/
+abbrev MrEnclave : Type := BitVec 384 × BitVec 384
 
 /-- The 64-byte user-data field embedded in the TDX quote's
     `report_data`. Quartz binds this to a domain-separated hash

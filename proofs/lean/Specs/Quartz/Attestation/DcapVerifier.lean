@@ -273,6 +273,20 @@ axiom parseDcapQuote_mrTd_eq
     parseDcapQuote raw = some q →
     q.body.mrTd = extractBitVec raw 64 384
 
+/-- **Structural invariant (cycle 7.9)**: a successful parse sets
+    `q.body.rtmr3` to the BitVec extracted from `raw` at the RTMR3
+    slot inside `TDReport10`.
+
+    **Layout note**: `TdReport10`'s `rtmr3` field is at TDReport10-
+    offset 208 (after teeTcbSvn 16 + mrTd 48 + rtmr0..2 3×48 = 208).
+    Absolute offset: `48 + 208 = 256`, width 48 bytes = 384 bits.
+    Reference: same Intel TDX TDReport10 layout used by
+    `parseDcapQuote_mrTd_eq` and `parseDcapQuote_reportData_eq`. -/
+axiom parseDcapQuote_rtmr3_eq
+    (raw : RawBytes) (q : DcapQuote) :
+    parseDcapQuote raw = some q →
+    q.body.rtmr3 = extractBitVec raw 256 384
+
 /-- **Structural invariant (cycle 7.7)**: a successful parse sets
     `q.body.reportData` to the BitVec extracted from `raw` at the
     `report_data` slot inside `TDReport10`.
@@ -374,26 +388,21 @@ def checkQeIdentity (q : DcapQuote) (qe : QeIdentity) : Bool :=
 Composes the substeps into a single verifier that returns the
 deployed-format `(MrEnclave, UserData n)` pair on full success. -/
 
-/-- The composed MRTD + RTMR digest, per the dstack convention.
+/-- The composed enclave identity: the pair `(MRTD, RTMR3)`.
 
-    **Cycle 7.2 implementation**: `mrEnclave := MRTD` (build-time
-    measurement). dstack's contract on `mr_enclave` is "the build-time
-    image identity"; in TDX terms that is MRTD specifically. RTMRs are
-    runtime measurements (firmware / kernel / initrd / compose_hash)
-    and bind separately via the journal's `rtmr3` field (cycle-6.22
-    `expected_rtmr3` config option).
+    **Cycle 7.9 implementation (addresses prior cycle-7.x review
+    finding M3)**: returns both `body.mrTd` (build-time image digest)
+    and `body.rtmr3` (the runtime `compose_hash` measurement). Matches
+    dstack's deployed binding discipline, which gates on both via
+    `state.rs::Config::mr_enclave` and `expected_rtmr3` in
+    `crates/contracts/core/src/handler/execute/attested.rs`.
 
-    **Cycle 6.22.d.5 caveat (adversarial finding #5)**: the docstring
-    of `MrEnclave` in `Dstack.lean:147-148` describes the field as
-    "MRTD / RTMR composition", but production dstack as of 2026-05
-    uses MRTD alone for the `mr_enclave` field (RTMR composition is
-    in the separate `rtmr3 = SHA-384(compose_hash || ...)` journal
-    field, gated by the cycle-6.22 `expected_rtmr3` config). The
-    `Dstack.lean` docstring is misleading; the right spec-level
-    semantics are documented here and the dstack-side docstring
-    should be updated to match. -/
+    Prior cycle-7.2 implementation returned `body.mrTd` only, which
+    misrepresented the deployed binding (RTMR3 was silently dropped).
+    Cycle 7.9 closes that gap by extending `MrEnclave` to a pair
+    `BitVec 384 × BitVec 384`. -/
 def composeMrEnclave (body : TdReport10) : MrEnclave :=
-  body.mrTd
+  (body.mrTd, body.rtmr3)
 
 /-- Project the user-data slot at the spec's `n` width.
 
@@ -739,7 +748,7 @@ theorem verifyDcap_output_bound_to_input
     (n : Nat) (raw : RawBytes) (col : Collateral)
     (mr : MrEnclave) (ud : UserData n) :
     verifyDcap n raw col = some (mr, ud) →
-    mr = extractBitVec raw 64 384 ∧
+    mr = (extractBitVec raw 64 384, extractBitVec raw 256 384) ∧
     (if h : n = 512 then ud = h ▸ extractBitVec raw 568 512
      else ud = BitVec.ofNat n (extractBitVec raw 568 512).toNat) := by
   intro h_acc
@@ -788,7 +797,8 @@ theorem verifyDcap_output_bound_to_input
   refine ⟨?_, ?_⟩
   · rw [h_mr]
     unfold composeMrEnclave
-    exact parseDcapQuote_mrTd_eq raw q h_parse
+    rw [parseDcapQuote_mrTd_eq raw q h_parse,
+        parseDcapQuote_rtmr3_eq raw q h_parse]
   · rw [h_ud]
     unfold projectUserData
     by_cases hn : n = 512
