@@ -202,6 +202,34 @@ implementations or honest cryptographic assumptions. -/
     `zkdcap/circuits/dcap-gnark/witness/quote.go`. -/
 opaque parseDcapQuote : RawBytes → Option DcapQuote
 
+/-- **Structural invariant (cycle 7.6, addresses cycle-7.x adversarial
+    finding #14)**: a successful `parseDcapQuote raw = some q` sets the
+    parsed quote's `signedRegion` to exactly the first 632 bytes of the
+    input — the concatenation of the header (48 bytes) and the
+    `TDReport10` body (584 bytes).
+
+    Without this axiom the parser is free to set `signedRegion` to any
+    `RawBytes` value independent of `raw`, and the downstream
+    `verifyEcdsaP256` over `q.signedRegion` would be verifying a
+    signature against arbitrary bytes (potentially under
+    attacker-chosen content). The production zkdcap parser at
+    `zkdcap/circuits/dcap-gnark/witness/quote.go` always sets
+    `signedRegion = raw[0..632]` bytewise; this axiom is the in-Lean
+    structural commitment to that behavior.
+
+    Closes the linkage gap raised by the cycle-7.x adversarial review
+    (finding #14): the chain of `verifyEcdsaP256 attestationKey
+    signedRegion ecdsaSignature = true` now provably constrains
+    `signedRegion` to be derived from the input bytes, rather than
+    being an attacker-controlled field of the `DcapQuote` record.
+
+    Adds 632 = 48 + 584 to the audit closure of every theorem deriving
+    via `parseDcapQuote`. The constant is the production wire-format
+    layout (`QuoteHeader` 48B + `TdReport10` 584B). -/
+axiom parseDcapQuote_signedRegion_eq_input_prefix
+    (raw : RawBytes) (q : DcapQuote) :
+    parseDcapQuote raw = some q → q.signedRegion = raw.take 632
+
 /-- Verify an X.509 certificate chain rooted at the Intel SGX Root CA.
     Returns the leaf certificate's public key on success. -/
 opaque verifyX509Chain : RawBytes → RawBytes → Option (BitVec 512)
@@ -540,6 +568,37 @@ theorem dcapVerifier_sound_composed (n : Nat) (q : RawBytes) (col : Collateral) 
           · simp [h_body_sig] at h_acc
         · simp [h_keybind] at h_acc
       · simp [h_qe_sig] at h_acc
+
+/-- **Audit corollary (cycle 7.6)**: a successful end-to-end
+    `verifyDcap` accepts only quotes whose ECDSA-verified `signedRegion`
+    is provably the first 632 bytes of the input. Makes the cycle-7.6
+    structural invariant `parseDcapQuote_signedRegion_eq_input_prefix`
+    load-bearing in the audit closure of `verifyDcap`-deriving theorems.
+
+    Concretely: if `verifyDcap n raw col = some (mr, ud)` then there
+    exists a parsed quote `q` such that `parseDcapQuote raw = some q`
+    AND `q.signedRegion = raw.take 632`. The downstream ECDSA check
+    `verifyEcdsaP256 q.authData.attestationKey q.signedRegion
+    q.authData.ecdsaSignature` is therefore verifying a signature
+    over the actual input bytes — not over an attacker-chosen
+    `signedRegion` field. -/
+theorem verifyDcap_signedRegion_eq_input_prefix
+    (n : Nat) (raw : RawBytes) (col : Collateral)
+    (mr : MrEnclave) (ud : UserData n) :
+    verifyDcap n raw col = some (mr, ud) →
+    ∃ q, parseDcapQuote raw = some q ∧ q.signedRegion = raw.take 632 := by
+  intro h_acc
+  -- Extract `∃ q, parseDcapQuote raw = some q` from `h_acc`.
+  have h_parse_some : ∃ q, parseDcapQuote raw = some q := by
+    cases hp : parseDcapQuote raw with
+    | none =>
+      unfold verifyDcap at h_acc
+      rw [hp] at h_acc
+      simp at h_acc
+    | some q => exact ⟨q, rfl⟩
+  obtain ⟨q, h_parse⟩ := h_parse_some
+  exact ⟨q, h_parse,
+    parseDcapQuote_signedRegion_eq_input_prefix raw q h_parse⟩
 
 /-! ## Bridge to `TdxVerifier n`
 
