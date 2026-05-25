@@ -258,34 +258,43 @@ require modelling the variable-length auth-data layout). -/
     of this extractor. -/
 opaque extractBitVec (raw : RawBytes) (offset width : Nat) : BitVec width
 
-/-- **Structural invariant (cycle 7.7)**: a successful parse sets
-    `q.body.mrTd` to the BitVec extracted from `raw` at offset
-    48 + 528 = 576 with width 384. Wait — see "Layout note" below.
+/-- **Structural invariant (cycle 7.7, corrected in cycle 7.10)**: a
+    successful parse sets `q.body.mrTd` to the BitVec extracted from
+    `raw` at the MRTD slot inside `TDReport10`.
 
-    **Layout note**: `TdReport10` is 584 bytes at offset 48. Inside
-    `TdReport10`, the MRTD field lives at TDReport10-offset 16
-    (after 16-byte TEE TCB SVN), so in the raw input the MRTD bytes
-    are at absolute offset `48 + 16 = 64`, width 48 bytes = 384 bits.
-    Reference: `zkdcap/circuits/dcap-gnark/witness/quote.go`
-    `ParseTDXQuoteV4` SGX-TDX TDReport10 layout. -/
+    **Layout note (CORRECTED cycle 7.10)**: `TdReport10` is 584 bytes
+    at quote-offset 48. Inside `TdReport10`, the MRTD field lives at
+    TDReport10-offset **136** (not 16 as cycle 7.7 incorrectly said —
+    the gap holds 120 bytes of TDX-specific fields: MrSeam,
+    MrSignerSeam, SeamAttributes, TdAttributes, XFAM). Absolute offset
+    in raw: `48 + 136 = 184`, width 48 bytes = 384 bits.
+
+    Reference: `zkdcap/circuits/dcap-gnark/witness/quote.go:70`
+    `copy(q.MrTd[:], r[136:184])` where `r := raw[headerLen:]` so
+    absolute offset is `48 + 136 = 184`. -/
 axiom parseDcapQuote_mrTd_eq
     (raw : RawBytes) (q : DcapQuote) :
     parseDcapQuote raw = some q →
-    q.body.mrTd = extractBitVec raw 64 384
+    q.body.mrTd = extractBitVec raw 184 384
 
-/-- **Structural invariant (cycle 7.9)**: a successful parse sets
-    `q.body.rtmr3` to the BitVec extracted from `raw` at the RTMR3
-    slot inside `TDReport10`.
+/-- **Structural invariant (cycle 7.9, corrected in cycle 7.10)**: a
+    successful parse sets `q.body.rtmr3` to the BitVec extracted from
+    `raw` at the RTMR3 slot inside `TDReport10`.
 
-    **Layout note**: `TdReport10`'s `rtmr3` field is at TDReport10-
-    offset 208 (after teeTcbSvn 16 + mrTd 48 + rtmr0..2 3×48 = 208).
-    Absolute offset: `48 + 208 = 256`, width 48 bytes = 384 bits.
-    Reference: same Intel TDX TDReport10 layout used by
-    `parseDcapQuote_mrTd_eq` and `parseDcapQuote_reportData_eq`. -/
+    **Layout note (CORRECTED cycle 7.10)**: `TdReport10`'s `rtmr3`
+    field is at TDReport10-offset **472** (not 208 as cycle 7.9
+    incorrectly computed — the production layout has TDX-specific
+    fields between TeeTcbSvn and MrTd, then MrTd at 136..184, then
+    Rtmr0 at 328..376, Rtmr1 at 376..424, Rtmr2 at 424..472, Rtmr3
+    at 472..520, ReportData at 520..584). Absolute offset in raw:
+    `48 + 472 = 520`, width 48 bytes = 384 bits.
+
+    Reference: `zkdcap/circuits/dcap-gnark/witness/quote.go:74`
+    `copy(q.Rtmr3[:], r[472:520])` where `r := raw[headerLen:]`. -/
 axiom parseDcapQuote_rtmr3_eq
     (raw : RawBytes) (q : DcapQuote) :
     parseDcapQuote raw = some q →
-    q.body.rtmr3 = extractBitVec raw 256 384
+    q.body.rtmr3 = extractBitVec raw 520 384
 
 /-- **Structural invariant (cycle 7.7)**: a successful parse sets
     `q.body.reportData` to the BitVec extracted from `raw` at the
@@ -748,7 +757,7 @@ theorem verifyDcap_output_bound_to_input
     (n : Nat) (raw : RawBytes) (col : Collateral)
     (mr : MrEnclave) (ud : UserData n) :
     verifyDcap n raw col = some (mr, ud) →
-    mr = (extractBitVec raw 64 384, extractBitVec raw 256 384) ∧
+    mr = (extractBitVec raw 184 384, extractBitVec raw 520 384) ∧
     (if h : n = 512 then ud = h ▸ extractBitVec raw 568 512
      else ud = BitVec.ofNat n (extractBitVec raw 568 512).toNat) := by
   intro h_acc
