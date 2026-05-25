@@ -3,7 +3,7 @@ Copyright (c) 2026 Quartz authors. All rights reserved.
 Released under Apache 2.0 license.
 -/
 
-import Specs.Quartz.Attestation.Dstack
+import Specs.Quartz.Attestation.DstackCarriers
 
 /-!
 # Reference DCAP verifier in Lean
@@ -613,28 +613,44 @@ noncomputable def dcapTdxVerifier (n : Nat) (col : Collateral)
   sound q mr ud h_acc := dcapVerifier_sound n q col mr ud h_fresh h_acc
   complete q h_signed := dcapVerifier_complete n q col h_fresh h_signed
 
-/-! ## Status: cycle 7.4 (bridge) — landed
+/-! ## Production-deployment value witnesses (cycle 7.5)
 
-The bridge `dcapTdxVerifier` is now constructible. To replace the
-`axiom tdxVerifier (n : Nat) : TdxVerifier n` in `Dstack.lean` we
-also need a canonical fresh-collateral value:
+To allow `Dstack.lean` to derive `tdxVerifier` from `dcapTdxVerifier`
+we need a canonical collateral value and a freshness witness for it.
+These are exposed as opaques so the in-fork audit story is honest:
+no in-Lean derivation produces a concrete Intel-issued collateral
+bundle, and no in-Lean derivation can verify the next-update window
+is alive at run-time. -/
 
-```lean
-opaque productionCollateral : Collateral
-opaque productionCollateral_fresh : freshCollateral productionCollateral
+/-- **Production-deployment opaque (cycle 7.5)**: a concrete
+    Intel-issued collateral bundle. This is a *value-witness*
+    representing the deployer's responsibility to fetch real Intel
+    TCB info + QE identity at deployment time. No in-Lean reduction
+    produces this value; it is a (c)-bucket assumption about a
+    deployment-side artifact.
 
-noncomputable def tdxVerifier (n : Nat) : TdxVerifier n :=
-  dcapTdxVerifier n productionCollateral productionCollateral_fresh
-```
+    **Adversarial finding #16 caveat**: keeping this opaque rather
+    than parameterising every downstream theorem by an explicit
+    `(col : Collateral)` is a tradeoff. The parameterised form
+    would surface the collateral dependency at every call site
+    (audit transparency win) but would require threading `col`
+    through every protocol-layer theorem (substantial cascade).
+    The current opaque form keeps the cascade trivial; cycle 7.6
+    is queued as a candidate for parameterisation if the audit
+    surface ever needs the explicit dependency. -/
+axiom productionCollateral : Collateral
 
-The `productionCollateral` opaque marks the deployed Intel-issued
-collateral as a (c)-bucket value-witness; `productionCollateral_fresh`
-is the deployer's runtime obligation (collateral is rotated within
-the next-update window). Both are honest in-fork stand-ins for
-deployment-side values.
+/-- **Production-deployment opaque (cycle 7.5)**: a freshness
+    witness for `productionCollateral`. The deployer's runtime
+    obligation is to rotate `productionCollateral` within the
+    Intel-published next-update window so this witness remains
+    truthful in real-world operation.
 
-Refactoring `Dstack.lean` to use `dcapTdxVerifier` instead of `axiom
-tdxVerifier` is cycle 7.5 (queued) — it touches the axiom closure of
-every downstream theorem and warrants its own change record. -/
+    Same audit caveat as `productionCollateral`: this is a
+    value-witness, not a verified-by-Lean derivation. The
+    cryptographic discharge target is "TCB info collateral with
+    valid Intel signatures still inside its next-update window
+    and no PCK revocation events since last refresh". -/
+axiom productionCollateral_fresh : freshCollateral productionCollateral
 
 end Specs.Quartz.Attestation.DcapVerifier

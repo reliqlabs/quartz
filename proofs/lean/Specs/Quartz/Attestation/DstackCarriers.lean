@@ -1,0 +1,108 @@
+/-
+  Trust-boundary carrier types for dstack TDX attestation.
+
+  This module contains the bare wire-format carriers and the
+  abstract `was_signed_by_dstack` witness — the minimum surface
+  shared between `Dstack.lean` (which provides the canonical
+  `tdxVerifier` derived from `DcapVerifier`) and `DcapVerifier.lean`
+  (which provides the reference DCAP-quote verifier itself).
+
+  --------------------------------------------------------------------
+  History: this content was carved out of `Specs/Quartz/Attestation/
+  Dstack.lean` in cycle 7.5 (2026-05-25). The split exists ONLY to
+  break the file-dependency cycle that arises when `Dstack.lean`
+  wants to define `tdxVerifier` in terms of `DcapVerifier`'s
+  `dcapTdxVerifier`: `DcapVerifier.lean` needs `TdxVerifier` and
+  the carriers; `Dstack.lean` needs `DcapVerifier`. Pulling the
+  shared surface into a third file resolves the cycle without
+  touching any consumer file (downstream files import `Dstack.lean`
+  and that import re-exposes everything in the `Specs.Quartz.
+  Attestation.Dstack` namespace via the carrier re-export chain).
+  --------------------------------------------------------------------
+
+  The split is purely structural; the carrier definitions and the
+  `was_signed_by_dstack` axiom are byte-for-byte the same as their
+  pre-split forms (cycles 6.17-6.21 + cycle 6.22.d.3 history applies).
+-/
+
+namespace Specs.Quartz.Attestation.Dstack
+
+/-- An abstract TDX quote. In wire format this is the
+    DCAP-quote-v4 byte blob produced by dstack.
+
+    **Cycle 6.21 (carrier refinement, 2026-05-20)**: refined to
+    `List UInt8` (variable-length byte sequence). Typical DCAP
+    quote v4 blobs are ~5000 bytes but the exact length depends
+    on the PCK certificate chain inlined in the quote. -/
+abbrev TdxQuote : Type := List UInt8
+
+/-- The measurement of the enclave image (MRTD / RTMR composition).
+    Used in `state.rs::Config::mr_enclave`.
+
+    **Cycle 6.17 (carrier refinement, 2026-05-20)**: refined from
+    `axiom MrEnclave : Type` to `abbrev MrEnclave : Type := BitVec 384`.
+    Intel TDX's MRTD (build-time measurement) is a 48-byte / 384-bit
+    SHA-384 digest. `BitVec 384` mirrors this exactly and provides
+    automatic `Fintype`/`DecidableEq`/`Inhabited` instances. -/
+abbrev MrEnclave : Type := BitVec 384
+
+/-- The 64-byte user-data field embedded in the TDX quote's
+    `report_data`. Quartz binds this to a domain-separated hash
+    of session/handshake state.
+
+    **Cycle 6.18 (carrier refinement, 2026-05-20)**: refined from
+    `axiom UserData : Type` to `abbrev UserData : Type := BitVec 512`.
+    The DCAP quote's `report_data` is exactly 64 bytes / 512 bits;
+    `BitVec 512` mirrors this exactly and provides automatic
+    `Fintype`/`DecidableEq`/`Inhabited`. This is the highest-leverage
+    carrier refinement in the queue because `UserData` is the
+    codomain of both `commitHashE` and `commitHashBytesE`; with
+    `Fintype UserData` available, the random-oracle birthday-bound
+    discharge of those (d-pigeonhole-impossible) axioms becomes
+    statable.
+
+    **Cycle 6.22.d.3 (aggressive parameterisation, 2026-05-24)**:
+    refined further from `BitVec 512` to `BitVec n` with `n` the
+    security parameter. The production deployment instantiates at
+    `n = 512` (the dstack quote's 64-byte `report_data` field); the
+    cryptographic guarantees scale super-polynomially in `n` via the
+    cycle-6.22.d.1 birthday bound. -/
+abbrev UserData (n : Nat) : Type := BitVec n
+
+/-- Abstract soundness predicate.
+
+    `was_signed_by_dstack q` holds iff `q` was actually produced by
+    a genuine dstack TEE running inside Intel TDX, with valid Intel
+    PCK signatures up to the Intel SGX Root CA.
+
+    This is the analog of `Axioms.Crypto.was_signed_by` from
+    verified-cosmwasm — a propositional witness for off-chain reality
+    that no Lean proof can construct, only consume. -/
+axiom was_signed_by_dstack : TdxQuote → Prop
+
+/-- **Trust-boundary record**: the dstack TDX verifier packaged with
+    its (classical-Prop) soundness and completeness claims.
+
+    Bundling rationale: prior to Step 4 of the VCV-io refactor the
+    verifier function and its two correctness claims were three
+    independent axioms. Bundling them into a single record packages
+    "there is a verifier" with "the verifier is sound" and "the
+    verifier is complete" into one trust-boundary commitment.
+
+    **Honesty caveat**: both `sound` and `complete` fields are
+    classical-Prop statements that drop the "with negligible
+    probability of forgery / under valid collateral" qualifiers
+    cryptography actually provides. The truthful `OracleComp`
+    formulation lives in `DstackVCVio.lean`; the cycle-7.x DCAP
+    reference verifier in `DcapVerifier.lean` provides a concrete
+    construction of a `TdxVerifier n` whose `sound`/`complete`
+    fields decompose into three named (c)-bucket assumptions on
+    standard primitives. -/
+structure TdxVerifier (n : Nat) where
+  verify : TdxQuote → Option (MrEnclave × UserData n)
+  sound (q : TdxQuote) (mr : MrEnclave) (ud : UserData n) :
+    verify q = some (mr, ud) → was_signed_by_dstack q
+  complete (q : TdxQuote) :
+    was_signed_by_dstack q → ∃ mr ud, verify q = some (mr, ud)
+
+end Specs.Quartz.Attestation.Dstack

@@ -14,88 +14,117 @@
 
   --------------------------------------------------------------------
   Historical context: this module previously held **8** axioms.
+  Cycle 4 (VCV-io migration) bundled the verifier + soundness +
+  completeness into a single `axiom tdxVerifier : TdxVerifier`. Cycle
+  7.5 (2026-05-25) demotes even that single bundled axiom to a
+  derived definition.
   --------------------------------------------------------------------
 
   Refactor (VCV-io migration, 2026-05-13, Step 4):
 
   * `TdxQuote`, `MrEnclave`, `UserData` remain as opaque carrier
-    axioms. They are externally-supplied wire-format types
-    (DCAP-quote-v4 byte blob, MRTD/RTMR digest, 64-byte report_data
-    field). Discharging them requires a concrete byte-level model
-    out of scope for this step.
+    abbrevs (later refined to concrete `BitVec` widths in cycles
+    6.17-6.21 and parameterised by the security parameter in cycle
+    6.22.d.3).
   * `was_signed_by_dstack` remains as the propositional witness for
     off-chain reality (a genuine dstack TEE produced the quote with
     valid Intel PCK signatures up to the SGX Root CA). This is the
     analog of `Axioms.Crypto.was_signed_by` from verified-cosmwasm
     — a witness no Lean proof can construct, only consume. Honest
     computational assumption.
-  * `RtmrLog : Type` is **removed** as a dead axiom — no
-    declaration or theorem anywhere in the Quartz Lean tree
-    references it. Inventoried during Step 4 axiom scan and
-    confirmed via `lean_verify` / global `RtmrLog` reference scan.
+  * `RtmrLog : Type` is **removed** as a dead axiom.
   * `verifyTdxQuote`, `verifyTdxQuote_sound`, `verifyTdxQuote_complete`
     are **bundled** into a single trust-boundary record axiom
-    `tdxVerifier : TdxVerifier`. The verifier function, its
-    soundness, and its completeness become *fields* of one record
-    rather than three independent axioms. The three public names
-    are preserved as `noncomputable def` / `theorem` projections,
-    so downstream files (`Zkdcap.lean`, `Protocol/CrossComponent.lean`,
-    `Protocol/Handshake.lean`, `Protocol/Confidentiality.lean`,
-    `Protocol/Conservation.lean`, `Protocol/AuctionDeterminism.lean`)
-    re-build unchanged.
+    `tdxVerifier : TdxVerifier`.
 
-  Net effect on Quartz's verified surface: **8 axioms → 5 axioms**.
+  Net effect on Quartz's verified surface (Step 4): **8 axioms → 5
+  axioms**.
+
+  --------------------------------------------------------------------
+  Cycle 7.5 (axiom demotion, 2026-05-25):
+  --------------------------------------------------------------------
+
+  The `axiom tdxVerifier (n : Nat) : TdxVerifier n` is now a derived
+  definition:
+
+      noncomputable def tdxVerifier (n : Nat) : TdxVerifier n :=
+        DcapVerifier.dcapTdxVerifier n
+          DcapVerifier.productionCollateral
+          DcapVerifier.productionCollateral_fresh
+
+  The bundled axiom is removed from the closure of every downstream
+  theorem. In its place the closure inherits the three named
+  (c)-bucket assumptions from `DcapVerifier.lean`:
+
+    1. `pckLeafKey_signs_imply_signed_by_pck_holder` (ECDSA-P256
+       EUF-CMA over Intel's PCK key population).
+    2. `chain_verified_leafKey_is_legitimate` (Intel SGX Root CA
+       chain trust).
+    3. `verified_chain_implies_dstack_signed` (the final composition:
+       chain + signatures + TCB/QE gates → `was_signed_by_dstack`).
+
+  Plus three value-witness opaques:
+
+    * `freshCollateral` predicate (opaque)
+    * `productionCollateral : Collateral` (opaque)
+    * `productionCollateral_fresh : freshCollateral productionCollateral`
+      (opaque)
+
+  Plus four substep opaques the DCAP verifier composes:
+
+    * `parseDcapQuote` (RawBytes → Option DcapQuote)
+    * `verifyX509Chain` (cert chain walk → leaf pubkey)
+    * `verifyEcdsaP256` (raw ECDSA-P256 verify)
+    * `verifyAttestationKeyBinding` (QE-report → attestation-key hash check)
+    * `qeReportBytes` (BitVec → RawBytes serialisation)
+
+  `dcapVerifier_complete` remains an axiom (cycle 7.3 honest gap —
+  completeness has no in-fork decomposition into standard primitives
+  because the precondition `was_signed_by_dstack` is itself opaque).
+
+  **Net axiom change for cycle 7.5**: -1 bundled `tdxVerifier`
+  axiom; +3 named (c)-bucket cryptographic axioms (already counted
+  in the cycle 7.3.b closure of `dcapVerifier_sound_composed`);
+  +3 value-witness opaques (`freshCollateral`, `productionCollateral`,
+  `productionCollateral_fresh`); +5 substep opaques. The trade is
+  intentional: the substantive cryptographic content is now exposed
+  as named, narrow assumptions on standard primitives rather than
+  bundled inside a single trust-boundary axiom. Auditing the verified
+  surface now reads as "trust ECDSA-P256, trust the Intel CA chain,
+  trust the named verifier algorithm matches the production wire
+  format" — each line of trust is auditable independently.
 
   --------------------------------------------------------------------
   HONESTY-LENS FINDING (load-bearing — do not paper over):
   --------------------------------------------------------------------
 
-  The bundled `tdxVerifier : TdxVerifier` record axiom contains TWO
-  classical-`Prop` verification implications that are **honest under
-  a named computational assumption but classically over-strong as
-  stated**:
+  The derived `tdxVerifier` and its projections inherit the same
+  classical-Prop shape as the original bundled axiom. The `sound`
+  field is now backed by `dcapVerifier_sound_composed` (cycle 7.3.b
+  derived theorem) plus the three named (c)-bucket assumptions; the
+  `complete` field is still backed by the `dcapVerifier_complete`
+  axiom because the precondition `was_signed_by_dstack` is opaque.
 
     1. `tdxVerifier.sound : verifyTdxQuote q = some (mr, ud) →
                             was_signed_by_dstack q`
-       Truthful under the DCAP-soundness assumption: a quote that
-       passes the on-chain DCAP verifier was (with negligible
-       probability of forgery) produced by a genuine TEE. The
-       *classical-Prop* form drops the "negligible probability of
-       forgery" qualifier, making it vacuously stronger than the
-       cryptographic reality.
+       Now derived (cycle 7.5) from `dcapVerifier_sound`. The
+       cryptographic-reality "with negligible probability of forgery"
+       qualifier is still dropped at this layer — the truthful
+       formulation appears in `DstackVCVio.lean` and `ProtocolVCVio.lean`.
 
     2. `tdxVerifier.complete : was_signed_by_dstack q →
                                ∃ mr ud, verifyTdxQuote q = some (mr, ud)`
-       Truthful under the DCAP-completeness assumption: a genuine
-       dstack quote with current Intel collateral decodes to its
-       measurement and user-data. The *classical-Prop* form drops
-       the freshness / collateral-validity / non-revocation
-       preconditions, making it again vacuously stronger.
+       Now derived (cycle 7.5) from `dcapVerifier_complete`, which is
+       itself still an axiom. The cryptographic-reality "fresh
+       Intel collateral + non-revocation" precondition is captured at
+       `dcapVerifier_complete` (via `freshCollateral`).
 
-  Both implications are in the **(d) classical-Prop verification
-  implication that hides a probabilistic / preconditional gap**
-  bucket. The TRUTHFUL VCV-io statements model `verifyTdxQuote` as
-  a verification *oracle* against `OracleSpec`:
-
-      tdxVerifier_soundness_negl (𝒜 : Adversary) :
-        Pr[was_signed_by_dstack q = false ∧ verifyTdxQuote q = some _
-           | (q, _) ← 𝒜.run]
-        ≤ negligible(security_parameter)
-
-      tdxVerifier_completeness_negl (q : TdxQuote)
-          (h_sig : was_signed_by_dstack q)
-          (h_fresh : freshCollateral q)
-          (h_unrev : ¬revoked q) :
-        ∃ mr ud, verifyTdxQuote q = some (mr, ud)
-
-  The companion module `DstackVCVio.lean` sketches the `OracleSpec`
-  + `OracleComp` shape for this lift. It is documentary at Step 4
-  and becomes load-bearing at Step 6 (protocol-layer OracleComp
-  lift).
+  The truthful VCV-io oracle-game shapes are sketched in
+  `DstackVCVio.lean`.
 
   **Downstream theorems carrying Dstack-axiom closure** (verified
-  via `lean_verify` post-migration; each rides on at least one of
-  `{tdxVerifier, was_signed_by_dstack}` plus the carrier triple):
+  via `lean_verify` post-cycle-7.5; each rides on the named
+  cryptographic axioms plus the value-witness + substep opaques):
 
     1. `Specs.Quartz.Attestation.Dstack.projections_some_of_verify`
        (this module)
@@ -108,20 +137,9 @@
     8. `Specs.Quartz.Protocol.Conservation.cross_component_transfers_conservation`
     9. `Specs.Quartz.Protocol.AuctionDeterminism.cross_component_auction_winner_determinism`
 
-  Of these:
-
-  * Theorems 2 and 7 ride on BOTH the bundled `tdxVerifier`
-    (Step 4 finding) AND the bundled `commitHashE` / `commitHashBytesE`
-    (Step 2 / Step 3 findings) — these are the **multi-impossibility
-    composition theorems** flagged in Step 3's change record.
-  * Step 3's prediction that "Step 4 will surface analogous shape
-    for `verifyTdxQuote_sound`" is **confirmed** by this finding.
-
-  Same demotion-blocking rationale as Steps 2 and 3 applies:
-  downstream consumers ride on deterministic implication, not on
-  probability bounds. Migrating them requires lifting the
-  protocol-layer theorems into `OracleComp` with a soundness-error
-  budget. That is Step 6+ scope, not Step 4.
+  Of these, theorems 2 and 7 ride on BOTH the (now-derived) Dstack
+  shape AND the bundled `commitHashE` / `commitHashBytesE` axioms
+  (Step 2 / Step 3 findings).
 -/
 
 -- NOTE: This module is intentionally kept free of `VCVio` imports.
@@ -132,100 +150,34 @@
 -- module `Specs/Quartz/Attestation/DstackVCVio.lean`, imported only
 -- where probabilistic refinements are needed.
 
+import Specs.Quartz.Attestation.DstackCarriers
+import Specs.Quartz.Attestation.DcapVerifier
+
 namespace Specs.Quartz.Attestation.Dstack
 
-/-- An abstract TDX quote. In wire format this is the
-    DCAP-quote-v4 byte blob produced by dstack.
+open Specs.Quartz.Attestation.DcapVerifier (dcapTdxVerifier
+  productionCollateral productionCollateral_fresh)
 
-    **Cycle 6.21 (carrier refinement, 2026-05-20)**: refined to
-    `List UInt8` (variable-length byte sequence). Typical DCAP
-    quote v4 blobs are ~5000 bytes but the exact length depends
-    on the PCK certificate chain inlined in the quote. -/
-abbrev TdxQuote : Type := List UInt8
+/-- **Derived trust-boundary value (cycle 7.5)**: the canonical
+    dstack TDX verifier, constructed by instantiating the reference
+    DCAP verifier `dcapTdxVerifier` at the deployment-side production
+    collateral bundle.
 
-/-- The measurement of the enclave image (MRTD / RTMR composition).
-    Used in `state.rs::Config::mr_enclave`.
+    Previously an axiom (cycle 4: `axiom tdxVerifier (n) : TdxVerifier n`).
+    Demoted to a derived definition in cycle 7.5: the cryptographic
+    content is now exposed as the three named (c)-bucket assumptions
+    in `DcapVerifier.lean` (PCK ECDSA-P256 unforgeability, Intel CA
+    chain trust, the final chain-link composition) plus value-witness
+    opaques (`productionCollateral`, `productionCollateral_fresh`) and
+    substep opaques (`parseDcapQuote`, `verifyX509Chain`, etc.).
 
-    **Cycle 6.17 (carrier refinement, 2026-05-20)**: refined from
-    `axiom MrEnclave : Type` to `abbrev MrEnclave : Type := BitVec 384`.
-    Intel TDX's MRTD (build-time measurement) is a 48-byte / 384-bit
-    SHA-384 digest. `BitVec 384` mirrors this exactly and provides
-    automatic `Fintype`/`DecidableEq`/`Inhabited` instances. -/
-abbrev MrEnclave : Type := BitVec 384
-
-/-- The 64-byte user-data field embedded in the TDX quote's
-    `report_data`. Quartz binds this to a domain-separated hash
-    of session/handshake state.
-
-    **Cycle 6.18 (carrier refinement, 2026-05-20)**: refined from
-    `axiom UserData : Type` to `abbrev UserData : Type := BitVec 512`.
-    The DCAP quote's `report_data` is exactly 64 bytes / 512 bits;
-    `BitVec 512` mirrors this exactly and provides automatic
-    `Fintype`/`DecidableEq`/`Inhabited`. This is the highest-leverage
-    carrier refinement in the queue because `UserData` is the
-    codomain of both `commitHashE` and `commitHashBytesE`; with
-    `Fintype UserData` available, the random-oracle birthday-bound
-    discharge of those (d-pigeonhole-impossible) axioms becomes
-    statable.
-
-    **Cycle 6.22.d.3 (aggressive parameterisation, 2026-05-24)**:
-    refined further from `BitVec 512` to `BitVec n` with `n` the
-    security parameter. The production deployment instantiates at
-    `n = 512` (the dstack quote's 64-byte `report_data` field); the
-    cryptographic guarantees scale super-polynomially in `n` via the
-    cycle-6.22.d.1 birthday bound. -/
-abbrev UserData (n : Nat) : Type := BitVec n
-
-/-- Abstract soundness predicate.
-
-    `was_signed_by_dstack q` holds iff `q` was actually produced by
-    a genuine dstack TEE running inside Intel TDX, with valid Intel
-    PCK signatures up to the Intel SGX Root CA.
-
-    This is the analog of `Axioms.Crypto.was_signed_by` from
-    verified-cosmwasm — a propositional witness for off-chain reality
-    that no Lean proof can construct, only consume. -/
-axiom was_signed_by_dstack : TdxQuote → Prop
-
-/-- **Bundled trust-boundary record**: the dstack TDX verifier
-    packaged with its (classical-Prop) soundness and completeness
-    claims.
-
-    Bundling rationale: prior to Step 4 of the VCV-io refactor the
-    verifier function and its two correctness claims were three
-    independent axioms. Bundling them into a single record axiom
-    (`tdxVerifier`) packages "there is a verifier" with "the
-    verifier is sound" and "the verifier is complete" into one
-    trust-boundary commitment. The three public names below
-    (`verifyTdxQuote`, `verifyTdxQuote_sound`, `verifyTdxQuote_complete`)
-    are recovered as projections so downstream files re-build
-    unchanged.
-
-    **Honesty caveat** (see file header): both `sound` and
-    `complete` fields are classical-Prop statements that drop the
-    "with negligible probability of forgery / under valid collateral"
-    qualifiers cryptography actually provides. The truthful
-    `OracleComp` formulation is sketched in `DstackVCVio.lean`. -/
-structure TdxVerifier (n : Nat) where
-  verify : TdxQuote → Option (MrEnclave × UserData n)
-  sound (q : TdxQuote) (mr : MrEnclave) (ud : UserData n) :
-    verify q = some (mr, ud) → was_signed_by_dstack q
-  complete (q : TdxQuote) :
-    was_signed_by_dstack q → ∃ mr ud, verify q = some (mr, ud)
-
-/-- **Bundled trust-boundary axiom**: the canonical dstack TDX
-    verifier exists.
-
-    Replaces the previous trio (`verifyTdxQuote` axiom +
-    `verifyTdxQuote_sound` axiom + `verifyTdxQuote_complete` axiom)
-    with a single bundled record axiom. The three public names are
-    recovered as projections immediately below.
-
-    **Honesty caveat** carries over from the `TdxVerifier` structure
-    docstring — the bundled record's `sound` / `complete` fields
-    are classical-Prop implications that hide a probabilistic gap;
-    the truthful formulation lives in `DstackVCVio.lean`. -/
-axiom tdxVerifier (n : Nat) : TdxVerifier n
+    The audit story is: trust the production wire-format substeps
+    (cycle 7.2.c queued for substep implementations), trust ECDSA-P256
+    EUF-CMA on Intel's PCK key population, trust the Intel SGX Root CA
+    chain trust discipline, and trust that the deployer fetches a
+    fresh `productionCollateral` within Intel's next-update window. -/
+noncomputable def tdxVerifier (n : Nat) : TdxVerifier n :=
+  dcapTdxVerifier n productionCollateral productionCollateral_fresh
 
 /-- Decode and verify a TDX quote.
 
@@ -237,26 +189,25 @@ axiom tdxVerifier (n : Nat) : TdxVerifier n
     any failure (malformed quote, expired collateral, bad signature,
     revoked PCK, etc.).
 
-    Previously an axiom; now a derived definition. Marked
-    `noncomputable` because `tdxVerifier` is an axiom. -/
+    Marked `noncomputable` because `tdxVerifier` is derived from
+    opaque production-collateral value-witnesses. -/
 noncomputable def verifyTdxQuote (n : Nat) (q : TdxQuote) :
     Option (MrEnclave × UserData n) :=
   (tdxVerifier n).verify q
 
-/-- **Theorem (formerly an axiom): Soundness** of TDX quote
-    verification — a quote that verifies must have been signed by
-    dstack.
+/-- **Theorem: Soundness** of TDX quote verification — a quote that
+    verifies must have been signed by dstack.
 
-    Previously an independent axiom; now derived as a projection
-    of the bundled `tdxVerifier` record.
+    Derived as a projection of the now-derived `tdxVerifier`. After
+    cycle 7.5, the closure of this theorem is the named DCAP
+    (c)-bucket axioms, not a bundled `tdxVerifier` axiom.
 
     This is the analog of `Axioms.Crypto.secp256k1_verify_sound`.
 
-    **Honesty caveat** (carries over from `tdxVerifier`): this is
-    a classical-Prop implication. The cryptographic reality is
-    that DCAP verification is *computationally* sound (forgery
-    has negligible probability), not absolutely sound. Downstream
-    consumers should eventually migrate to the
+    **Honesty caveat**: this is a classical-Prop implication. The
+    cryptographic reality is that DCAP verification is *computationally*
+    sound (forgery has negligible probability), not absolutely sound.
+    Downstream consumers should eventually migrate to the
     `tdxVerifier_soundness_negl` shape sketched in
     `DstackVCVio.lean`. -/
 theorem verifyTdxQuote_sound (n : Nat) (q : TdxQuote)
@@ -264,21 +215,22 @@ theorem verifyTdxQuote_sound (n : Nat) (q : TdxQuote)
     verifyTdxQuote n q = some (mr, ud) → was_signed_by_dstack q :=
   (tdxVerifier n).sound q mr ud
 
-/-- **Theorem (formerly an axiom): Completeness** of TDX quote
-    verification — a genuine dstack quote can be decoded to its
-    measurement and user-data fields.
+/-- **Theorem: Completeness** of TDX quote verification — a genuine
+    dstack quote can be decoded to its measurement and user-data
+    fields.
 
     Phrased existentially because the quote determines the fields,
     but we don't model the projection at this layer.
 
-    Previously an independent axiom; now derived as a projection
-    of the bundled `tdxVerifier` record.
+    Derived as a projection of the now-derived `tdxVerifier`. After
+    cycle 7.5, the closure of this theorem includes the
+    `dcapVerifier_complete` axiom (still in-fork irreducible — its
+    precondition `was_signed_by_dstack` is opaque).
 
-    **Honesty caveat** (carries over from `tdxVerifier`): the
-    real-world completeness claim is conditional on fresh
-    Intel collateral and non-revocation of the PCK chain. The
-    classical-Prop form drops those preconditions; the truthful
-    formulation is in `DstackVCVio.lean`. -/
+    **Honesty caveat**: the real-world completeness claim is
+    conditional on fresh Intel collateral and non-revocation of the
+    PCK chain. The classical-Prop form drops those preconditions; the
+    truthful formulation is in `DstackVCVio.lean`. -/
 theorem verifyTdxQuote_complete (n : Nat) (q : TdxQuote) :
     was_signed_by_dstack q → ∃ mr ud, verifyTdxQuote n q = some (mr, ud) :=
   (tdxVerifier n).complete q

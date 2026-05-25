@@ -13,6 +13,7 @@ import Specs.Quartz.Crypto.RawMessages
 import Specs.Quartz.Crypto.RawMessagesVCVio
 import Specs.Quartz.Crypto.TransferMessages
 import Specs.Quartz.Crypto.AuctionMessages
+import Specs.Quartz.Attestation.DstackCarriers
 import Specs.Quartz.Attestation.Dstack
 import Specs.Quartz.Attestation.DstackVCVio
 import Specs.Quartz.Attestation.Zkdcap
