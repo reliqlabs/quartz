@@ -156,7 +156,8 @@ import Specs.Quartz.Attestation.DcapVerifier
 namespace Specs.Quartz.Attestation.Dstack
 
 open Specs.Quartz.Attestation.DcapVerifier (dcapTdxVerifier
-  productionCollateral productionCollateral_fresh)
+  productionCollateral productionCollateral_fresh
+  signed_quotes_anchor_to_production_collateral)
 
 /-- **Derived trust-boundary value (cycle 7.5)**: the canonical
     dstack TDX verifier, constructed by instantiating the reference
@@ -178,6 +179,7 @@ open Specs.Quartz.Attestation.DcapVerifier (dcapTdxVerifier
     fresh `productionCollateral` within Intel's next-update window. -/
 noncomputable def tdxVerifier (n : Nat) : TdxVerifier n :=
   dcapTdxVerifier n productionCollateral productionCollateral_fresh
+    signed_quotes_anchor_to_production_collateral
 
 /-- Decode and verify a TDX quote.
 

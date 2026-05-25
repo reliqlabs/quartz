@@ -864,12 +864,38 @@ theorem dcapVerifier_sound (n : Nat) (q : RawBytes) (col : Collateral)
   fun h_fresh h_acc =>
     dcapVerifier_sound_composed n q col h_fresh ⟨mr, ud, h_acc⟩
 
-/-- **Completeness of verifyDcap (cycle 7.3, axiom)**: a genuinely
-    signed dstack quote under fresh collateral decodes successfully. -/
+/-- **Witness predicate (cycle 7.8, addresses review H3)**: the PCK
+    chain in `q` anchors to the trust roots in `col`. Operationally:
+    the cert chain inside `q.authData.certificateData` walks up to
+    `col.rootCaCert`, and the TCB/QE collateral in `col` corresponds
+    to the FMSPC / QE identity that signed `q`. Without this
+    precondition, the original cycle-7.3 `dcapVerifier_complete` axiom
+    asserted "any fresh col decodes any genuine quote", which is
+    cryptographically false — a quote signed against Intel's CA-A
+    cannot decode against a (still fresh) collateral bundle from a
+    different Intel sub-CA, FMSPC, or post-revocation chain. -/
+axiom chain_anchors_to_collateral : RawBytes → Collateral → Prop
+
+/-- **Completeness of verifyDcap (cycle 7.8, addresses review H3)**:
+    a genuinely signed dstack quote whose PCK chain anchors to a fresh
+    collateral bundle decodes successfully.
+
+    The added `chain_anchors_to_collateral q col` precondition closes
+    the over-strength gap raised by cycle-7.7 review H3: the previous
+    `freshCollateral col → was_signed_by_dstack q → ∃ mr ud, verify ...`
+    form asserted completeness against *any* fresh collateral,
+    including ones whose trust roots are incompatible with the quote's
+    signer chain. The corrected form binds completeness to collateral
+    that actually matches the quote's anchor. -/
 axiom dcapVerifier_complete (n : Nat) (q : RawBytes) (col : Collateral) :
     freshCollateral col →
+    chain_anchors_to_collateral q col →
     was_signed_by_dstack q →
     ∃ mr ud, verifyDcap n q col = some (mr, ud)
+
+-- The deployment-side anchoring axiom
+-- `signed_quotes_anchor_to_production_collateral` is declared
+-- below, after `productionCollateral` is in scope.
 
 /-- **The reference DCAP-based `TdxVerifier`**: a concrete
     `TdxVerifier n` value built from `verifyDcap` plus a fresh
@@ -896,10 +922,13 @@ axiom dcapVerifier_complete (n : Nat) (q : RawBytes) (col : Collateral) :
     rotates collateral within the next-update window, but the spec
     does not enforce that. -/
 noncomputable def dcapTdxVerifier (n : Nat) (col : Collateral)
-    (h_fresh : freshCollateral col) : TdxVerifier n where
+    (h_fresh : freshCollateral col)
+    (h_anchors : ∀ q, was_signed_by_dstack q → chain_anchors_to_collateral q col) :
+    TdxVerifier n where
   verify q := verifyDcap n q col
   sound q mr ud h_acc := dcapVerifier_sound n q col mr ud h_fresh h_acc
-  complete q h_signed := dcapVerifier_complete n q col h_fresh h_signed
+  complete q h_signed := dcapVerifier_complete n q col h_fresh
+    (h_anchors q h_signed) h_signed
 
 /-! ## Production-deployment value witnesses (cycle 7.5)
 
@@ -940,5 +969,26 @@ axiom productionCollateral : Collateral
     valid Intel signatures still inside its next-update window
     and no PCK revocation events since last refresh". -/
 axiom productionCollateral_fresh : freshCollateral productionCollateral
+
+/-- **(c)-bucket assumption (cycle 7.8 — deployment-side anchoring)**:
+    in the deployed flow, every quote produced by a dstack TEE
+    anchors its PCK chain to the deployer's `productionCollateral`
+    bundle. Captures the deployment-side discipline: the deployer
+    fetches collateral matching the FMSPC / Intel sub-CA the dstack
+    image's TEE is provisioned under, and rotates it within the
+    next-update window so the chain-anchoring holds.
+
+    Surfaces a precondition that the cycle-7.3 `dcapVerifier_complete`
+    axiom hid implicitly. With cycle 7.8's strengthened
+    `dcapVerifier_complete` (which now requires
+    `chain_anchors_to_collateral q col`), this axiom is what allows
+    `Dstack.tdxVerifier` to construct a completeness witness for
+    arbitrary `was_signed_by_dstack` quotes — the deployment side
+    guarantees that any genuinely-dstack-signed quote will anchor to
+    the deployer's collateral. -/
+axiom signed_quotes_anchor_to_production_collateral
+    (q : RawBytes) :
+    was_signed_by_dstack q →
+    chain_anchors_to_collateral q productionCollateral
 
 end Specs.Quartz.Attestation.DcapVerifier
