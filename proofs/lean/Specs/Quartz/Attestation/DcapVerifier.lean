@@ -479,6 +479,29 @@ opaque verifyAttestationKeyBinding (qeReport : BitVec (384 * 8))
     `verifyDcap` (below) can invoke it. -/
 opaque qeReportBytes : BitVec (384 * 8) → RawBytes
 
+/-- **Structural axiom (cycle 7.16, addresses review L1)**: the
+    `qeReportBytes` conversion applied to a `BitVec` extracted from
+    a specific window of `raw` equals the corresponding byte slice
+    of `raw`. Without this axiom an adversarial `qeReportBytes` could
+    ignore its `BitVec` input and return attacker-chosen bytes,
+    defeating the cycle 7.12 `qeReport` pinning.
+
+    Operationally: `qeReportBytes` is little-endian byte unpacking of
+    a 384*8-bit vector into 384 bytes. When the input BitVec was
+    little-endian-packed from `raw[offset..offset+384]` (via
+    `extractBitVec`), the unpacking returns the original bytes.
+
+    Concretely for the cycle 7.12 layout (`qeReport` at offset 770,
+    width 384*8):
+        qeReportBytes (extractBitVec raw 770 (384*8))
+          = (raw.drop 770).take 384
+    Connects the cycle-7.12 qeReport-binding to the bytes the
+    `verifyEcdsaP256` substep in `verifyDcap` actually hashes. -/
+axiom qeReportBytes_extractBitVec_eq
+    (raw : RawBytes) (offset : Nat) :
+    qeReportBytes (extractBitVec raw offset (384 * 8))
+      = (raw.drop offset).take 384
+
 /-- Check that the TCB level reported by the quote meets the
     collateral's TCB threshold.
 
@@ -1031,6 +1054,37 @@ theorem verifyDcap_output_committed_by_signed_region
       exact extractBitVec_take raw 568 512 632 (by decide)
     · simp only [dif_neg hn] at h_ud ⊢
       rw [h_ud, extractBitVec_take raw 568 512 632 (by decide)]
+
+/-- **Derived theorem (cycle 7.16)**: a successful `verifyDcap`
+    accepts only quotes whose QE-report bytes (as fed to ECDSA via
+    `qeReportBytes`) equal the actual raw input byte slice. Composes
+    cycle 7.12 (`parseDcapQuote_qeReport_eq`) with cycle 7.16
+    (`qeReportBytes_extractBitVec_eq`) to close the audit gap that
+    review L1 flagged: previously, an adversarial `qeReportBytes`
+    could ignore its bit-vector input.
+
+    Audit consequence: the bytes the production ECDSA call hashes
+    when verifying `qeReportSignature` against the PCK leaf are
+    provably the slice `raw[770..1154]` of the input quote — not
+    parser-chosen, not key-conversion-adversary chosen. -/
+theorem verifyDcap_qeReportBytes_eq_raw_slice
+    (n : Nat) (raw : RawBytes) (col : Collateral)
+    (mr : MrEnclave) (ud : UserData n) :
+    verifyDcap n raw col = some (mr, ud) →
+    ∃ q, parseDcapQuote raw = some q ∧
+      qeReportBytes q.authData.qeReport = (raw.drop 770).take 384 := by
+  intro h_acc
+  have h_parse_some : ∃ q, parseDcapQuote raw = some q := by
+    cases hp : parseDcapQuote raw with
+    | none =>
+      unfold verifyDcap at h_acc
+      rw [hp] at h_acc
+      simp at h_acc
+    | some q => exact ⟨q, rfl⟩
+  obtain ⟨q, h_parse⟩ := h_parse_some
+  refine ⟨q, h_parse, ?_⟩
+  rw [parseDcapQuote_qeReport_eq raw q h_parse,
+      qeReportBytes_extractBitVec_eq]
 
 /-- **Derived theorem (cycle 7.14, makes header/certType axioms
     load-bearing)**: `verifyDcap`'s acceptance implies the parsed
