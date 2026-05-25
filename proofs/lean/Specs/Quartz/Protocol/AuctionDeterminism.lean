@@ -21,6 +21,7 @@ import Specs.Quartz.Crypto.RawMessages
 import Specs.Quartz.Crypto.TransferMessages
 import Specs.Quartz.Crypto.AuctionMessages
 import Specs.Quartz.Attestation.Dstack
+import Specs.Quartz.Attestation.DcapVerifier
 import Specs.Quartz.Attestation.Zkdcap
 import Specs.Quartz.Protocol.Handshake
 import Specs.Quartz.Protocol.Conservation
@@ -29,6 +30,7 @@ namespace Specs.Quartz.Protocol.AuctionDeterminism
 
 open Specs.Quartz.Crypto
 open Specs.Quartz.Attestation.Dstack
+open Specs.Quartz.Attestation.DcapVerifier
 open Specs.Quartz.Attestation.Zkdcap
 open Specs.Quartz.Protocol.Handshake
 open Specs.Quartz.Protocol.Conservation
@@ -212,5 +214,32 @@ theorem cross_component_auction_winner_determinism
   -- (via the on-chain `ROUND` slot); the hypothesis is the spec-level
   -- witness that the attested message is for the correct round, used
   -- by `h_canon` to justify `claimed = resolveAuction round`.
+
+/-- **Cycle 7.17: byte-binding extension of
+    `cross_component_auction_winner_determinism`**. Adds the cycle 7.13
+    pinning of `expectedMr` to byte extractions on the signed prefix
+    of the witness quote. Fifth Protocol-layer consumer of the
+    parser-pinning chain. -/
+theorem cross_component_auction_winner_determinism_pinned
+    {n : Nat} (h : HandshakeCheck n) (acc : Accepted h)
+    (round : AuctionRound)
+    (claimed : ResolveMessage)
+    (h_raw : h.msgUserData = userDataOfResolveMessage n claimed)
+    (_h_round : claimed.roundId = round.roundId)
+    (h_canon : claimed = resolveAuction round) :
+    claimed.winner = (resolveAuction round).winner ∧
+    claimed.price  = (resolveAuction round).price ∧
+    (∃ q : TdxQuote,
+        was_signed_by_dstack q ∧
+        mrEnclaveOf n q = some h.expectedMr ∧
+        userDataOf n q  = some (userDataOfResolveMessage n claimed) ∧
+        h.expectedMr = (extractBitVec (q.take 632) 184 384,
+                        extractBitVec (q.take 632) 520 384)) := by
+  refine ⟨?_, ?_, ?_⟩
+  · rw [h_canon]
+  · rw [h_canon]
+  · obtain ⟨q, hSigned, hMr, hUd, hMrPin⟩ := handshake_sound_pinned h acc
+    refine ⟨q, hSigned, hMr, ?_, hMrPin⟩
+    rw [hUd, h_raw]
 
 end Specs.Quartz.Protocol.AuctionDeterminism

@@ -17,6 +17,7 @@ import Specs.Quartz.Crypto.UserDataCommit
 import Specs.Quartz.Crypto.RawMessages
 import Specs.Quartz.Crypto.TransferMessages
 import Specs.Quartz.Attestation.Dstack
+import Specs.Quartz.Attestation.DcapVerifier
 import Specs.Quartz.Attestation.Zkdcap
 import Specs.Quartz.Protocol.Handshake
 
@@ -24,6 +25,7 @@ namespace Specs.Quartz.Protocol.Conservation
 
 open Specs.Quartz.Crypto
 open Specs.Quartz.Attestation.Dstack
+open Specs.Quartz.Attestation.DcapVerifier
 open Specs.Quartz.Attestation.Zkdcap
 open Specs.Quartz.Protocol.Handshake
 
@@ -239,6 +241,31 @@ theorem cross_component_transfers_conservation
     conservationInvariant b' := by
   obtain ⟨q, hSigned, hMr, hUd⟩ := handshake_sound h acc
   refine ⟨⟨q, hSigned, hMr, ?_⟩, ?_⟩
+  · rw [hUd, h_raw]
+  · exact applyTransferRequest_preserves_conservation b req b' hInv hApp
+
+/-- **Cycle 7.17: byte-binding extension of
+    `cross_component_transfers_conservation`**. Adds the cycle 7.13
+    pinning of `expectedMr` to byte extractions on the signed prefix
+    of the witness quote. Fourth Protocol-layer consumer of the
+    parser-pinning chain. -/
+theorem cross_component_transfers_conservation_pinned
+    {n : Nat} (h : HandshakeCheck n) (acc : Accepted h)
+    (req : TransferRequest)
+    (h_raw : h.msgUserData = userDataOfTransferRequest n req)
+    (b : EnclaveBalances)
+    (hInv : conservationInvariant b)
+    (b' : EnclaveBalances)
+    (hApp : applyTransferRequest b req = some b') :
+    (∃ q : TdxQuote,
+        was_signed_by_dstack q ∧
+        mrEnclaveOf n q = some h.expectedMr ∧
+        userDataOf n q  = some (userDataOfTransferRequest n req) ∧
+        h.expectedMr = (extractBitVec (q.take 632) 184 384,
+                        extractBitVec (q.take 632) 520 384)) ∧
+    conservationInvariant b' := by
+  obtain ⟨q, hSigned, hMr, hUd, hMrPin⟩ := handshake_sound_pinned h acc
+  refine ⟨⟨q, hSigned, hMr, ?_, hMrPin⟩, ?_⟩
   · rw [hUd, h_raw]
   · exact applyTransferRequest_preserves_conservation b req b' hInv hApp
 
