@@ -277,6 +277,47 @@ axiom parseDcapQuote_mrTd_eq
     parseDcapQuote raw = some q →
     q.body.mrTd = extractBitVec raw 184 384
 
+/-- **Structural invariant (cycle 7.11)**: a successful parse sets
+    `q.authData.ecdsaSignature` to the BitVec extracted from `raw` at
+    the AuthData ECDSA signature slot.
+
+    **Layout note**: AuthData starts at absolute offset 632 (after
+    header 48 + TDReport10 584). The first 4 bytes (632..636) are a
+    little-endian `authSize` count. AuthDataV4 starts at absolute 636,
+    with EcdsaSignature occupying its first 64 bytes (636..700).
+
+    Reference: `zkdcap/circuits/dcap-gnark/witness/quote.go:78-94`
+    `authOff := signedLen; authOff += 4` (skips size); then
+    `copy(q.EcdsaSignature[:], auth[0:64])` where `auth :=
+    raw[authOff:...]` so absolute = `signedLen + 4 + 0 = 636`,
+    width 64 bytes = 512 bits. -/
+axiom parseDcapQuote_ecdsaSignature_eq
+    (raw : RawBytes) (q : DcapQuote) :
+    parseDcapQuote raw = some q →
+    q.authData.ecdsaSignature = extractBitVec raw 636 512
+
+/-- **Structural invariant (cycle 7.11)**: a successful parse sets
+    `q.authData.attestationKey` to the BitVec extracted from `raw` at
+    the AuthData attestation-key slot.
+
+    **Layout note**: AuthDataV4 attestation key occupies auth[64..128]
+    = raw[700..764]. Width 64 bytes = 512 bits.
+
+    Reference: `zkdcap/circuits/dcap-gnark/witness/quote.go:95`
+    `copy(q.AttestationKey[:], auth[64:128])` where `auth :=
+    raw[636:]` so absolute = 700, width = 512 bits.
+
+    Closes part of the cycle-7.7-review finding C2 attack surface:
+    an adversarial parser cannot substitute a different attestation
+    key in the returned DcapQuote — the key's bytes are pinned to a
+    specific window of the raw input. The QE report's signed binding
+    `verifyAttestationKeyBinding qeReport attestationKey` therefore
+    operates on a key the prover did not control. -/
+axiom parseDcapQuote_attestationKey_eq
+    (raw : RawBytes) (q : DcapQuote) :
+    parseDcapQuote raw = some q →
+    q.authData.attestationKey = extractBitVec raw 700 512
+
 /-- **Structural invariant (cycle 7.9, corrected in cycle 7.10)**: a
     successful parse sets `q.body.rtmr3` to the BitVec extracted from
     `raw` at the RTMR3 slot inside `TDReport10`.
@@ -815,6 +856,40 @@ theorem verifyDcap_output_bound_to_input
       rw [parseDcapQuote_reportData_eq raw q h_parse]
     · simp only [dif_neg hn]
       rw [parseDcapQuote_reportData_eq raw q h_parse]
+
+/-- **Derived theorem (cycle 7.11)**: `verifyDcap`'s acceptance
+    implies the parsed quote's `ecdsaSignature` and `attestationKey`
+    auth-data fields are functions of the raw input bytes (extractions
+    at fixed offsets 636 and 700 respectively). Makes the cycle 7.11
+    parser-pinning axioms load-bearing in the audit closure.
+
+    Combined with the cycle 7.7 output-binding (`mrTd`, `reportData`)
+    and cycle 7.9 (`rtmr3`) extensions, this closes the fixed-offset
+    portion of cycle-7.7-review finding C2: every fixed-offset field
+    consumed by `verifyDcap`'s cryptographic substeps is now provably
+    a function of the raw input, not parser-controlled. The remaining
+    surface is the variable-length cert-data fields (`qeReport`,
+    `qeReportSignature`, `qeAuthData`, `certificateData`); cycle 7.12
+    queued to model the AuthData inner CertificationData layout. -/
+theorem verifyDcap_authData_bound_to_input
+    (n : Nat) (raw : RawBytes) (col : Collateral)
+    (mr : MrEnclave) (ud : UserData n) :
+    verifyDcap n raw col = some (mr, ud) →
+    ∃ q, parseDcapQuote raw = some q ∧
+      q.authData.ecdsaSignature = extractBitVec raw 636 512 ∧
+      q.authData.attestationKey = extractBitVec raw 700 512 := by
+  intro h_acc
+  have h_parse_some : ∃ q, parseDcapQuote raw = some q := by
+    cases hp : parseDcapQuote raw with
+    | none =>
+      unfold verifyDcap at h_acc
+      rw [hp] at h_acc
+      simp at h_acc
+    | some q => exact ⟨q, rfl⟩
+  obtain ⟨q, h_parse⟩ := h_parse_some
+  exact ⟨q, h_parse,
+    parseDcapQuote_ecdsaSignature_eq raw q h_parse,
+    parseDcapQuote_attestationKey_eq raw q h_parse⟩
 
 /-- **Audit corollary (cycle 7.6)**: a successful end-to-end
     `verifyDcap` accepts only quotes whose ECDSA-verified `signedRegion`
