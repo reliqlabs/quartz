@@ -273,6 +273,51 @@ axiom extractBitVec_take (raw : RawBytes) (offset width k : Nat) :
     offset + (width + 7) / 8 ≤ k →
     extractBitVec raw offset width = extractBitVec (raw.take k) offset width
 
+/-- **Structural invariant (cycle 7.14, addresses review H4)**: a
+    successful parse implies the wire-format header gates accepted by
+    the production parser. Without this axiom an adversarial parser
+    could return `some q` for an SGX (non-TDX) quote, a future
+    `version=6` quote, or a non-ECDSA-P256 attestation-key-type
+    quote — all of which the production parser at `quote.go:60-65`
+    rejects but which the in-Lean spec would have permitted.
+
+    Constrains:
+    - `q.header.version ∈ {4, 5}` (the only versions production
+      accepts: cycle-7.x targets v4 specifically)
+    - `q.header.teeType = 0x00000081` (the TDX TEE type — SGX is
+      0x00000000 and is rejected for this verifier)
+    - `q.header.attestationKeyType = 2` (ECDSA-P256 with P-256;
+      other key types do not match the cycle-7.11 attestationKey
+      offset/width layout)
+
+    Reference: `zkdcap/circuits/dcap-gnark/witness/quote.go:60-65`
+    `if q.Version != 4 && q.Version != 5 { return nil, ... }`
+    `if q.TeeType != 0x00000081 { return nil, ... }`. -/
+axiom parseDcapQuote_header_validates
+    (raw : RawBytes) (q : DcapQuote) :
+    parseDcapQuote raw = some q →
+    (q.header.version = 4 ∨ q.header.version = 5) ∧
+    q.header.teeType = 0x00000081 ∧
+    q.header.attestationKeyType = 2
+
+/-- **Structural invariant (cycle 7.14, addresses review H5)**: a
+    successful parse implies the outer CertificationData `cert_type`
+    is 6 (the QEReportCertData wrapper required by DCAP v4 TDX).
+    Conditions the cycle 7.12 axioms (`parseDcapQuote_qeReport_eq`,
+    `parseDcapQuote_qeReportSignature_eq`) on the layout assumption
+    they implicitly carried via docstring caveat. Without this axiom
+    an adversarial parser could return a quote with cert_type=7
+    (hypothetical future) where the QE report sits at a different
+    offset; the cycle 7.12 axioms would be false in that model.
+
+    Reference: `zkdcap/circuits/dcap-gnark/witness/quote.go:98-108`
+    `if certType == 6 { … } else { return nil, ... unexpected outer
+    cert_type }`. -/
+axiom parseDcapQuote_certType_eq_6
+    (raw : RawBytes) (q : DcapQuote) :
+    parseDcapQuote raw = some q →
+    extractBitVec raw 764 16 = (6 : BitVec 16)
+
 /-- **Structural invariant (cycle 7.7, corrected in cycle 7.10)**: a
     successful parse sets `q.body.mrTd` to the BitVec extracted from
     `raw` at the MRTD slot inside `TDReport10`.
@@ -674,8 +719,40 @@ hand-off between the two links explicit. -/
     (the `parsed.authData.attestationKey` is the bound attestation
     key of a real QE, and `parsed.signedRegion` was signed by that
     key). Bridges between the PCK-attestation chain link (axiom A
-    below) and the TEE-signing chain link (axiom B below). -/
+    below) and the TEE-signing chain link (axiom B below).
+
+    **Cycle 7.14 (addresses review C1)**: a constraining axiom
+    `signed_by_qe_implies_pck_chain_witnesses` (below) excludes the
+    trivial `signed_by_qe := fun _ => True` model — if `signed_by_qe
+    parsed` holds, there must exist a legitimate PCK leaf that signed
+    the QE report. Without this constraint, the cycle 7.3.c
+    decomposition would have been vacuous (`signed_by_qe := True`
+    satisfies both axioms A and B as stated). -/
 axiom signed_by_qe : DcapQuote → Prop
+
+/-- **(c)-bucket constraint (cycle 7.14, addresses review C1)**:
+    `signed_by_qe parsed` implies the existence of a legitimate PCK
+    leaf key whose holder signed the QE report. Excludes the trivial
+    `signed_by_qe := fun _ => True` model that would make the cycle
+    7.3.c decomposition vacuous.
+
+    Acts as the dual of `qe_attestation_chain_implies_signed_by_qe`:
+    that axiom says the forward direction (the chain implies the
+    predicate); this axiom says the reverse-witness direction (the
+    predicate implies some chain exists). Together they pin down
+    `signed_by_qe` informationally — it carries the same content as
+    the conjunction of the four cryptographic substep witnesses,
+    not less. -/
+axiom signed_by_qe_implies_pck_chain_witnesses
+    (parsed : DcapQuote) :
+    signed_by_qe parsed →
+    ∃ pckLeafKey : BitVec 512,
+      legitimate_pck_leaf pckLeafKey ∧
+      signed_by_pck_holder pckLeafKey (qeReportBytes parsed.authData.qeReport) ∧
+      verifyAttestationKeyBinding parsed.authData.qeReport
+          parsed.authData.attestationKey = true ∧
+      verifyEcdsaP256 parsed.authData.attestationKey parsed.signedRegion
+          parsed.authData.ecdsaSignature = true
 
 /-- **(c)-bucket assumption A (cycle 7.3.c — QE attestation chain)**:
     given a parsed quote whose `qeReport` was signed by the holder of
@@ -955,6 +1032,41 @@ theorem verifyDcap_output_committed_by_signed_region
     · simp only [dif_neg hn] at h_ud ⊢
       rw [h_ud, extractBitVec_take raw 568 512 632 (by decide)]
 
+/-- **Derived theorem (cycle 7.14, makes header/certType axioms
+    load-bearing)**: `verifyDcap`'s acceptance implies the parsed
+    quote satisfies the production parser's header gates AND the
+    outer cert_type is 6. Without this corollary, the cycle 7.14
+    `parseDcapQuote_header_validates` and `parseDcapQuote_certType_eq_6`
+    axioms would be unused infrastructure (same dead-weight pattern
+    cycle 7.7-review C1 critiqued for cycle 7.6).
+
+    Audit consequence: a successful `verifyDcap` provably accepts only
+    DCAP v4/v5 TDX quotes with ECDSA-P256 attestation key type and
+    cert_type=6 (QEReportCertData) outer wrapper. Eliminates the
+    parser-accepts-wrong-quote-type attack surface raised by review
+    H4/H5. -/
+theorem verifyDcap_implies_header_validates
+    (n : Nat) (raw : RawBytes) (col : Collateral)
+    (mr : MrEnclave) (ud : UserData n) :
+    verifyDcap n raw col = some (mr, ud) →
+    ∃ q, parseDcapQuote raw = some q ∧
+      (q.header.version = 4 ∨ q.header.version = 5) ∧
+      q.header.teeType = 0x00000081 ∧
+      q.header.attestationKeyType = 2 ∧
+      extractBitVec raw 764 16 = (6 : BitVec 16) := by
+  intro h_acc
+  have h_parse_some : ∃ q, parseDcapQuote raw = some q := by
+    cases hp : parseDcapQuote raw with
+    | none =>
+      unfold verifyDcap at h_acc
+      rw [hp] at h_acc
+      simp at h_acc
+    | some q => exact ⟨q, rfl⟩
+  obtain ⟨q, h_parse⟩ := h_parse_some
+  obtain ⟨h_ver, h_tee, h_kty⟩ := parseDcapQuote_header_validates raw q h_parse
+  exact ⟨q, h_parse, h_ver, h_tee, h_kty,
+    parseDcapQuote_certType_eq_6 raw q h_parse⟩
+
 /-- **Derived theorem (cycle 7.12)**: `verifyDcap`'s acceptance
     implies the parsed quote's `qeReport` and `qeReportSignature`
     are functions of the raw input bytes (extractions at fixed
@@ -1196,25 +1308,68 @@ axiom productionCollateral : Collateral
     and no PCK revocation events since last refresh". -/
 axiom productionCollateral_fresh : freshCollateral productionCollateral
 
-/-- **(c)-bucket assumption (cycle 7.8 — deployment-side anchoring)**:
-    in the deployed flow, every quote produced by a dstack TEE
-    anchors its PCK chain to the deployer's `productionCollateral`
-    bundle. Captures the deployment-side discipline: the deployer
-    fetches collateral matching the FMSPC / Intel sub-CA the dstack
-    image's TEE is provisioned under, and rotates it within the
-    next-update window so the chain-anchoring holds.
+/-- **Witness predicate (cycle 7.14, addresses review C2)**: the
+    quote `q` was signed under the PCK chain that is currently
+    anchored by `col` — i.e., the chain rotation epoch matches.
+    Captures the rotation-window dependency that the cycle 7.8
+    universal-anchoring axiom previously elided.
 
-    Surfaces a precondition that the cycle-7.3 `dcapVerifier_complete`
-    axiom hid implicitly. With cycle 7.8's strengthened
-    `dcapVerifier_complete` (which now requires
-    `chain_anchors_to_collateral q col`), this axiom is what allows
-    `Dstack.tdxVerifier` to construct a completeness witness for
-    arbitrary `was_signed_by_dstack` quotes — the deployment side
-    guarantees that any genuinely-dstack-signed quote will anchor to
-    the deployer's collateral. -/
+    Operationally: the Intel PCK chain rotates on FMSPC and CA-rotation
+    events; a quote signed last quarter under a PCK leaf may not
+    anchor to a collateral bundle fetched this quarter (post-rotation).
+    `recently_signed_under_current_chain q col` asserts that the
+    rotation epochs match. -/
+axiom recently_signed_under_current_chain :
+    RawBytes → Collateral → Prop
+
+/-- **(c)-bucket assumption (cycle 7.8 — deployment-side anchoring,
+    weakened cycle 7.14 per review C2)**: in the deployed flow,
+    every quote that (i) was produced by a dstack TEE AND (ii) was
+    signed under the PCK chain currently anchored by
+    `productionCollateral` anchors its PCK chain to
+    `productionCollateral`.
+
+    The cycle 7.14 weakening adds the
+    `recently_signed_under_current_chain` precondition that the
+    cycle-7.8 universal-anchoring claim was missing. The cycle 7.8
+    form asserted ALL dstack-signed quotes anchor to
+    `productionCollateral`, which collapses across PCK rotation
+    epochs — a quote signed last quarter against a rotated-out PCK
+    chain would not anchor to this quarter's collateral. The
+    weakened form is honest about the rotation dependency.
+
+    Captures the deployment-side discipline: the deployer fetches
+    collateral matching the FMSPC / Intel sub-CA the dstack image's
+    TEE is currently provisioned under, and rotates it within the
+    next-update window so the chain-anchoring holds for *currently
+    being produced* quotes. -/
 axiom signed_quotes_anchor_to_production_collateral
     (q : RawBytes) :
     was_signed_by_dstack q →
+    recently_signed_under_current_chain q productionCollateral →
     chain_anchors_to_collateral q productionCollateral
+
+/-- **Deployment-side commitment (cycle 7.14)**: the deployer takes
+    responsibility for rotating `productionCollateral` such that every
+    currently-signed dstack quote is `recently_signed_under_current_chain`
+    against it. This is the honest deployment-side obligation that the
+    cycle 7.8 universal-anchoring axiom previously bundled implicitly.
+
+    Together with `signed_quotes_anchor_to_production_collateral`
+    (cycle 7.14, weakened), this provides the universal anchoring
+    that `Dstack.tdxVerifier` needs for the `dcapTdxVerifier`
+    construction's `h_anchors` parameter, while keeping the
+    rotation dependency visible as a *separate* deployment-side
+    commitment.
+
+    Audit reading: completeness against `productionCollateral`
+    holds because (a) the cycle 7.14 conditional axiom is the
+    cryptographic truth and (b) the deployer maintains the
+    rotation invariant this axiom asserts. Two named commitments,
+    not one bundled. -/
+axiom productionCollateral_rotation_invariant :
+    ∀ q : RawBytes,
+      was_signed_by_dstack q →
+      recently_signed_under_current_chain q productionCollateral
 
 end Specs.Quartz.Attestation.DcapVerifier
