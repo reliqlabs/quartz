@@ -27,6 +27,7 @@
 import Specs.Quartz.Crypto.Ecies
 import Specs.Quartz.Crypto.UserDataCommit
 import Specs.Quartz.Attestation.Dstack
+import Specs.Quartz.Attestation.DcapVerifier
 import Specs.Quartz.Attestation.Zkdcap
 
 namespace Specs.Quartz.Protocol.Handshake
@@ -34,6 +35,7 @@ namespace Specs.Quartz.Protocol.Handshake
 open Specs.Quartz.Crypto.Ecies
 open Specs.Quartz.Crypto
 open Specs.Quartz.Attestation.Dstack
+open Specs.Quartz.Attestation.DcapVerifier
 open Specs.Quartz.Attestation.Zkdcap
 
 /-- A pending handshake check, exactly mirroring the three contract
@@ -103,5 +105,42 @@ theorem handshake_binds_ecies_key
     exact ⟨q, hq, hUd⟩
   · rw [h_commit]; exact pkOfUserData_commitHash n c
   · rw [← h_sk]; exact roundtrip sk pt
+
+/-- **Cycle 7.15: byte-binding extension of `handshake_sound`**.
+
+    Strengthens `handshake_sound`'s conclusion with the cycle 7.13
+    binding theorem: the contract-declared `expectedMr` is provably
+    equal to a specific pair of `extractBitVec` extractions on the
+    first 632 bytes of the witness quote. This is the FIRST Protocol-
+    layer consumer of the cycle 7.7/7.9/7.10/7.13 parser-pinning chain
+    — it closes the cycle-7.5-7.13 review finding H1 ("binding
+    theorems are dead weight; no Protocol/* consumes them").
+
+    Audit consequence: a downstream auditor reading the closure of
+    `handshake_sound_pinned` will see the chain of parser-binding
+    axioms (`parseDcapQuote_mrTd_eq`, `parseDcapQuote_rtmr3_eq`,
+    `parseDcapQuote_reportData_eq`, `extractBitVec_take`) as
+    load-bearing — confirming that the contract-side `expectedMr`
+    check binds enclave identity to actual quote bytes, not to
+    parser-chosen fields. -/
+theorem handshake_sound_pinned {n : Nat} (h : HandshakeCheck n) (acc : Accepted h) :
+    ∃ q : TdxQuote,
+      was_signed_by_dstack q ∧
+      mrEnclaveOf n q = some h.expectedMr ∧
+      userDataOf n q = some h.msgUserData ∧
+      h.expectedMr = (extractBitVec (q.take 632) 184 384,
+                      extractBitVec (q.take 632) 520 384) := by
+  obtain ⟨q, hq, hMr, hUd⟩ := handshake_sound h acc
+  refine ⟨q, hq, hMr, hUd, ?_⟩
+  -- Unfold mrEnclaveOf to get ∃ ud, verifyTdxQuote n q = some (h.expectedMr, ud)
+  -- and verifyTdxQuote = dcapTdxVerifier.verify = verifyDcap n q productionCollateral.
+  simp only [mrEnclaveOf, verifyTdxQuote, tdxVerifier, dcapTdxVerifier,
+    Option.map_eq_some_iff] at hMr
+  obtain ⟨⟨mr_pair, ud⟩, h_verify, h_eq⟩ := hMr
+  -- h_verify : verifyDcap n q productionCollateral = some (mr_pair, ud)
+  -- h_eq : mr_pair = h.expectedMr
+  rw [← h_eq]
+  exact (verifyDcap_output_committed_by_signed_region n q
+    productionCollateral mr_pair ud h_verify).1
 
 end Specs.Quartz.Protocol.Handshake
