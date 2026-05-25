@@ -258,6 +258,21 @@ require modelling the variable-length auth-data layout). -/
     of this extractor. -/
 opaque extractBitVec (raw : RawBytes) (offset width : Nat) : BitVec width
 
+/-- **Structural property (cycle 7.13)**: extracting a `BitVec` from a
+    prefix of `raw` equals extracting from the full `raw` when the
+    requested window `[offset, offset + ⌈width/8⌉)` lies entirely
+    within the prefix `[0, k)`. Captures the elementary "extraction
+    is local to the requested window" property of any well-defined
+    byte unpacker.
+
+    Used by `verifyDcap_output_committed_by_signed_region` (below)
+    to argue that the verified `(mr, ud)` are functions of the
+    `signedRegion = raw.take 632` (i.e., the ECDSA-signed bytes),
+    not of any post-632 portion of `raw`. -/
+axiom extractBitVec_take (raw : RawBytes) (offset width k : Nat) :
+    offset + (width + 7) / 8 ≤ k →
+    extractBitVec raw offset width = extractBitVec (raw.take k) offset width
+
 /-- **Structural invariant (cycle 7.7, corrected in cycle 7.10)**: a
     successful parse sets `q.body.mrTd` to the BitVec extracted from
     `raw` at the MRTD slot inside `TDReport10`.
@@ -898,6 +913,47 @@ theorem verifyDcap_output_bound_to_input
       rw [parseDcapQuote_reportData_eq raw q h_parse]
     · simp only [dif_neg hn]
       rw [parseDcapQuote_reportData_eq raw q h_parse]
+
+/-- **Derived theorem (cycle 7.13)**: `verifyDcap`'s output `(mr, ud)`
+    is uniquely a function of the ECDSA-signed prefix `raw.take 632`.
+    Composes cycle 7.6 (`signedRegion = raw.take 632`) with cycles 7.7
+    / 7.9 / 7.10 (field-binding axioms for `mrTd`, `rtmr3`, `reportData`
+    — all at offsets ≤ 632) via `extractBitVec_take` to argue that the
+    extractions in the cycle 7.7 binding theorem could equivalently be
+    computed on the prefix.
+
+    Audit consequence: if an adversary controls only `raw[632:]`
+    (the post-signed-region bytes — including the entire AuthData /
+    cert chain region), the verifier's returned `(mr, ud)` is
+    invariant. The auth-data fields the adversary CAN influence are
+    structurally bound by the cycle 7.11 / 7.12 axioms to specific
+    raw bytes, so an attacker controlling auth-data must commit to
+    those specific byte positions and then face the cryptographic
+    chain (ECDSA forgery, X.509 chain trust, etc.) — they cannot
+    decouple the returned `(mr, ud)` from `raw.take 632`. -/
+theorem verifyDcap_output_committed_by_signed_region
+    (n : Nat) (raw : RawBytes) (col : Collateral)
+    (mr : MrEnclave) (ud : UserData n) :
+    verifyDcap n raw col = some (mr, ud) →
+    mr = (extractBitVec (raw.take 632) 184 384,
+          extractBitVec (raw.take 632) 520 384) ∧
+    (if h : n = 512 then ud = h ▸ extractBitVec (raw.take 632) 568 512
+     else ud = BitVec.ofNat n
+       (extractBitVec (raw.take 632) 568 512).toNat) := by
+  intro h_acc
+  obtain ⟨h_mr, h_ud⟩ := verifyDcap_output_bound_to_input n raw col mr ud h_acc
+  refine ⟨?_, ?_⟩
+  · rw [h_mr]
+    congr 1
+    · exact extractBitVec_take raw 184 384 632 (by decide)
+    · exact extractBitVec_take raw 520 384 632 (by decide)
+  · by_cases hn : n = 512
+    · simp only [hn, dif_pos] at h_ud ⊢
+      rw [h_ud]
+      congr 1
+      exact extractBitVec_take raw 568 512 632 (by decide)
+    · simp only [dif_neg hn] at h_ud ⊢
+      rw [h_ud, extractBitVec_take raw 568 512 632 (by decide)]
 
 /-- **Derived theorem (cycle 7.12)**: `verifyDcap`'s acceptance
     implies the parsed quote's `qeReport` and `qeReportSignature`
