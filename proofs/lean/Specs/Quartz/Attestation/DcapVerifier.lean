@@ -1511,21 +1511,28 @@ axiom signed_quotes_anchor_to_production_collateral
 /-- **Deployment-side commitment (cycle 7.14)**: the deployer takes
     responsibility for rotating `productionCollateral` such that every
     currently-signed dstack quote is `recently_signed_under_current_chain`
-    against it. This is the honest deployment-side obligation that the
-    cycle 7.8 universal-anchoring axiom previously bundled implicitly.
+    against it.
 
-    Together with `signed_quotes_anchor_to_production_collateral`
-    (cycle 7.14, weakened), this provides the universal anchoring
-    that `Dstack.tdxVerifier` needs for the `dcapTdxVerifier`
-    construction's `h_anchors` parameter, while keeping the
-    rotation dependency visible as a *separate* deployment-side
-    commitment.
+    **Cycle 7.20 retraction (review H2)**: combining this axiom with
+    `signed_quotes_anchor_to_production_collateral` (cycle 7.14)
+    derives `∀ q, was_signed_by_dstack q → chain_anchors_to_collateral q
+    productionCollateral`, which is the original cycle 7.8 axiom
+    being claimed as "weakened". The cycle 7.14 framing of "two
+    named commitments, not one bundled" was rhetorical; the axiom
+    *closure* sums the same content. The decomposition is structural
+    naming (the deployer-rotation step is visible as a named axiom
+    rather than buried), not semantic narrowing.
 
-    Audit reading: completeness against `productionCollateral`
-    holds because (a) the cycle 7.14 conditional axiom is the
-    cryptographic truth and (b) the deployer maintains the
-    rotation invariant this axiom asserts. Two named commitments,
-    not one bundled. -/
+    The honest fix (option b from the review) is to make the rotation
+    invariant a hypothesis on `dcapTdxVerifier` rather than a free
+    axiom, so that the deployer commitment becomes a Lean-tracked
+    obligation passed into the verifier — but that requires
+    restructuring `TdxVerifier.complete`'s signature to take a
+    `recently_signed` precondition, which cascades through every
+    downstream consumer of `verifyTdxQuote_complete`. Queued as cycle
+    7.21. The current axiom-level shape is accurate-but-not-narrowing;
+    auditors should read the two cycle 7.14 axioms as a single
+    deployment-side trust assumption with two named components. -/
 axiom productionCollateral_rotation_invariant :
     ∀ q : RawBytes,
       was_signed_by_dstack q →
