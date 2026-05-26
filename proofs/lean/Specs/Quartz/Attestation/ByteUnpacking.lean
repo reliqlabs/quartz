@@ -29,7 +29,17 @@ namespace Specs.Quartz.Attestation.ByteUnpacking
 
     Previously declared `opaque` in `DcapVerifier.lean` (cycles
     7.7-7.19); the cycle 7.19.b carve-out gives it a concrete body
-    so `extractBitVec_take` can be proved rather than asserted. -/
+    so `extractBitVec_take` can be proved rather than asserted.
+
+    **Cycle 7.20 caveat (review M1)**: when `width` is not a multiple
+    of 8, this function reads `⌈width/8⌉` bytes (i.e., one extra byte
+    of input data) but the trailing `BitVec.ofNat width` truncates
+    the result `mod 2^width`, silently discarding the high bits of
+    the last byte. Every DCAP-spec call site currently uses widths
+    that ARE multiples of 8 (16, 32, 384, 512, 384*8), so the
+    hazard is not triggered, but downstream callers at non-multiple
+    widths should be aware. No precondition is enforced at this
+    layer. -/
 def extractBitVec (raw : List UInt8) (offset width : Nat) : BitVec width :=
   let bytes := (raw.drop offset).take ((width + 7) / 8)
   BitVec.ofNat width

@@ -409,6 +409,30 @@ length is read from a 2-byte LE u16 at raw[1218..1220]) and
 `certificateData` (which starts at offset `1226 + qeAuthLen`). Cycle
 7.18 closes both via axioms that thread the parsed length value. -/
 
+/-- **Structural invariant (cycle 7.20, addresses review H1)**:
+    a successful parse implies the raw input has enough bytes for the
+    full variable-length AuthData structure. Without this axiom the
+    cycle 7.18 `parseDcapQuote_qeAuthData_eq` and
+    `parseDcapQuote_certificateData_eq` axioms admit short-`raw`
+    inputs the production parser at `quote.go:125, 138` would reject
+    (silent List.take truncation rather than parser error).
+
+    Specifically: the raw input must contain the full qeAuthData
+    region (offset 1220 to 1220+qeAuthLen) AND the inner cert-data
+    header (6 bytes after qeAuthData) AND the cert-data body
+    (innerCertBodySize bytes after the header).
+
+    Reference: `zkdcap/circuits/dcap-gnark/witness/quote.go:125`
+    `if off+int(authLen) > len(data) { return ... "QE auth data
+    exceeds bounds" }` and `:138` `if off+int(innerCertBodySize) >
+    len(data) { return ... "inner cert data exceeds bounds" }`. -/
+axiom parseDcapQuote_authData_length_valid
+    (raw : RawBytes) (q : DcapQuote) :
+    parseDcapQuote raw = some q →
+    let qeAuthLen := (extractBitVec raw 1218 16).toNat
+    let innerCertBodySize := (extractBitVec raw (1222 + qeAuthLen) 32).toNat
+    1226 + qeAuthLen + innerCertBodySize ≤ raw.length
+
 /-- **Structural invariant (cycle 7.18)**: the `qeAuthData` field is
     pinned to a raw byte slice starting at offset 1220, of length
     given by the LE u16 at raw[1218..1220].
@@ -1116,7 +1140,12 @@ theorem verifyDcap_authData_variable_fields_bound_to_input
         (raw.drop 1220).take (extractBitVec raw 1218 16).toNat ∧
       q.authData.certificateData =
         (raw.drop (1226 + (extractBitVec raw 1218 16).toNat)).take
-          (extractBitVec raw (1222 + (extractBitVec raw 1218 16).toNat) 32).toNat := by
+          (extractBitVec raw (1222 + (extractBitVec raw 1218 16).toNat) 32).toNat ∧
+      -- Cycle 7.20 (review H1): raw is long enough that the
+      -- variable-length region didn't silently truncate via List.take.
+      1226 + (extractBitVec raw 1218 16).toNat +
+        (extractBitVec raw (1222 + (extractBitVec raw 1218 16).toNat) 32).toNat
+        ≤ raw.length := by
   intro h_acc
   have h_parse_some : ∃ q, parseDcapQuote raw = some q := by
     cases hp : parseDcapQuote raw with
@@ -1128,7 +1157,8 @@ theorem verifyDcap_authData_variable_fields_bound_to_input
   obtain ⟨q, h_parse⟩ := h_parse_some
   exact ⟨q, h_parse,
     parseDcapQuote_qeAuthData_eq raw q h_parse,
-    parseDcapQuote_certificateData_eq raw q h_parse⟩
+    parseDcapQuote_certificateData_eq raw q h_parse,
+    parseDcapQuote_authData_length_valid raw q h_parse⟩
 
 /-- **Derived theorem (cycle 7.16)**: a successful `verifyDcap`
     accepts only quotes whose QE-report bytes (as fed to ECDSA via

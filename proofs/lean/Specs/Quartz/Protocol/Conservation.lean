@@ -264,7 +264,7 @@ theorem cross_component_transfers_conservation_pinned
         h.expectedMr = (extractBitVec (q.take 632) 184 384,
                         extractBitVec (q.take 632) 520 384)) ∧
     conservationInvariant b' := by
-  obtain ⟨q, hSigned, hMr, hUd, hMrPin⟩ := handshake_sound_pinned h acc
+  obtain ⟨q, hSigned, hMr, hUd, hMrPin, _⟩ := handshake_sound_pinned h acc
   refine ⟨⟨q, hSigned, hMr, ?_, hMrPin⟩, ?_⟩
   · rw [hUd, h_raw]
   · exact applyTransferRequest_preserves_conservation b req b' hInv hApp

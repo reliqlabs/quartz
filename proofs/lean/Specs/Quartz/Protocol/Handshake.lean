@@ -129,19 +129,31 @@ theorem handshake_sound_pinned {n : Nat} (h : HandshakeCheck n) (acc : Accepted 
       mrEnclaveOf n q = some h.expectedMr ∧
       userDataOf n q = some h.msgUserData ∧
       h.expectedMr = (extractBitVec (q.take 632) 184 384,
-                      extractBitVec (q.take 632) 520 384) := by
+                      extractBitVec (q.take 632) 520 384) ∧
+      -- Cycle 7.20 (review L2): also pin the user-data binding so
+      -- the user-data field is provably a function of bytes in the
+      -- signed prefix, not just the mr field.
+      (if hn : n = 512 then
+         h.msgUserData = hn ▸ extractBitVec (q.take 632) 568 512
+       else
+         h.msgUserData = BitVec.ofNat n
+           (extractBitVec (q.take 632) 568 512).toNat) := by
   obtain ⟨q, hq, hMr, hUd⟩ := handshake_sound h acc
-  refine ⟨q, hq, hMr, hUd, ?_⟩
-  -- Unfold mrEnclaveOf to get ∃ ud, verifyTdxQuote n q = some (h.expectedMr, ud)
-  -- and verifyTdxQuote = dcapTdxVerifier.verify = verifyDcap n q productionCollateral.
-  simp only [mrEnclaveOf, verifyTdxQuote, tdxVerifier, dcapTdxVerifier,
-    Option.map_eq_some_iff] at hMr
-  obtain ⟨⟨mr_pair, ud⟩, h_verify, h_eq⟩ := hMr
-  -- h_verify : verifyDcap n q productionCollateral = some (mr_pair, ud)
-  -- h_eq : mr_pair = h.expectedMr
-  rw [← h_eq]
-  exact (verifyDcap_output_committed_by_signed_region n q
-    productionCollateral mr_pair ud h_verify).1
+  refine ⟨q, hq, hMr, hUd, ?_, ?_⟩
+  · -- Unfold mrEnclaveOf and apply cycle 7.13 binding theorem.
+    simp only [mrEnclaveOf, verifyTdxQuote, tdxVerifier, dcapTdxVerifier,
+      Option.map_eq_some_iff] at hMr
+    obtain ⟨⟨mr_pair, ud⟩, h_verify, h_eq⟩ := hMr
+    rw [← h_eq]
+    exact (verifyDcap_output_committed_by_signed_region n q
+      productionCollateral mr_pair ud h_verify).1
+  · -- Same chain for the user-data binding.
+    simp only [userDataOf, verifyTdxQuote, tdxVerifier, dcapTdxVerifier,
+      Option.map_eq_some_iff] at hUd
+    obtain ⟨⟨mr_pair, ud⟩, h_verify, h_eq⟩ := hUd
+    rw [← h_eq]
+    exact (verifyDcap_output_committed_by_signed_region n q
+      productionCollateral mr_pair ud h_verify).2
 
 /-- **Cycle 7.17: byte-binding extension of `handshake_binds_ecies_key`**.
 
@@ -163,7 +175,7 @@ theorem handshake_binds_ecies_key_pinned
     pkOfUserData n h.msgUserData = some c.eciesPubkey ∧
     decrypt sk (encrypt c.eciesPubkey pt) = some pt := by
   refine ⟨?_, ?_, ?_⟩
-  · obtain ⟨q, hq, _, hUd, hMrPin⟩ := handshake_sound_pinned h acc
+  · obtain ⟨q, hq, _, hUd, hMrPin, _⟩ := handshake_sound_pinned h acc
     exact ⟨q, hq, hUd, hMrPin⟩
   · rw [h_commit]; exact pkOfUserData_commitHash n c
   · rw [← h_sk]; exact roundtrip sk pt

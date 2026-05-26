@@ -130,7 +130,7 @@ theorem cross_component_session_bind_pinned
                       extractBitVec (q.take 632) 520 384) ∧
       pkOfUserData n h.msgUserData = some raw.pubKey ∧
       (∀ msg : Plaintext, decrypt sk (encrypt raw.pubKey msg) = some msg) := by
-  obtain ⟨q, hSigned, hMr, hUd, hMrPin⟩ := handshake_sound_pinned h acc
+  obtain ⟨q, hSigned, hMr, hUd, hMrPin, _⟩ := handshake_sound_pinned h acc
   refine ⟨q, hSigned, hMr, hUd, hMrPin, ?_, ?_⟩
   · rw [h_raw]
     exact userData_session_set_pub_key_binds_ecies n raw

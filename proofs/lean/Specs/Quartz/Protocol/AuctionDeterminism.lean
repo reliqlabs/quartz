@@ -238,7 +238,7 @@ theorem cross_component_auction_winner_determinism_pinned
   refine ⟨?_, ?_, ?_⟩
   · rw [h_canon]
   · rw [h_canon]
-  · obtain ⟨q, hSigned, hMr, hUd, hMrPin⟩ := handshake_sound_pinned h acc
+  · obtain ⟨q, hSigned, hMr, hUd, hMrPin, _⟩ := handshake_sound_pinned h acc
     refine ⟨q, hSigned, hMr, ?_, hMrPin⟩
     rw [hUd, h_raw]
 
