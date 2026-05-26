@@ -330,11 +330,18 @@ theorem verifyGroth16_sound (proof : Groth16Proof) (inputs : PublicInputs) :
 
     This is the bridge theorem that protocol-layer reasoning (e.g.
     `DstackZkAttestation` handler soundness) will consume: ZK
-    acceptance entails the existence of decodable DCAP evidence. -/
+    acceptance entails the existence of decodable DCAP evidence.
+
+    **Cycle 7.21 (rotation precondition surfaced)**: now takes
+    `(tdxVerifier n).signedRecently (inputs_to_quote inputs)` as a
+    precondition, since `verifyTdxQuote_complete` was strengthened
+    to require it. Consumers must witness the rotation-window
+    inclusion explicitly. -/
 theorem verifyGroth16_yields_decoded
     (n : Nat) (proof : Groth16Proof) (inputs : PublicInputs)
-    (h : verifyGroth16 zkdcapVKey proof inputs = true) :
+    (h : verifyGroth16 zkdcapVKey proof inputs = true)
+    (h_recently : (tdxVerifier n).signedRecently (inputs_to_quote inputs)) :
     ∃ mr ud, verifyTdxQuote n (inputs_to_quote inputs) = some (mr, ud) :=
-  verifyTdxQuote_complete n _ (verifyGroth16_sound proof inputs h)
+  verifyTdxQuote_complete n _ h_recently (verifyGroth16_sound proof inputs h)
 
 end Specs.Quartz.Attestation.Zkdcap

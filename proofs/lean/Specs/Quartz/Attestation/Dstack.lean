@@ -157,8 +157,7 @@ namespace Specs.Quartz.Attestation.Dstack
 
 open Specs.Quartz.Attestation.DcapVerifier (dcapTdxVerifier
   productionCollateral productionCollateral_fresh
-  signed_quotes_anchor_to_production_collateral
-  productionCollateral_rotation_invariant)
+  signed_quotes_anchor_to_production_collateral)
 
 /-- **Derived trust-boundary value (cycle 7.5)**: the canonical
     dstack TDX verifier, constructed by instantiating the reference
@@ -180,9 +179,8 @@ open Specs.Quartz.Attestation.DcapVerifier (dcapTdxVerifier
     fresh `productionCollateral` within Intel's next-update window. -/
 noncomputable def tdxVerifier (n : Nat) : TdxVerifier n :=
   dcapTdxVerifier n productionCollateral productionCollateral_fresh
-    (fun q h_signed =>
-      signed_quotes_anchor_to_production_collateral q h_signed
-        (productionCollateral_rotation_invariant q h_signed))
+    (fun q h_recently h_signed =>
+      signed_quotes_anchor_to_production_collateral q h_signed h_recently)
 
 /-- Decode and verify a TDX quote.
 
@@ -232,12 +230,23 @@ theorem verifyTdxQuote_sound (n : Nat) (q : TdxQuote)
     `dcapVerifier_complete` axiom (still in-fork irreducible — its
     precondition `was_signed_by_dstack` is opaque).
 
+    **Cycle 7.21 (rotation precondition surfaced)**: now takes
+    `(tdxVerifier n).signedRecently q` as a precondition, surfacing
+    the rotation-window dependency at every consumer. For the
+    `dcapTdxVerifier`-backed production verifier, this unfolds to
+    `recently_signed_under_current_chain q productionCollateral`,
+    making the deployer's rotation obligation visible.
+
     **Honesty caveat**: the real-world completeness claim is
     conditional on fresh Intel collateral and non-revocation of the
-    PCK chain. The classical-Prop form drops those preconditions; the
-    truthful formulation is in `DstackVCVio.lean`. -/
+    PCK chain. The cycle 7.21 form now captures the rotation-window
+    part; freshness ride on `productionCollateral_fresh`; the
+    `OracleComp`-based negligible-probability shape lives in
+    `DstackVCVio.lean`. -/
 theorem verifyTdxQuote_complete (n : Nat) (q : TdxQuote) :
-    was_signed_by_dstack q → ∃ mr ud, verifyTdxQuote n q = some (mr, ud) :=
+    (tdxVerifier n).signedRecently q →
+    was_signed_by_dstack q →
+    ∃ mr ud, verifyTdxQuote n q = some (mr, ud) :=
   (tdxVerifier n).complete q
 
 /-- Extract the user-data field from a successfully verified quote.

@@ -77,9 +77,17 @@ theorem extractBitVec_take (raw : List UInt8) (offset width k : Nat) :
     consumed by `verifyEcdsaP256` when checking the QE-report
     signature). Was `opaque` from cycle 7.3.b through cycle 7.23;
     cycle 7.24 gives it a concrete body so the round-trip identity
+    can in principle be proved rather than asserted.
+
+    **Cycle 7.25 attempt**: tried to prove the round-trip
     `qeReportBytes (extractBitVec raw offset (384*8)) = (raw.drop
-    offset).take 384` can be proved (when proven) rather than
-    asserted as the cycle 7.16 axiom. -/
+    offset).take 384` (under the cycle 7.25a length precondition).
+    The proof requires several BitVec/Nat shift+mask sub-lemmas
+    that were not fully discharged in this session. The proof
+    outline is preserved in the git history (cycle 7.25 attempt
+    commit) for future work. The round-trip identity remains the
+    cycle 7.16/7.25a axiom in `DcapVerifier.lean` (now consistent
+    after cycle 7.25a length precondition fix). -/
 def qeReportBytes (b : BitVec (384 * 8)) : List UInt8 :=
   (List.range 384).map (fun i =>
     UInt8.ofNat ((b.toNat >>> (i * 8)) &&& 0xff))

@@ -118,13 +118,29 @@ axiom was_signed_by_dstack : TdxQuote → Prop
     formulation lives in `DstackVCVio.lean`; the cycle-7.x DCAP
     reference verifier in `DcapVerifier.lean` provides a concrete
     construction of a `TdxVerifier n` whose `sound`/`complete`
-    fields decompose into three named (c)-bucket assumptions on
-    standard primitives. -/
+    fields decompose into named (c)-bucket assumptions on
+    standard primitives.
+
+    **Cycle 7.21 (rotation precondition)**: the `signedRecently`
+    field carries the verifier's rotation-window predicate. The
+    `complete` field takes `signedRecently q` as a precondition,
+    so completeness only holds for quotes within the verifier's
+    current rotation window. Addresses cycle-7.14-19.b review H2:
+    the previous unconditional `complete` field silently
+    strengthened classical-Prop completeness across collateral
+    expiry (any genuinely-signed quote would decode regardless of
+    rotation epoch). The new shape makes the rotation dependency
+    visible at every consumer site. -/
 structure TdxVerifier (n : Nat) where
   verify : TdxQuote → Option (MrEnclave × UserData n)
   sound (q : TdxQuote) (mr : MrEnclave) (ud : UserData n) :
     verify q = some (mr, ud) → was_signed_by_dstack q
+  /-- Rotation-window predicate (cycle 7.21): a quote is
+      `signedRecently` if it was signed under the PCK chain that
+      anchors to the verifier's current collateral bundle. -/
+  signedRecently : TdxQuote → Prop
   complete (q : TdxQuote) :
-    was_signed_by_dstack q → ∃ mr ud, verify q = some (mr, ud)
+    signedRecently q → was_signed_by_dstack q →
+    ∃ mr ud, verify q = some (mr, ud)
 
 end Specs.Quartz.Attestation.Dstack

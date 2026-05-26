@@ -133,7 +133,7 @@ corresponds to a standard Intel SGX / DCAP architectural assumption.
 | `productionCollateral` (cycle 7.5) | the deployer's Intel-issued collateral bundle exists |
 | `productionCollateral_fresh` (cycle 7.5) | that bundle's TCB info is in its next-update window |
 | `signed_quotes_anchor_to_production_collateral` (cycle 7.14, weakened) | dstack-signed quotes recently signed under current chain anchor to productionCollateral |
-| `productionCollateral_rotation_invariant` (cycle 7.14) | deployer rotates productionCollateral so all dstack-signed quotes are recently-signed against it |
+| ~~`productionCollateral_rotation_invariant`~~ (cycle 7.14, REMOVED cycle 7.21) | was: deployer rotates productionCollateral so all dstack-signed quotes are recently-signed against it. Removed: the rotation obligation is now a per-call hypothesis (`signedRecently q`) on `TdxVerifier.complete`, not a free axiom. |
 
 NOTE: per cycle 7.20 H2 retraction, the combination of the last two
 is informationally equivalent to a single universal-anchoring axiom.
@@ -1508,6 +1508,25 @@ theorem dcapVerifier_sound (n : Nat) (q : RawBytes) (col : Collateral)
     `signed_by_pck_holder` for rationale). -/
 opaque chain_anchors_to_collateral : RawBytes → Collateral → Prop
 
+/-- **Witness predicate (cycle 7.14, addresses review C2)**: the
+    quote `q` was signed under the PCK chain that is currently
+    anchored by `col` — i.e., the chain rotation epoch matches.
+    Captures the rotation-window dependency that the cycle 7.8
+    universal-anchoring axiom previously elided.
+
+    Operationally: the Intel PCK chain rotates on FMSPC and
+    CA-rotation events; a quote signed last quarter under a PCK leaf
+    may not anchor to a collateral bundle fetched this quarter
+    (post-rotation). `recently_signed_under_current_chain q col`
+    asserts that the rotation epochs match.
+
+    **Cycle 7.22 (review L1)**: declared `opaque`.
+
+    **Cycle 7.21 (forward-moved)**: placed above `dcapTdxVerifier`
+    so the bridge's `signedRecently` field can reference it. -/
+opaque recently_signed_under_current_chain :
+    RawBytes → Collateral → Prop
+
 /-- **Completeness of verifyDcap (cycle 7.8, addresses review H3)**:
     a genuinely signed dstack quote whose PCK chain anchors to a fresh
     collateral bundle decodes successfully.
@@ -1547,20 +1566,31 @@ axiom dcapVerifier_complete (n : Nat) (q : RawBytes) (col : Collateral) :
     `TdxVerifier.complete : was_signed_by_dstack q → ∃ mr ud, ...` has
     no temporal precondition, so a caller could invoke
     `(dcapTdxVerifier n col h_fresh).complete` long after `col`
-    expired. The bridge silently strengthens classical-Prop completeness
-    to "fresh-at-construction implies always-complete", which is
-    over-strong against cryptographic reality (TCB info has a finite
-    next-update window). Documented; the dstack production flow
-    rotates collateral within the next-update window, but the spec
-    does not enforce that. -/
+    expired. The bridge silently strengthened classical-Prop
+    completeness to "fresh-at-construction implies always-complete",
+    which is over-strong against cryptographic reality (TCB info has
+    a finite next-update window).
+
+    **Cycle 7.21 (fix)**: the `TdxVerifier` structure now carries a
+    `signedRecently` field. `dcapTdxVerifier` populates it with
+    `recently_signed_under_current_chain · col` and uses
+    `signed_quotes_anchor_to_production_collateral`-style chaining
+    so the `h_anchors` parameter is no longer needed (the rotation
+    obligation is now a hypothesis on `complete`, not a free axiom).
+    Consumers of `TdxVerifier.complete` must provide a `signedRecently
+    q` witness, surfacing the rotation dependency at every call site. -/
 noncomputable def dcapTdxVerifier (n : Nat) (col : Collateral)
     (h_fresh : freshCollateral col)
-    (h_anchors : ∀ q, was_signed_by_dstack q → chain_anchors_to_collateral q col) :
+    (h_anchors_recently : ∀ q,
+      recently_signed_under_current_chain q col →
+      was_signed_by_dstack q →
+      chain_anchors_to_collateral q col) :
     TdxVerifier n where
   verify q := verifyDcap n q col
   sound q mr ud h_acc := dcapVerifier_sound n q col mr ud h_fresh h_acc
-  complete q h_signed := dcapVerifier_complete n q col h_fresh
-    (h_anchors q h_signed) h_signed
+  signedRecently q := recently_signed_under_current_chain q col
+  complete q h_recently h_signed := dcapVerifier_complete n q col h_fresh
+    (h_anchors_recently q h_recently h_signed) h_signed
 
 /-! ## Production-deployment value witnesses (cycle 7.5)
 
@@ -1602,23 +1632,6 @@ axiom productionCollateral : Collateral
     and no PCK revocation events since last refresh". -/
 axiom productionCollateral_fresh : freshCollateral productionCollateral
 
-/-- **Witness predicate (cycle 7.14, addresses review C2)**: the
-    quote `q` was signed under the PCK chain that is currently
-    anchored by `col` — i.e., the chain rotation epoch matches.
-    Captures the rotation-window dependency that the cycle 7.8
-    universal-anchoring axiom previously elided.
-
-    Operationally: the Intel PCK chain rotates on FMSPC and CA-rotation
-    events; a quote signed last quarter under a PCK leaf may not
-    anchor to a collateral bundle fetched this quarter (post-rotation).
-    `recently_signed_under_current_chain q col` asserts that the
-    rotation epochs match.
-
-    **Cycle 7.22 (review L1)**: declared `opaque` (see
-    `signed_by_pck_holder` for rationale). -/
-opaque recently_signed_under_current_chain :
-    RawBytes → Collateral → Prop
-
 /-- **(c)-bucket assumption (cycle 7.8 — deployment-side anchoring,
     weakened cycle 7.14 per review C2)**: in the deployed flow,
     every quote that (i) was produced by a dstack TEE AND (ii) was
@@ -1646,34 +1659,15 @@ axiom signed_quotes_anchor_to_production_collateral
     recently_signed_under_current_chain q productionCollateral →
     chain_anchors_to_collateral q productionCollateral
 
-/-- **Deployment-side commitment (cycle 7.14)**: the deployer takes
-    responsibility for rotating `productionCollateral` such that every
-    currently-signed dstack quote is `recently_signed_under_current_chain`
-    against it.
-
-    **Cycle 7.20 retraction (review H2)**: combining this axiom with
-    `signed_quotes_anchor_to_production_collateral` (cycle 7.14)
-    derives `∀ q, was_signed_by_dstack q → chain_anchors_to_collateral q
-    productionCollateral`, which is the original cycle 7.8 axiom
-    being claimed as "weakened". The cycle 7.14 framing of "two
-    named commitments, not one bundled" was rhetorical; the axiom
-    *closure* sums the same content. The decomposition is structural
-    naming (the deployer-rotation step is visible as a named axiom
-    rather than buried), not semantic narrowing.
-
-    The honest fix (option b from the review) is to make the rotation
-    invariant a hypothesis on `dcapTdxVerifier` rather than a free
-    axiom, so that the deployer commitment becomes a Lean-tracked
-    obligation passed into the verifier — but that requires
-    restructuring `TdxVerifier.complete`'s signature to take a
-    `recently_signed` precondition, which cascades through every
-    downstream consumer of `verifyTdxQuote_complete`. Queued as cycle
-    7.21. The current axiom-level shape is accurate-but-not-narrowing;
-    auditors should read the two cycle 7.14 axioms as a single
-    deployment-side trust assumption with two named components. -/
-axiom productionCollateral_rotation_invariant :
-    ∀ q : RawBytes,
-      was_signed_by_dstack q →
-      recently_signed_under_current_chain q productionCollateral
+-- `productionCollateral_rotation_invariant` (cycle 7.14) was an
+-- axiom asserting that all dstack-signed quotes are recently-signed
+-- against productionCollateral. Cycle 7.21 removes it: the rotation
+-- invariant is no longer needed as a free axiom because
+-- `TdxVerifier.complete` now takes `signedRecently q` as a hypothesis,
+-- so consumers must witness rotation-window membership at call sites
+-- rather than relying on a universal deployment-side claim. Removing
+-- the axiom closes the H2 retraction honestly: the deployer's
+-- rotation obligation is now a Lean-tracked precondition propagated
+-- through every consumer, not an unfalsifiable free axiom.
 
 end Specs.Quartz.Attestation.DcapVerifier

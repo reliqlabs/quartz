@@ -843,11 +843,24 @@ def groth16SoundnessWinPred (p : Groth16Proof × PublicInputs) : Prop :=
   verifyGroth16 zkdcapVKey p.1 p.2 = true ∧
   ¬ was_signed_by_dstack (inputs_to_quote p.2)
 
-/-- **Protocol-fail predicate**: the verifier accepts but the TDX quote
-    does not decode (no `(mr, ud)` is recovered). This is the event whose
-    probability `verifyGroth16_yields_decoded_negl` bounds. -/
+/-- **Protocol-fail predicate**: the verifier accepts, the input quote
+    is within the current rotation window, but the TDX quote does not
+    decode (no `(mr, ud)` is recovered). This is the event whose
+    probability `verifyGroth16_yields_decoded_negl` bounds.
+
+    **Cycle 7.21 (rotation precondition)**: added the
+    `(tdxVerifier n).signedRecently (inputs_to_quote p.2)` conjunct.
+    Without it, the implication
+    `verifyGroth16FailPred ⇒ groth16SoundnessWinPred` would no longer
+    hold (cycle 7.21 strengthened `verifyTdxQuote_complete` to require
+    a rotation witness). The added conjunct restricts the fail event
+    to adversaries operating within the rotation window — outside the
+    window, dstack-signed-but-unparseable quotes do not constitute a
+    Groth16-soundness failure but a separate rotation-staleness
+    failure (modeled elsewhere). -/
 def verifyGroth16FailPred (n : Nat) (p : Groth16Proof × PublicInputs) : Prop :=
   verifyGroth16 zkdcapVKey p.1 p.2 = true ∧
+  (tdxVerifier n).signedRecently (inputs_to_quote p.2) ∧
   ¬ ∃ mr ud, verifyTdxQuote n (inputs_to_quote p.2) = some (mr, ud)
 
 /-- **Content-bearing advantage** for the Groth16 soundness game: the
@@ -881,11 +894,22 @@ noncomputable def verifyGroth16FailAdv (𝒜 : Groth16SoundAdv) (n : ℕ) : ℝ�
     cannot have been signed by dstack (because `tdxVerifier.complete`
     would otherwise produce the decoding). This is the pointwise
     implication that the Round A-corrected `verifyGroth16_yields_decoded_negl`
-    closes over via `probEvent_mono`. -/
+    closes over via `probEvent_mono`.
+
+    **Cycle 7.21 (rotation precondition)**: now takes an additional
+    `h_recently` hypothesis that the quote `inputs_to_quote p.2`
+    was signed within the current rotation window. Without this
+    hypothesis, `verifyTdxQuote_complete` (which was strengthened
+    in cycle 7.21) cannot fire. The hypothesis is propagated by the
+    caller; downstream provers discharge it via
+    `productionCollateral_rotation_invariant`-style witnesses, or
+    by carrying it as a game precondition into the soundness
+    statement. -/
 theorem verifyGroth16FailPred_imp_groth16SoundnessWinPred (n : Nat)
     (p : Groth16Proof × PublicInputs)
     (h : verifyGroth16FailPred n p) : groth16SoundnessWinPred p :=
-  ⟨h.1, fun h_signed => h.2 (verifyTdxQuote_complete n _ h_signed)⟩
+  ⟨h.1, fun h_signed =>
+    h.2.2 (verifyTdxQuote_complete n _ h.2.1 h_signed)⟩
 
 /-! ## Lifted protocol theorem: `verifyGroth16_yields_decoded_negl`
 
@@ -930,9 +954,10 @@ the bound passes through with equality.
     classical-`Prop` axioms. -/
 theorem verifyGroth16_yields_decoded_classical (n : Nat)
     (proof : Groth16Proof) (inputs : PublicInputs)
+    (h_recently : (tdxVerifier n).signedRecently (inputs_to_quote inputs))
     (h : verifyGroth16 zkdcapVKey proof inputs = true) :
     ∃ mr ud, verifyTdxQuote n (inputs_to_quote inputs) = some (mr, ud) :=
-  verifyGroth16_yields_decoded n proof inputs h
+  verifyGroth16_yields_decoded n proof inputs h h_recently
 
 /-- **Probabilistic form (the Step 6.0 lift, Cycle-6.4-corrected)**:
     `verifyGroth16_yields_decoded_negl`.
