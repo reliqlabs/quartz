@@ -69,4 +69,19 @@ theorem extractBitVec_take (raw : List UInt8) (offset width k : Nat) :
           (((raw.take k).drop offset).take m))
   rw [h_slice]
 
+/-- **Helper definition (cycle 7.24)**: convert a `BitVec (384 * 8)`
+    back to a 384-byte little-endian `RawBytes` list. This is the
+    inverse direction of `extractBitVec` at width `384 * 8`.
+
+    Used in `DcapVerifier.lean` as `qeReportBytes` (the conversion
+    consumed by `verifyEcdsaP256` when checking the QE-report
+    signature). Was `opaque` from cycle 7.3.b through cycle 7.23;
+    cycle 7.24 gives it a concrete body so the round-trip identity
+    `qeReportBytes (extractBitVec raw offset (384*8)) = (raw.drop
+    offset).take 384` can be proved (when proven) rather than
+    asserted as the cycle 7.16 axiom. -/
+def qeReportBytes (b : BitVec (384 * 8)) : List UInt8 :=
+  (List.range 384).map (fun i =>
+    UInt8.ofNat ((b.toNat >>> (i * 8)) &&& 0xff))
+
 end Specs.Quartz.Attestation.ByteUnpacking

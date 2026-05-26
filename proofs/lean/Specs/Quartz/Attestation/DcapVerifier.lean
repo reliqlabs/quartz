@@ -624,34 +624,38 @@ opaque verifyEcdsaP256 (pubKey : BitVec 512) (msg : RawBytes)
 opaque verifyAttestationKeyBinding (qeReport : BitVec (384 * 8))
     (attestationKey : BitVec 512) : Bool
 
-/-- **Bit-to-byte conversion** for the QE report. Converts the
-    bit-packed `BitVec (384 * 8)` to its `RawBytes` representation
-    consumed by `verifyEcdsaP256`. Opaque at this spec level — the
-    production conversion is little-endian byte unpacking that
-    downstream substeps depend on.
+/-
+**Bit-to-byte conversion** for the QE report. Converts the
+bit-packed `BitVec (384 * 8)` to its `RawBytes` representation
+consumed by `verifyEcdsaP256`. The production conversion is
+little-endian byte unpacking.
 
-    Moved from cycle 7.3.b's bridging-axiom section to here so
-    `verifyDcap` (below) can invoke it. -/
-opaque qeReportBytes : BitVec (384 * 8) → RawBytes
+**Cycle 7.24**: was `opaque` from cycle 7.3.b through cycle 7.23.
+Demoted to a `def` in `ByteUnpacking.lean` and re-exported here
+via `export`. The cycle 7.16 axiom `qeReportBytes_extractBitVec_eq`
+linking it to the byte-slice operation now refers to a derivable
+property, though the proof is queued (substantial BitVec ↔ Nat
+shift reasoning).
+-/
+export Specs.Quartz.Attestation.ByteUnpacking (qeReportBytes)
 
 /-- **Structural axiom (cycle 7.16, addresses review L1)**: the
     `qeReportBytes` conversion applied to a `BitVec` extracted from
     a specific window of `raw` equals the corresponding byte slice
-    of `raw`. Without this axiom an adversarial `qeReportBytes` could
-    ignore its `BitVec` input and return attacker-chosen bytes,
-    defeating the cycle 7.12 `qeReport` pinning.
+    of `raw`. Cycle 7.16 introduced this as an axiom because
+    `qeReportBytes` was opaque; cycle 7.24 demotes `qeReportBytes` to
+    a concrete def in `ByteUnpacking.lean` so the equality becomes a
+    derivable property of the round-trip between `extractBitVec` (LE
+    pack) and `qeReportBytes` (LE unpack). The proof requires
+    substantial BitVec ↔ Nat shift reasoning and is queued (would
+    require `Nat.shiftRight_add_eq_div_pow`, `Nat.land_pow_eq_mod`,
+    etc.); the axiom remains in the closure of
+    `verifyDcap_qeReportBytes_eq_raw_slice` until the proof lands.
 
     Operationally: `qeReportBytes` is little-endian byte unpacking of
     a 384*8-bit vector into 384 bytes. When the input BitVec was
     little-endian-packed from `raw[offset..offset+384]` (via
-    `extractBitVec`), the unpacking returns the original bytes.
-
-    Concretely for the cycle 7.12 layout (`qeReport` at offset 770,
-    width 384*8):
-        qeReportBytes (extractBitVec raw 770 (384*8))
-          = (raw.drop 770).take 384
-    Connects the cycle-7.12 qeReport-binding to the bytes the
-    `verifyEcdsaP256` substep in `verifyDcap` actually hashes. -/
+    `extractBitVec`), the unpacking returns the original bytes. -/
 axiom qeReportBytes_extractBitVec_eq
     (raw : RawBytes) (offset : Nat) :
     qeReportBytes (extractBitVec raw offset (384 * 8))
