@@ -730,13 +730,24 @@ opaque freshCollateral : Collateral → Prop
 /-- **Abstract witness predicate**: `msg` was signed by the holder of
     the private key paired with `leafKey`. Externalises the "signature
     is real" property as a propositional witness, mirroring the shape
-    of `was_signed_by_dstack` in `Dstack.lean`. -/
-axiom signed_by_pck_holder : BitVec 512 → RawBytes → Prop
+    of `was_signed_by_dstack` in `Dstack.lean`.
+
+    **Cycle 7.22 (review L1)**: declared `opaque` rather than `axiom`
+    because the underlying inhabitant is just a function `T → Prop`
+    (always Nonempty as `fun _ _ => True`). Conversion separates
+    "named opaque predicate" from "things asserted true" in audit
+    closures. The predicate's meaning is pinned by the
+    `pckLeafKey_signs_imply_signed_by_pck_holder` and chain
+    composition axioms below. -/
+opaque signed_by_pck_holder : BitVec 512 → RawBytes → Prop
 
 /-- **Abstract witness predicate**: `leafKey` is a legitimate Intel-
     certified PCK leaf key (issued by Intel for a TEE-resident
-    Provisioning Certification Enclave). -/
-axiom legitimate_pck_leaf : BitVec 512 → Prop
+    Provisioning Certification Enclave).
+
+    **Cycle 7.22 (review L1)**: declared `opaque` (see
+    `signed_by_pck_holder` for rationale). -/
+opaque legitimate_pck_leaf : BitVec 512 → Prop
 
 -- `pck_holder_is_dstack_tee` (cycle 7.3.a placeholder with `True`
 -- body) was removed in cycle 7.3.b — its role is taken by
@@ -815,8 +826,13 @@ hand-off between the two links explicit. -/
     parsed` holds, there must exist a legitimate PCK leaf that signed
     the QE report. Without this constraint, the cycle 7.3.c
     decomposition would have been vacuous (`signed_by_qe := True`
-    satisfies both axioms A and B as stated). -/
-axiom signed_by_qe : DcapQuote → Prop
+    satisfies both axioms A and B as stated).
+
+    **Cycle 7.22 (review L1)**: declared `opaque` (see
+    `signed_by_pck_holder` for rationale). The biconditional pinning
+    the meaning is provided by `qe_attestation_chain_implies_signed_by_qe`
+    (forward) and `signed_by_qe_implies_pck_chain_witnesses` (reverse). -/
+opaque signed_by_qe : DcapQuote → Prop
 
 /-- **(c)-bucket constraint (cycle 7.14, addresses review C1)**:
     `signed_by_qe parsed` implies the existence of a legitimate PCK
@@ -1370,8 +1386,11 @@ theorem dcapVerifier_sound (n : Nat) (q : RawBytes) (col : Collateral)
     asserted "any fresh col decodes any genuine quote", which is
     cryptographically false — a quote signed against Intel's CA-A
     cannot decode against a (still fresh) collateral bundle from a
-    different Intel sub-CA, FMSPC, or post-revocation chain. -/
-axiom chain_anchors_to_collateral : RawBytes → Collateral → Prop
+    different Intel sub-CA, FMSPC, or post-revocation chain.
+
+    **Cycle 7.22 (review L1)**: declared `opaque` (see
+    `signed_by_pck_holder` for rationale). -/
+opaque chain_anchors_to_collateral : RawBytes → Collateral → Prop
 
 /-- **Completeness of verifyDcap (cycle 7.8, addresses review H3)**:
     a genuinely signed dstack quote whose PCK chain anchors to a fresh
@@ -1477,8 +1496,11 @@ axiom productionCollateral_fresh : freshCollateral productionCollateral
     events; a quote signed last quarter under a PCK leaf may not
     anchor to a collateral bundle fetched this quarter (post-rotation).
     `recently_signed_under_current_chain q col` asserts that the
-    rotation epochs match. -/
-axiom recently_signed_under_current_chain :
+    rotation epochs match.
+
+    **Cycle 7.22 (review L1)**: declared `opaque` (see
+    `signed_by_pck_holder` for rationale). -/
+opaque recently_signed_under_current_chain :
     RawBytes → Collateral → Prop
 
 /-- **(c)-bucket assumption (cycle 7.8 — deployment-side anchoring,
