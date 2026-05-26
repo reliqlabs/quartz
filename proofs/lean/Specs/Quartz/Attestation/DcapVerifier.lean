@@ -150,7 +150,7 @@ The decomposition is structural naming, not semantic narrowing.
 **Completeness (1)**
 | Name | Asserts |
 |---|---|
-| `dcapVerifier_complete` (cycle 7.3/7.8) | genuine quote + chain-anchored + fresh col → verifyDcap returns some |
+| `dcapVerifier_complete` (cycle 7.3/7.8/7.27) | genuine quote + chain-anchored + freshAt t col → verifyDcap returns some. Cycle 7.27: freshness now indexed by contract-side time `t` (block.time from CosmWasm `Env`); replaces the structural `freshCollateral col` precondition with `freshAt t col := freshCollateral col ∧ t ≤ nextUpdate_at col`. |
 
 **External-module dependencies (1)**
 | Name | Source |
@@ -879,6 +879,30 @@ def freshCollateral (col : Collateral) : Prop :=
   -- TCB signing cert is non-empty
   col.tcbSigningCert ≠ []
 
+/-- **Cycle 7.27**: opaque projection of the `nextUpdate` byte-string
+    field of a Collateral's TCB info to a `Time` (Unix-timestamp-like
+    `Nat`). The production parser reads the RFC-3339 date string at
+    `col.tcbInfo.nextUpdate` and converts to seconds-since-epoch.
+
+    Opaque here because byte-string-to-date parsing is out of scope
+    for the spec layer. -/
+opaque nextUpdate_at : Collateral → Time
+
+/-- **Cycle 7.27**: freshness at a specific time `t`. A collateral
+    bundle is "fresh at time `t`" iff it is structurally well-formed
+    (cycle 7.26 conjuncts) AND the contract-side time `t` is at or
+    before Intel's published `nextUpdate` timestamp.
+
+    Captures the contract-side temporal precondition: "is the
+    collateral I'm about to verify against still within its
+    Intel-issued validity window, as of right now (block.time)?".
+    The deployer's obligation is to ensure
+    `nextUpdate_at productionCollateral` is far enough in the future
+    that fresh quotes can be verified during the deployment lifetime;
+    when it expires, the deployer rotates `productionCollateral`. -/
+def freshAt (t : Time) (col : Collateral) : Prop :=
+  freshCollateral col ∧ t ≤ nextUpdate_at col
+
 /-- **Abstract witness predicate**: `msg` was signed by the holder of
     the private key paired with `leafKey`. Externalises the "signature
     is real" property as a propositional witness, mirroring the shape
@@ -1582,9 +1606,18 @@ opaque recently_signed_under_current_chain :
     form asserted completeness against *any* fresh collateral,
     including ones whose trust roots are incompatible with the quote's
     signer chain. The corrected form binds completeness to collateral
-    that actually matches the quote's anchor. -/
-axiom dcapVerifier_complete (n : Nat) (q : RawBytes) (col : Collateral) :
-    freshCollateral col →
+    that actually matches the quote's anchor.
+
+    **Cycle 7.27 (time-indexed freshness)**: replaced `freshCollateral
+    col` with `freshAt t col` (which expands to `freshCollateral col ∧
+    t ≤ nextUpdate_at col`). The contract-side time `t` is provided
+    by the caller (production: from `env.block.time`); the
+    completeness assertion now requires not just structural
+    well-formedness but also that the contract's clock has not yet
+    passed the collateral's Intel-published nextUpdate timestamp. -/
+axiom dcapVerifier_complete (n : Nat) (q : RawBytes) (col : Collateral)
+    (t : Time) :
+    freshAt t col →
     chain_anchors_to_collateral q col →
     was_signed_by_dstack q →
     ∃ mr ud, verifyDcap n q col = some (mr, ud)
@@ -1616,26 +1649,30 @@ axiom dcapVerifier_complete (n : Nat) (q : RawBytes) (col : Collateral) :
     which is over-strong against cryptographic reality (TCB info has
     a finite next-update window).
 
-    **Cycle 7.21 (fix)**: the `TdxVerifier` structure now carries a
-    `signedRecently` field. `dcapTdxVerifier` populates it with
-    `recently_signed_under_current_chain · col` and uses
-    `signed_quotes_anchor_to_production_collateral`-style chaining
-    so the `h_anchors` parameter is no longer needed (the rotation
-    obligation is now a hypothesis on `complete`, not a free axiom).
-    Consumers of `TdxVerifier.complete` must provide a `signedRecently
-    q` witness, surfacing the rotation dependency at every call site. -/
+    **Cycle 7.21 (rotation precondition)**: the `TdxVerifier`
+    structure carries a `signedRecently` field; the rotation
+    obligation became a per-call hypothesis on `complete`.
+
+    **Cycle 7.27 (time-indexed freshness)**: the `TdxVerifier`
+    structure now also carries a `freshAtTime : Time → Prop` field.
+    `dcapTdxVerifier` populates it with `freshAt · col`, so the
+    bridge's freshness check at consumer time `t` unfolds to
+    `freshCollateral col ∧ t ≤ nextUpdate_at col`. The contract
+    handler discharges this by passing `env.block.time` and proving
+    it doesn't exceed the deployed collateral's nextUpdate. -/
 noncomputable def dcapTdxVerifier (n : Nat) (col : Collateral)
-    (h_fresh : freshCollateral col)
+    (h_well_formed : freshCollateral col)
     (h_anchors_recently : ∀ q,
       recently_signed_under_current_chain q col →
       was_signed_by_dstack q →
       chain_anchors_to_collateral q col) :
     TdxVerifier n where
   verify q := verifyDcap n q col
-  sound q mr ud h_acc := dcapVerifier_sound n q col mr ud h_fresh h_acc
+  sound q mr ud h_acc := dcapVerifier_sound n q col mr ud h_well_formed h_acc
   signedRecently q := recently_signed_under_current_chain q col
-  complete q h_recently h_signed := dcapVerifier_complete n q col h_fresh
-    (h_anchors_recently q h_recently h_signed) h_signed
+  freshAtTime t := freshAt t col
+  complete q t h_fresh_at h_recently h_signed := dcapVerifier_complete n q col t
+    h_fresh_at (h_anchors_recently q h_recently h_signed) h_signed
 
 /-! ## Production-deployment value witnesses (cycle 7.5)
 

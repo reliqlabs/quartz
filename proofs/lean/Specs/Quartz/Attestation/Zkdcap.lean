@@ -332,16 +332,21 @@ theorem verifyGroth16_sound (proof : Groth16Proof) (inputs : PublicInputs) :
     `DstackZkAttestation` handler soundness) will consume: ZK
     acceptance entails the existence of decodable DCAP evidence.
 
-    **Cycle 7.21 (rotation precondition surfaced)**: now takes
+    **Cycle 7.21 (rotation precondition surfaced)**: takes
     `(tdxVerifier n).signedRecently (inputs_to_quote inputs)` as a
-    precondition, since `verifyTdxQuote_complete` was strengthened
-    to require it. Consumers must witness the rotation-window
-    inclusion explicitly. -/
+    precondition.
+
+    **Cycle 7.27 (time-indexed freshness)**: also takes `(t : Time)`
+    and `(tdxVerifier n).freshAtTime t` so the contract-side block
+    time discharge is visible. -/
 theorem verifyGroth16_yields_decoded
     (n : Nat) (proof : Groth16Proof) (inputs : PublicInputs)
     (h : verifyGroth16 zkdcapVKey proof inputs = true)
+    (t : Time)
+    (h_fresh_at : (tdxVerifier n).freshAtTime t)
     (h_recently : (tdxVerifier n).signedRecently (inputs_to_quote inputs)) :
     ∃ mr ud, verifyTdxQuote n (inputs_to_quote inputs) = some (mr, ud) :=
-  verifyTdxQuote_complete n _ h_recently (verifyGroth16_sound proof inputs h)
+  verifyTdxQuote_complete n _ t h_fresh_at h_recently
+    (verifyGroth16_sound proof inputs h)
 
 end Specs.Quartz.Attestation.Zkdcap

@@ -232,22 +232,19 @@ theorem verifyTdxQuote_sound (n : Nat) (q : TdxQuote)
 
     **Cycle 7.21 (rotation precondition surfaced)**: now takes
     `(tdxVerifier n).signedRecently q` as a precondition, surfacing
-    the rotation-window dependency at every consumer. For the
-    `dcapTdxVerifier`-backed production verifier, this unfolds to
-    `recently_signed_under_current_chain q productionCollateral`,
-    making the deployer's rotation obligation visible.
+    the rotation-window dependency at every consumer.
 
-    **Honesty caveat**: the real-world completeness claim is
-    conditional on fresh Intel collateral and non-revocation of the
-    PCK chain. The cycle 7.21 form now captures the rotation-window
-    part; freshness ride on `productionCollateral_fresh`; the
-    `OracleComp`-based negligible-probability shape lives in
-    `DstackVCVio.lean`. -/
-theorem verifyTdxQuote_complete (n : Nat) (q : TdxQuote) :
+    **Cycle 7.27 (time-indexed freshness)**: now also takes
+    `(t : Time)` and `(tdxVerifier n).freshAtTime t` as preconditions
+    so the contract-side block time discharge is visible at every
+    consumer. Production: contract handler passes `env.block.time`
+    and proves `t ≤ nextUpdate_at productionCollateral`. -/
+theorem verifyTdxQuote_complete (n : Nat) (q : TdxQuote) (t : Time) :
+    (tdxVerifier n).freshAtTime t →
     (tdxVerifier n).signedRecently q →
     was_signed_by_dstack q →
     ∃ mr ud, verifyTdxQuote n q = some (mr, ud) :=
-  (tdxVerifier n).complete q
+  (tdxVerifier n).complete q t
 
 /-- Extract the user-data field from a successfully verified quote.
 

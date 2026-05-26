@@ -844,22 +844,26 @@ def groth16SoundnessWinPred (p : Groth16Proof × PublicInputs) : Prop :=
   ¬ was_signed_by_dstack (inputs_to_quote p.2)
 
 /-- **Protocol-fail predicate**: the verifier accepts, the input quote
-    is within the current rotation window, but the TDX quote does not
-    decode (no `(mr, ud)` is recovered). This is the event whose
-    probability `verifyGroth16_yields_decoded_negl` bounds.
+    is within the current rotation window, the collateral is fresh at
+    contract-side time `t`, but the TDX quote does not decode (no
+    `(mr, ud)` is recovered). This is the event whose probability
+    `verifyGroth16_yields_decoded_negl` bounds.
 
     **Cycle 7.21 (rotation precondition)**: added the
     `(tdxVerifier n).signedRecently (inputs_to_quote p.2)` conjunct.
-    Without it, the implication
-    `verifyGroth16FailPred ⇒ groth16SoundnessWinPred` would no longer
-    hold (cycle 7.21 strengthened `verifyTdxQuote_complete` to require
-    a rotation witness). The added conjunct restricts the fail event
-    to adversaries operating within the rotation window — outside the
-    window, dstack-signed-but-unparseable quotes do not constitute a
-    Groth16-soundness failure but a separate rotation-staleness
-    failure (modeled elsewhere). -/
-def verifyGroth16FailPred (n : Nat) (p : Groth16Proof × PublicInputs) : Prop :=
+
+    **Cycle 7.27 (time-indexed freshness)**: added `(t : Time)`
+    parameter and the `(tdxVerifier n).freshAtTime t` conjunct, so
+    the predicate now restricts the fail event to (a) adversaries
+    operating within the rotation window AND (b) contract-side time
+    at which the collateral is still within its Intel-published
+    next-update window. Outside either window, dstack-signed-but-
+    unparseable quotes are separate failure modes (rotation staleness
+    or collateral expiry), not Groth16-soundness failures. -/
+def verifyGroth16FailPred (n : Nat) (t : Time)
+    (p : Groth16Proof × PublicInputs) : Prop :=
   verifyGroth16 zkdcapVKey p.1 p.2 = true ∧
+  (tdxVerifier n).freshAtTime t ∧
   (tdxVerifier n).signedRecently (inputs_to_quote p.2) ∧
   ¬ ∃ mr ud, verifyTdxQuote n (inputs_to_quote p.2) = some (mr, ud)
 
@@ -886,8 +890,9 @@ noncomputable def groth16SoundnessAdv (𝒜 : Groth16SoundAdv) (n : ℕ) : ℝ�
     verifier to accept on a quote that does not decode.
 
     **Cycle 6.13**: same simulator-wrapping as `groth16SoundnessAdv`. -/
-noncomputable def verifyGroth16FailAdv (𝒜 : Groth16SoundAdv) (n : ℕ) : ℝ≥0∞ :=
-  Pr[ verifyGroth16FailPred n | simulateQ (protocolSpecHonestSim n) (𝒜 n) ]
+noncomputable def verifyGroth16FailAdv (𝒜 : Groth16SoundAdv)
+    (n : ℕ) (t : Time) : ℝ≥0∞ :=
+  Pr[ verifyGroth16FailPred n t | simulateQ (protocolSpecHonestSim n) (𝒜 n) ]
 
 /-- The protocol-fail event implies the Groth16 soundness-win event:
     if the verifier accepts but no `(mr, ud)` is decoded, then the quote
@@ -905,11 +910,11 @@ noncomputable def verifyGroth16FailAdv (𝒜 : Groth16SoundAdv) (n : ℕ) : ℝ�
     `productionCollateral_rotation_invariant`-style witnesses, or
     by carrying it as a game precondition into the soundness
     statement. -/
-theorem verifyGroth16FailPred_imp_groth16SoundnessWinPred (n : Nat)
+theorem verifyGroth16FailPred_imp_groth16SoundnessWinPred (n : Nat) (t : Time)
     (p : Groth16Proof × PublicInputs)
-    (h : verifyGroth16FailPred n p) : groth16SoundnessWinPred p :=
+    (h : verifyGroth16FailPred n t p) : groth16SoundnessWinPred p :=
   ⟨h.1, fun h_signed =>
-    h.2.2 (verifyTdxQuote_complete n _ h.2.1 h_signed)⟩
+    h.2.2.2 (verifyTdxQuote_complete n _ t h.2.1 h.2.2.1 h_signed)⟩
 
 /-! ## Lifted protocol theorem: `verifyGroth16_yields_decoded_negl`
 
@@ -954,10 +959,12 @@ the bound passes through with equality.
     classical-`Prop` axioms. -/
 theorem verifyGroth16_yields_decoded_classical (n : Nat)
     (proof : Groth16Proof) (inputs : PublicInputs)
+    (t : Time)
+    (h_fresh_at : (tdxVerifier n).freshAtTime t)
     (h_recently : (tdxVerifier n).signedRecently (inputs_to_quote inputs))
     (h : verifyGroth16 zkdcapVKey proof inputs = true) :
     ∃ mr ud, verifyTdxQuote n (inputs_to_quote inputs) = some (mr, ud) :=
-  verifyGroth16_yields_decoded n proof inputs h h_recently
+  verifyGroth16_yields_decoded n proof inputs h t h_fresh_at h_recently
 
 /-- **Probabilistic form (the Step 6.0 lift, Cycle-6.4-corrected)**:
     `verifyGroth16_yields_decoded_negl`.
@@ -996,13 +1003,13 @@ theorem verifyGroth16_yields_decoded_classical (n : Nat)
     we get `verifyGroth16FailAdv 𝒜 n ≤ groth16SoundnessAdv 𝒜 n` pointwise.
     Then `negligible_of_le` closes from `h_negl`. -/
 theorem verifyGroth16_yields_decoded_negl
-    (𝒜 : Groth16SoundAdv)
+    (𝒜 : Groth16SoundAdv) (t : Time)
     (h_negl : negligible (groth16SoundnessAdv 𝒜)) :
-    negligible (verifyGroth16FailAdv 𝒜) := by
+    negligible (fun n => verifyGroth16FailAdv 𝒜 n t) := by
   refine negligible_of_le ?_ h_negl
   intro n
   exact probEvent_mono (fun p _ hp =>
-    verifyGroth16FailPred_imp_groth16SoundnessWinPred n p hp)
+    verifyGroth16FailPred_imp_groth16SoundnessWinPred n t p hp)
 
 /-- **Convenience packaging**: the lifted protocol theorem expressed
     as a `SecurityExp` (asymptotic security experiment), reducing the

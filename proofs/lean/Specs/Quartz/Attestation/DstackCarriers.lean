@@ -91,6 +91,22 @@ abbrev MrEnclave : Type := BitVec 384 × BitVec 384
     cycle-6.22.d.1 birthday bound. -/
 abbrev UserData (n : Nat) : Type := BitVec n
 
+/-- **Time (cycle 7.27)**: a Unix-timestamp-style monotonic
+    counter representing the contract's view of "current time"
+    at the moment of quote verification.
+
+    In production this is `env.block.time` as exposed by CosmWasm's
+    `Env::block::time` (nanoseconds since the Unix epoch). Chain
+    consensus enforces it, so individual validators cannot lie about
+    `Now` without breaking consensus. The contract handler at
+    `crates/contracts/core/src/handler/execute/attested.rs` passes
+    `env.block.time.nanos()` into the verifier call site.
+
+    `Nat` semantics: ordered, additive, totally concrete. Matches the
+    actual contract-side type without requiring an in-Lean clock
+    primitive. -/
+abbrev Time : Type := Nat
+
 /-- Abstract soundness predicate.
 
     `was_signed_by_dstack q` holds iff `q` was actually produced by
@@ -139,8 +155,14 @@ structure TdxVerifier (n : Nat) where
       `signedRecently` if it was signed under the PCK chain that
       anchors to the verifier's current collateral bundle. -/
   signedRecently : TdxQuote → Prop
-  complete (q : TdxQuote) :
-    signedRecently q → was_signed_by_dstack q →
+  /-- Freshness-at-time predicate (cycle 7.27): the verifier's
+      collateral bundle is still within its Intel-published
+      next-update window at contract-side time `t`. Production: the
+      contract handler passes `env.block.time`; the verifier checks
+      `t ≤ nextUpdate_at productionCollateral`. -/
+  freshAtTime : Time → Prop
+  complete (q : TdxQuote) (t : Time) :
+    freshAtTime t → signedRecently q → was_signed_by_dstack q →
     ∃ mr ud, verify q = some (mr, ud)
 
 end Specs.Quartz.Attestation.Dstack
