@@ -69,6 +69,96 @@ to PCK-signature unforgeability + collateral correctness.
 
 Cycle 7.4 (queued): bridge to `TdxVerifier n` so the existing
 `tdxVerifier n` axiom is demoted to a derived definition.
+
+## Audit-closure rosetta (cycle 7.23, addresses cycle-7.14-19.b review M3)
+
+After cycles 7.5-7.22, the `#print axioms handshake_sound_pinned`
+closure contains ~22 entries. To make the audit reading scalable,
+this rosetta classifies every closure entry by category. Each entry
+should be read as a separate trust commitment; the cumulative count
+is acceptable only because each commitment is independently auditable.
+
+**Predicate carriers (6, all `opaque ... : T → Prop` post cycle 7.22)**
+| Name | Meaning |
+|---|---|
+| `was_signed_by_dstack` | a TDX quote was produced by a genuine dstack TEE |
+| `signed_by_pck_holder` | a message was signed by the holder of a PCK leaf key |
+| `legitimate_pck_leaf` | a public key is a real Intel-issued PCK leaf |
+| `signed_by_qe` | a parsed quote was signed by a genuine Intel-attested QE |
+| `chain_anchors_to_collateral` | a quote's PCK chain anchors to a collateral bundle's trust roots |
+| `recently_signed_under_current_chain` | quote signed within current rotation window of a collateral bundle |
+
+These add NO truth-content on their own; they exist as named hooks
+for the substantive axioms below.
+
+**Parser-layout assertions (~10, of which ~6 in `handshake_sound_pinned`'s closure)**
+| Name | Asserts |
+|---|---|
+| `parseDcapQuote_signedRegion_eq_input_prefix` (cycle 7.6) | `q.signedRegion = raw.take 632` |
+| `parseDcapQuote_mrTd_eq` (cycle 7.7/7.10) | `q.body.mrTd = extractBitVec raw 184 384` |
+| `parseDcapQuote_reportData_eq` (cycle 7.7) | `q.body.reportData = extractBitVec raw 568 512` |
+| `parseDcapQuote_rtmr3_eq` (cycle 7.9/7.10) | `q.body.rtmr3 = extractBitVec raw 520 384` |
+| `parseDcapQuote_ecdsaSignature_eq` (cycle 7.11) | `q.authData.ecdsaSignature = extractBitVec raw 636 512` |
+| `parseDcapQuote_attestationKey_eq` (cycle 7.11) | `q.authData.attestationKey = extractBitVec raw 700 512` |
+| `parseDcapQuote_qeReport_eq` (cycle 7.12) | `q.authData.qeReport = extractBitVec raw 770 (384*8)` |
+| `parseDcapQuote_qeReportSignature_eq` (cycle 7.12) | `q.authData.qeReportSignature = extractBitVec raw 1154 512` |
+| `parseDcapQuote_qeAuthData_eq` (cycle 7.18) | `q.authData.qeAuthData = (raw.drop 1220).take qeAuthLen` |
+| `parseDcapQuote_certificateData_eq` (cycle 7.18) | `q.authData.certificateData = ...` (variable offset) |
+| `parseDcapQuote_authData_length_valid` (cycle 7.20) | `1226 + qeAuthLen + innerCertBodySize ≤ raw.length` |
+| `parseDcapQuote_header_validates` (cycle 7.14) | header version, teeType, attestationKeyType valid |
+| `parseDcapQuote_certType_eq_6` (cycle 7.14) | outer cert_type marker is 6 |
+| `qeReportBytes_extractBitVec_eq` (cycle 7.16) | qeReportBytes converts BitVec to byte slice |
+
+Audit reading: cross-check each against `zkdcap/circuits/dcap-gnark/
+witness/quote.go` (the cycle 7.10 critical-fix discipline). These
+assertions hold by construction in the production parser; if any
+diverge in a future zkdcap update, the corresponding axiom must be
+revised in lockstep.
+
+**Cryptographic (c)-bucket axioms (4 + 1 reverse = 5)**
+| Name | Assumption |
+|---|---|
+| `chain_verified_leafKey_is_legitimate` (cycle 7.3.a) | X.509 chain trust to Intel SGX Root CA |
+| `pckLeafKey_signs_imply_signed_by_pck_holder` (cycle 7.3.a) | ECDSA-P256 EUF-CMA over Intel's PCK key population |
+| `qe_attestation_chain_implies_signed_by_qe` (cycle 7.3.c) | QE attestation chain → signed_by_qe witness |
+| `signed_by_qe_implies_pck_chain_witnesses` (cycle 7.14) | reverse direction; excludes vacuous predicate model |
+| `qe_signed_tcb_match_implies_signed_by_dstack` (cycle 7.3.c) | genuine-QE + TCB-current + QE-id-match → dstack TEE |
+
+These are the substantive cryptographic trust commitments. Each
+corresponds to a standard Intel SGX / DCAP architectural assumption.
+
+**Deployment-side commitments (4)**
+| Name | Commitment |
+|---|---|
+| `productionCollateral` (cycle 7.5) | the deployer's Intel-issued collateral bundle exists |
+| `productionCollateral_fresh` (cycle 7.5) | that bundle's TCB info is in its next-update window |
+| `signed_quotes_anchor_to_production_collateral` (cycle 7.14, weakened) | dstack-signed quotes recently signed under current chain anchor to productionCollateral |
+| `productionCollateral_rotation_invariant` (cycle 7.14) | deployer rotates productionCollateral so all dstack-signed quotes are recently-signed against it |
+
+NOTE: per cycle 7.20 H2 retraction, the combination of the last two
+is informationally equivalent to a single universal-anchoring axiom.
+The decomposition is structural naming, not semantic narrowing.
+
+**Completeness (1)**
+| Name | Asserts |
+|---|---|
+| `dcapVerifier_complete` (cycle 7.3/7.8) | genuine quote + chain-anchored + fresh col → verifyDcap returns some |
+
+**External-module dependencies (1)**
+| Name | Source |
+|---|---|
+| `Zkdcap.groth16Verifier` | Groth16 verifier trust assumption (cycle 5 bundle) |
+
+**Lean standard axioms (3)**: `propext`, `Classical.choice`, `Quot.sound`.
+
+Total per-theorem closure of `handshake_sound_pinned`: ~22 entries
+across 7 categories. Auditing scope: 6 predicate carriers (each
+adds zero truth-content), 6 parser-layout assertions (cross-check
+vs production parser), 4 cryptographic crypto-primitive axioms (standard
+SGX assumptions), 4 deployment-side commitments (deployer obligations,
+two of which sum to a single universal claim), 1 completeness axiom,
+1 external module crypto axiom, 3 standard Lean axioms.
+
 -/
 
 namespace Specs.Quartz.Attestation.DcapVerifier
