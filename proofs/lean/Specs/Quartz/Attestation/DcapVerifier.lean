@@ -4,6 +4,7 @@ Released under Apache 2.0 license.
 -/
 
 import Specs.Quartz.Attestation.DstackCarriers
+import Specs.Quartz.Attestation.ByteUnpacking
 
 /-!
 # Reference DCAP verifier in Lean
@@ -73,6 +74,7 @@ Cycle 7.4 (queued): bridge to `TdxVerifier n` so the existing
 namespace Specs.Quartz.Attestation.DcapVerifier
 
 open Specs.Quartz.Attestation.Dstack
+export Specs.Quartz.Attestation.ByteUnpacking (extractBitVec extractBitVec_take)
 
 /-! ## Wire-format byte-level types -/
 
@@ -248,41 +250,23 @@ cryptographically-load-bearing auth-data fields (attestationKey,
 qeReport, certificateData) are pinned in cycle 7.8 (queued — they
 require modelling the variable-length auth-data layout). -/
 
-/-- **Helper opaque (cycle 7.7)**: extract a `BitVec width` from a
-    `RawBytes` buffer at byte offset `offset`. Operationally this is
-    little-endian byte unpacking (matching `checkTcbLevel`'s
-    convention from cycle 7.2.b). Opaque at this layer because the
-    production parser's bit-unpacking discipline is not in-Lean
-    derivable without a wire-format library; the parser-field axioms
-    below pin the parsed structure fields to specific applications
-    of this extractor.
+/-! ### Cycle 7.19.b — `extractBitVec` and `extractBitVec_take`
 
-    **Cycle 7.19 attempt (review H2)**: tried to make this a `def`
-    with concrete `bytes.foldr ...` body so `extractBitVec_take` would
-    be a theorem rather than axiom. Blocked: the `extractBitVec_take`
-    proof needs mathlib's `set` tactic + `List.take_take` / `List.drop_take`
-    rewriting which require importing additional Mathlib tactic
-    files into `DcapVerifier.lean`, and those imports cascade through
-    DstackCarriers's no-VCVio-imports discipline (see file header
-    NOTE). Documented as a deferred refinement; the audit-bearing
-    cost is that `extractBitVec` + `extractBitVec_take` remain
-    opaque + axiom rather than def + theorem. -/
-opaque extractBitVec (raw : RawBytes) (offset width : Nat) : BitVec width
+These were previously `opaque` and `axiom` in this module (cycles
+7.7-7.18). Cycle 7.19.b moves them to a new module
+`Specs.Quartz.Attestation.ByteUnpacking` where the proof of
+`extractBitVec_take` can use Mathlib tactics without the cascade
+through `Dstack.lean` / `DstackCarriers.lean`. The bare def +
+theorem are re-exported via the `open` clause above.
 
-/-- **Structural property (cycle 7.13)**: extracting a `BitVec` from a
-    prefix of `raw` equals extracting from the full `raw` when the
-    requested window `[offset, offset + ⌈width/8⌉)` lies entirely
-    within the prefix `[0, k)`. Captures the elementary "extraction
-    is local to the requested window" property of any well-defined
-    byte unpacker.
+Audit consequence: `extractBitVec` is no longer in the axiom closure
+of any cycle 7.x theorem; `extractBitVec_take` is a derived theorem,
+not an axiom. The cycle-7.13 binding theorem and its downstream
+Protocol consumers (cycles 7.15-7.17) now lose two entries from
+their closures.
 
-    Used by `verifyDcap_output_committed_by_signed_region` (below)
-    to argue that the verified `(mr, ud)` are functions of the
-    `signedRegion = raw.take 632` (i.e., the ECDSA-signed bytes),
-    not of any post-632 portion of `raw`. -/
-axiom extractBitVec_take (raw : RawBytes) (offset width k : Nat) :
-    offset + (width + 7) / 8 ≤ k →
-    extractBitVec raw offset width = extractBitVec (raw.take k) offset width
+Reference: `Specs/Quartz/Attestation/ByteUnpacking.lean` for the
+def + theorem; this file consumes only the bare names. -/
 
 /-- **Structural invariant (cycle 7.14, addresses review H4)**: a
     successful parse implies the wire-format header gates accepted by
