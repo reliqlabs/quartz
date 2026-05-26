@@ -655,9 +655,22 @@ export Specs.Quartz.Attestation.ByteUnpacking (qeReportBytes)
     Operationally: `qeReportBytes` is little-endian byte unpacking of
     a 384*8-bit vector into 384 bytes. When the input BitVec was
     little-endian-packed from `raw[offset..offset+384]` (via
-    `extractBitVec`), the unpacking returns the original bytes. -/
+    `extractBitVec`), the unpacking returns the original bytes.
+
+    **Cycle 7.25a SOUNDNESS FIX**: the previous unconditional form
+    `qeReportBytes ... = (raw.drop offset).take 384` was inconsistent
+    when `raw.length < offset + 384` — the LHS always has 384
+    elements (qeReportBytes returns 384 bytes), but the RHS has
+    `min 384 (raw.length - offset) < 384`, so the equation forces
+    `[0;..;0] = []` from which `False` follows via `List.length`.
+    Adding the `offset + 384 ≤ raw.length` precondition makes the
+    statement consistent for all inputs. Callers discharge the
+    precondition via `parseDcapQuote_authData_length_valid` (which
+    gives `raw.length ≥ 1226`, sufficient for the cycle 7.12
+    qeReport offset 770 + 384 = 1154). -/
 axiom qeReportBytes_extractBitVec_eq
     (raw : RawBytes) (offset : Nat) :
+    offset + 384 ≤ raw.length →
     qeReportBytes (extractBitVec raw offset (384 * 8))
       = (raw.drop offset).take 384
 
@@ -1298,8 +1311,17 @@ theorem verifyDcap_qeReportBytes_eq_raw_slice
     | some q => exact ⟨q, rfl⟩
   obtain ⟨q, h_parse⟩ := h_parse_some
   refine ⟨q, h_parse, ?_⟩
+  -- Cycle 7.25a: qeReportBytes_extractBitVec_eq now requires a
+  -- length precondition (offset + 384 ≤ raw.length). Discharge via
+  -- the cycle 7.20 length-validity axiom: parseDcapQuote_authData
+  -- _length_valid gives raw.length ≥ 1226 + qeAuthLen + innerCertBodySize
+  -- ≥ 1226 > 770 + 384 = 1154.
+  have h_len : 770 + 384 ≤ raw.length := by
+    have := parseDcapQuote_authData_length_valid raw q h_parse
+    simp only at this
+    omega
   rw [parseDcapQuote_qeReport_eq raw q h_parse,
-      qeReportBytes_extractBitVec_eq]
+      qeReportBytes_extractBitVec_eq raw 770 h_len]
 
 /-- **Derived theorem (cycle 7.14, makes header/certType axioms
     load-bearing)**: `verifyDcap`'s acceptance implies the parsed
