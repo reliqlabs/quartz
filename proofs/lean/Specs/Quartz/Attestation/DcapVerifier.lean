@@ -405,6 +405,52 @@ axiom parseDcapQuote_qeReport_eq
     parseDcapQuote raw = some q →
     q.authData.qeReport = extractBitVec raw 770 (384 * 8)
 
+/-! ### Cycle 7.18 — variable-offset cert-data field pinning
+
+The cycle 7.7/7.9/7.11/7.12 axioms cover every fixed-offset field
+consumed by `verifyDcap`'s substep chain. The remaining
+parser-decoupling surface is the variable-length `qeAuthData` (whose
+length is read from a 2-byte LE u16 at raw[1218..1220]) and
+`certificateData` (which starts at offset `1226 + qeAuthLen`). Cycle
+7.18 closes both via axioms that thread the parsed length value. -/
+
+/-- **Structural invariant (cycle 7.18)**: the `qeAuthData` field is
+    pinned to a raw byte slice starting at offset 1220, of length
+    given by the LE u16 at raw[1218..1220].
+
+    The slice length is expressed as `(extractBitVec raw 1218 16).toNat`
+    so the axiom carries the parsed-length dependency explicitly.
+
+    Reference: `zkdcap/circuits/dcap-gnark/witness/quote.go:122-129`
+    `authLen := binary.LittleEndian.Uint16(data[448:450])` where
+    `data` is certBody starting at raw[770], so the length-prefix is
+    at absolute raw[770+448:770+450] = raw[1218:1220]. The slice is
+    `data[off:off+authLen]` for `off := 450` → absolute raw[1220:1220+authLen]. -/
+axiom parseDcapQuote_qeAuthData_eq
+    (raw : RawBytes) (q : DcapQuote) :
+    parseDcapQuote raw = some q →
+    q.authData.qeAuthData =
+      (raw.drop 1220).take (extractBitVec raw 1218 16).toNat
+
+/-- **Structural invariant (cycle 7.18)**: the `certificateData` field
+    is pinned to a raw byte slice starting at offset
+    `1226 + qeAuthLen` (the 6-byte gap is the inner CertificationData
+    header: 2-byte cert_type + 4-byte certBodySize). The length is
+    the parsed `innerCertBodySize` value.
+
+    Reference: `zkdcap/circuits/dcap-gnark/witness/quote.go:132-141`
+    `off += authLen; innerCertBodySize := binary.LittleEndian.Uint32(data[off+2:off+6]); q.CertificateData = data[off+6:off+6+innerCertBodySize]`.
+    Absolute: cert-data offset = 770 + 450 + qeAuthLen + 6 = 1226 + qeAuthLen.
+    Length = LE u32 at raw[1226 + qeAuthLen - 4 : 1226 + qeAuthLen] =
+    raw[1222 + qeAuthLen : 1226 + qeAuthLen]. -/
+axiom parseDcapQuote_certificateData_eq
+    (raw : RawBytes) (q : DcapQuote) :
+    parseDcapQuote raw = some q →
+    let qeAuthLen := (extractBitVec raw 1218 16).toNat
+    q.authData.certificateData =
+      (raw.drop (1226 + qeAuthLen)).take
+        (extractBitVec raw (1222 + qeAuthLen) 32).toNat
+
 /-- **Structural invariant (cycle 7.12)**: a successful parse sets
     `q.authData.qeReportSignature` to the BitVec extracted from `raw`
     at the QE report signature slot.
@@ -1054,6 +1100,40 @@ theorem verifyDcap_output_committed_by_signed_region
       exact extractBitVec_take raw 568 512 632 (by decide)
     · simp only [dif_neg hn] at h_ud ⊢
       rw [h_ud, extractBitVec_take raw 568 512 632 (by decide)]
+
+/-- **Derived theorem (cycle 7.18)**: `verifyDcap`'s acceptance
+    implies the parsed quote's variable-offset auth-data fields
+    (`qeAuthData`, `certificateData`) are functions of raw input
+    bytes, with offsets and lengths threaded through parsed length
+    values at raw[1218..1220].
+
+    Combined with the cycle 7.11/7.12 fixed-offset axioms, every
+    parsed `DcapQuote` field is now provably a function of `raw`.
+    The cycle-7.x parser-decoupling attack surface is fully closed
+    at the field level: an adversarial `parseDcapQuote` cannot set
+    any output field to a value independent of the input bytes. -/
+theorem verifyDcap_authData_variable_fields_bound_to_input
+    (n : Nat) (raw : RawBytes) (col : Collateral)
+    (mr : MrEnclave) (ud : UserData n) :
+    verifyDcap n raw col = some (mr, ud) →
+    ∃ q, parseDcapQuote raw = some q ∧
+      q.authData.qeAuthData =
+        (raw.drop 1220).take (extractBitVec raw 1218 16).toNat ∧
+      q.authData.certificateData =
+        (raw.drop (1226 + (extractBitVec raw 1218 16).toNat)).take
+          (extractBitVec raw (1222 + (extractBitVec raw 1218 16).toNat) 32).toNat := by
+  intro h_acc
+  have h_parse_some : ∃ q, parseDcapQuote raw = some q := by
+    cases hp : parseDcapQuote raw with
+    | none =>
+      unfold verifyDcap at h_acc
+      rw [hp] at h_acc
+      simp at h_acc
+    | some q => exact ⟨q, rfl⟩
+  obtain ⟨q, h_parse⟩ := h_parse_some
+  exact ⟨q, h_parse,
+    parseDcapQuote_qeAuthData_eq raw q h_parse,
+    parseDcapQuote_certificateData_eq raw q h_parse⟩
 
 /-- **Derived theorem (cycle 7.16)**: a successful `verifyDcap`
     accepts only quotes whose QE-report bytes (as fed to ECDSA via
