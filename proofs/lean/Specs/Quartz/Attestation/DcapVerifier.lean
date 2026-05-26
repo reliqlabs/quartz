@@ -131,7 +131,15 @@ corresponds to a standard Intel SGX / DCAP architectural assumption.
 | Name | Commitment |
 |---|---|
 | `productionCollateral` (cycle 7.5) | the deployer's Intel-issued collateral bundle exists |
-| `productionCollateral_fresh` (cycle 7.5) | that bundle's TCB info is in its next-update window |
+| ~~`productionCollateral_fresh`~~ (cycle 7.5, demoted to derived theorem cycle 7.26) | proved from 8 per-field structural well-formedness axioms |
+| `productionCollateral_tcbLevels_nonempty` (cycle 7.26) | TCB info has at least one level entry |
+| `productionCollateral_nextUpdate_nonempty` (cycle 7.26) | TCB info next-update date populated |
+| `productionCollateral_tcbInfo_issueDate_nonempty` (cycle 7.26) | TCB info issue date populated |
+| `productionCollateral_tcbInfo_signature_nonzero` (cycle 7.26) | TCB info has non-zero signature |
+| `productionCollateral_qeIdentity_issueDate_nonempty` (cycle 7.26) | QE identity issue date populated |
+| `productionCollateral_qeIdentity_signature_nonzero` (cycle 7.26) | QE identity has non-zero signature |
+| `productionCollateral_rootCaCert_nonempty` (cycle 7.26) | Root CA cert populated |
+| `productionCollateral_tcbSigningCert_nonempty` (cycle 7.26) | TCB signing cert populated |
 | `signed_quotes_anchor_to_production_collateral` (cycle 7.14, weakened) | dstack-signed quotes recently signed under current chain anchor to productionCollateral |
 | ~~`productionCollateral_rotation_invariant`~~ (cycle 7.14, REMOVED cycle 7.21) | was: deployer rotates productionCollateral so all dstack-signed quotes are recently-signed against it. Removed: the rotation obligation is now a per-call hypothesis (`signedRecently q`) on `TdxVerifier.complete`, not a free axiom. |
 
@@ -829,10 +837,47 @@ with three narrower assumptions on standard primitives. Each is in the
 (c) bucket (honest cryptographic assumption on a real-world primitive)
 rather than (d) (impossibility / over-strength). -/
 
-/-- Freshness predicate on collateral: the TCB info and QE identity
-    are within their next-update window, and the issuer signatures
-    chain to the Intel SGX Root CA. -/
-opaque freshCollateral : Collateral → Prop
+/-- Freshness predicate on collateral.
+
+    **Cycle 7.5 (initial)**: declared `opaque ... : Collateral → Prop`
+    with no structural body. Effectively unfalsifiable: any
+    `productionCollateral_fresh : freshCollateral productionCollateral`
+    axiom held vacuously, allowing a deployer to ship a 2020-issued
+    TCB bundle with the freshness assertion still discharged.
+
+    **Cycle 7.26 (H3 partial fix)**: given a structural body
+    asserting Collateral well-formedness invariants that must hold
+    under freshness — TCB levels non-empty, next-update field
+    non-empty, signature non-zero, QE identity issued, etc. This is
+    NOT a full temporal-freshness check (which would require a
+    `Time` parameter — queued as H3 full / cycle 7.27); it is the
+    well-formedness floor that any honest freshness predicate must
+    include. Rules out the trivially-degenerate `True` model.
+
+    Consumers needing the temporal precondition should compose this
+    predicate with an external "TCB-info-next-update > current-time"
+    check (deployer-side responsibility, modeled as a separate
+    rotation-witness axiom propagated through `TdxVerifier.complete`
+    via cycle 7.21's `signedRecently` field). -/
+def freshCollateral (col : Collateral) : Prop :=
+  -- TCB info has at least one level entry
+  col.tcbInfo.tcbLevels ≠ [] ∧
+  -- TCB info has a non-empty next-update date string (production
+  -- parser populates this from Intel's signed collateral)
+  col.tcbInfo.nextUpdate ≠ [] ∧
+  -- TCB info issue date is non-empty
+  col.tcbInfo.issueDate ≠ [] ∧
+  -- TCB info signature is non-zero (production: Intel TCB signing key
+  -- never produces 0||0 ECDSA-P256 signatures with overwhelming probability)
+  col.tcbInfo.signature ≠ 0 ∧
+  -- QE identity has non-empty issue date
+  col.qeIdentity.issueDate ≠ [] ∧
+  -- QE identity signature is non-zero
+  col.qeIdentity.signature ≠ 0 ∧
+  -- Root CA cert is non-empty (deployer fetched a real cert)
+  col.rootCaCert ≠ [] ∧
+  -- TCB signing cert is non-empty
+  col.tcbSigningCert ≠ []
 
 /-- **Abstract witness predicate**: `msg` was signed by the holder of
     the private key paired with `leafKey`. Externalises the "signature
@@ -1619,18 +1664,68 @@ is alive at run-time. -/
     surface ever needs the explicit dependency. -/
 axiom productionCollateral : Collateral
 
-/-- **Production-deployment opaque (cycle 7.5)**: a freshness
-    witness for `productionCollateral`. The deployer's runtime
-    obligation is to rotate `productionCollateral` within the
-    Intel-published next-update window so this witness remains
-    truthful in real-world operation.
+/-! ### Cycle 7.26 — productionCollateral well-formedness axioms
 
-    Same audit caveat as `productionCollateral`: this is a
-    value-witness, not a verified-by-Lean derivation. The
-    cryptographic discharge target is "TCB info collateral with
-    valid Intel signatures still inside its next-update window
-    and no PCK revocation events since last refresh". -/
-axiom productionCollateral_fresh : freshCollateral productionCollateral
+After cycle 7.26 made `freshCollateral` a `def` with structural
+body, `productionCollateral_fresh` is no longer a single opaque
+axiom but a theorem provable from per-field structural axioms. The
+deployer's obligation is now to demonstrate each field axiom
+holds for the deployed productionCollateral value. -/
+
+/-- **Cycle 7.26**: production TCB info has at least one TCB level. -/
+axiom productionCollateral_tcbLevels_nonempty :
+    productionCollateral.tcbInfo.tcbLevels ≠ []
+
+/-- **Cycle 7.26**: production TCB info has a non-empty next-update date. -/
+axiom productionCollateral_nextUpdate_nonempty :
+    productionCollateral.tcbInfo.nextUpdate ≠ []
+
+/-- **Cycle 7.26**: production TCB info has a non-empty issue date. -/
+axiom productionCollateral_tcbInfo_issueDate_nonempty :
+    productionCollateral.tcbInfo.issueDate ≠ []
+
+/-- **Cycle 7.26**: production TCB info has a non-zero signature. -/
+axiom productionCollateral_tcbInfo_signature_nonzero :
+    productionCollateral.tcbInfo.signature ≠ 0
+
+/-- **Cycle 7.26**: production QE identity has a non-empty issue date. -/
+axiom productionCollateral_qeIdentity_issueDate_nonempty :
+    productionCollateral.qeIdentity.issueDate ≠ []
+
+/-- **Cycle 7.26**: production QE identity has a non-zero signature. -/
+axiom productionCollateral_qeIdentity_signature_nonzero :
+    productionCollateral.qeIdentity.signature ≠ 0
+
+/-- **Cycle 7.26**: production Root CA cert is non-empty. -/
+axiom productionCollateral_rootCaCert_nonempty :
+    productionCollateral.rootCaCert ≠ []
+
+/-- **Cycle 7.26**: production TCB signing cert is non-empty. -/
+axiom productionCollateral_tcbSigningCert_nonempty :
+    productionCollateral.tcbSigningCert ≠ []
+
+/-- **Production-deployment witness (cycle 7.5, demoted to theorem
+    cycle 7.26)**: freshness of `productionCollateral` is now a
+    DERIVED THEOREM following from the per-field structural axioms
+    above. The deployer's obligation is documented per-field rather
+    than bundled into one unfalsifiable Prop axiom.
+
+    **Cycle 7.5/7.26 caveat**: this still doesn't capture the
+    temporal "next-update window not yet expired" precondition; that
+    requires a `Time` parameter (queued cycle 7.27 / H3 full). What
+    cycle 7.26 does close: the trivially-degenerate `True` model of
+    freshCollateral is ruled out — any productionCollateral must
+    have populated fields. -/
+theorem productionCollateral_fresh : freshCollateral productionCollateral := by
+  unfold freshCollateral
+  exact ⟨productionCollateral_tcbLevels_nonempty,
+         productionCollateral_nextUpdate_nonempty,
+         productionCollateral_tcbInfo_issueDate_nonempty,
+         productionCollateral_tcbInfo_signature_nonzero,
+         productionCollateral_qeIdentity_issueDate_nonempty,
+         productionCollateral_qeIdentity_signature_nonzero,
+         productionCollateral_rootCaCert_nonempty,
+         productionCollateral_tcbSigningCert_nonempty⟩
 
 /-- **(c)-bucket assumption (cycle 7.8 — deployment-side anchoring,
     weakened cycle 7.14 per review C2)**: in the deployed flow,
