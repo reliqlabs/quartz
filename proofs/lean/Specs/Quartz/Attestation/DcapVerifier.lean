@@ -255,7 +255,18 @@ require modelling the variable-length auth-data layout). -/
     production parser's bit-unpacking discipline is not in-Lean
     derivable without a wire-format library; the parser-field axioms
     below pin the parsed structure fields to specific applications
-    of this extractor. -/
+    of this extractor.
+
+    **Cycle 7.19 attempt (review H2)**: tried to make this a `def`
+    with concrete `bytes.foldr ...` body so `extractBitVec_take` would
+    be a theorem rather than axiom. Blocked: the `extractBitVec_take`
+    proof needs mathlib's `set` tactic + `List.take_take` / `List.drop_take`
+    rewriting which require importing additional Mathlib tactic
+    files into `DcapVerifier.lean`, and those imports cascade through
+    DstackCarriers's no-VCVio-imports discipline (see file header
+    NOTE). Documented as a deferred refinement; the audit-bearing
+    cost is that `extractBitVec` + `extractBitVec_take` remain
+    opaque + axiom rather than def + theorem. -/
 opaque extractBitVec (raw : RawBytes) (offset width : Nat) : BitVec width
 
 /-- **Structural property (cycle 7.13)**: extracting a `BitVec` from a
