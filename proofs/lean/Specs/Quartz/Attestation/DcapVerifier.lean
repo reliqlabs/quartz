@@ -1741,6 +1741,19 @@ axiom productionCollateral_rootCaCert_nonempty :
 axiom productionCollateral_tcbSigningCert_nonempty :
     productionCollateral.tcbSigningCert ≠ []
 
+/-- **Cycle 7.27**: production collateral's parsed nextUpdate is
+    after the Unix epoch (i.e., not the degenerate 0 value).
+
+    Without this floor, a malicious or careless deployer could supply
+    a `productionCollateral` whose `nextUpdate_at = 0`, in which case
+    `freshAt t productionCollateral := freshCollateral _ ∧ t ≤ 0`
+    would fail for any positive contract-side `t` — defeating
+    completeness silently. This axiom rules out the degenerate case;
+    real deployers cannot satisfy it without supplying a real Intel
+    TCB info with a meaningful nextUpdate date. -/
+axiom productionCollateral_nextUpdate_at_post_epoch :
+    0 < nextUpdate_at productionCollateral
+
 /-- **Production-deployment witness (cycle 7.5, demoted to theorem
     cycle 7.26)**: freshness of `productionCollateral` is now a
     DERIVED THEOREM following from the per-field structural axioms
