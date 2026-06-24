@@ -79,6 +79,7 @@ pub struct RawConfig {
     pub mr_enclave: MrEnclave,
     pub zkdcap_vkey: u64,  // 0 ⇒ "no vkey configured" (empty string in prod)
     pub min_tcb_eval_num: u64, // monotonic TCB-recency floor (0 ⇒ no floor)
+    pub expected_rtmr3: Option<MrEnclave>, // None ⇒ rtmr3 binding skipped
 }
 
 #[derive(PartialEq, Eq)]
@@ -86,6 +87,7 @@ pub struct Config {
     pub mr_enclave: MrEnclave,
     pub zkdcap_vkey: u64,
     pub min_tcb_eval_num: u64,
+    pub expected_rtmr3: Option<MrEnclave>,
 }
 
 impl Config {
@@ -107,6 +109,11 @@ impl Config {
     pub fn min_tcb_eval_num(&self) -> (m: u64)
         ensures m == self.spec_min_tcb_eval_num(),
     { self.min_tcb_eval_num }
+
+    pub open spec fn spec_expected_rtmr3(&self) -> Option<MrEnclave> { self.expected_rtmr3 }
+    pub fn expected_rtmr3(&self) -> (r: Option<MrEnclave>)
+        ensures r == self.spec_expected_rtmr3(),
+    { self.expected_rtmr3 }
 }
 
 pub enum Error {
@@ -144,6 +151,7 @@ impl Item {
                     &&& c.mr_enclave == raw.mr_enclave
                     &&& c.zkdcap_vkey == raw.zkdcap_vkey
                     &&& c.min_tcb_eval_num == raw.min_tcb_eval_num
+                    &&& c.expected_rtmr3 == raw.expected_rtmr3
                 }
                 Ok(None) => storage.config.is_none(),
                 Err(e) => e is Std,
@@ -154,6 +162,7 @@ impl Item {
                 mr_enclave: raw.mr_enclave,
                 zkdcap_vkey: raw.zkdcap_vkey,
                 min_tcb_eval_num: raw.min_tcb_eval_num,
+                expected_rtmr3: raw.expected_rtmr3,
             })),
             None => Ok(None),
         }
@@ -407,9 +416,11 @@ pub fn attested_handle_with_fallible_att(
 //      predicate over the public inputs + now_packed; the production split is
 //      in `quartz_zkdcap::verify_quote_parts`.) NEW under UltraHonk: the
 //      circuit has no clock/counter, so staleness is the consumer's decision.
-//   3. proof_public_inputs_binds — the public inputs encode the expected
-//      report_data (== user_data) and rtmr3/compose_hash. Round D Critical 4;
-//      now IMPLEMENTED in production (check_zk_bindings), no longer a hook.
+//   3. binding (Round D Critical 4, IMPLEMENTED in production check_zk_bindings):
+//      proof_binds_report_data (report_data == user_data) is enforced ALWAYS;
+//      proof_binds_rtmr3 (rtmr3 == config.expected_rtmr3) is enforced only when
+//      the config pins expected_rtmr3, so the Ok postcondition models it as a
+//      conditional implication (audit-2026-06-24 fidelity fix).
 
 pub struct DstackZkAttestation {
     pub zkdcap_proof: u64,         // opaque blob; only encoded, not inspected
@@ -427,26 +438,36 @@ pub uninterp spec fn zk_query_verify_succeeded(
 ) -> bool;
 
 // Spec-level uninterpreted predicate for the recency/validity gate: chain
-// time `now_packed` lies inside the proof's proven validity window AND the
-// public inputs' tcb_eval_num is at or above the monotonic floor. Production:
-// the range-check + floor check inside `quartz_zkdcap::verify_quote_parts`.
+// time `now_packed` lies inside the proof's proven validity window AND
+// min(tcb_eval_num, qe_eval_num) is at or above the monotonic floor (issue #4
+// split the counter in two; the floor is on the smaller). Production: the
+// range-check + floor check inside `quartz_zkdcap::verify_quote_parts`.
 pub uninterp spec fn recency_ok(
     public_inputs: u64,
     now_packed: u64,
     min_tcb_eval: u64,
 ) -> bool;
 
-// Spec-level uninterpreted predicate for "the proof's public inputs encode
-// the expected user_data and compose_hash." Under UltraHonk the production
-// handler enforces this by decoding the packed `zkdcap_public_inputs` and
-// verify-equaling the decoded report_data against `user_data` and the decoded
-// rtmr3 against the pinned compose_hash (`check_zk_bindings`). Round D
-// Critical 4 — implemented.
-pub uninterp spec fn proof_public_inputs_binds(
+// Spec-level uninterpreted predicate: the proof's public inputs encode the
+// expected report_data (== wrapper user_data). Production `check_zk_bindings`
+// enforces this UNCONDITIONALLY.
+pub uninterp spec fn proof_binds_report_data(
     proof: u64,
     public_inputs: u64,
-    expected_compose_hash: MrEnclave,
     expected_user_data: UserData,
+) -> bool;
+
+// Spec-level uninterpreted predicate: the proof's public-inputs rtmr3 equals
+// the on-chain-pinned `config.expected_rtmr3`. Production `check_zk_bindings`
+// enforces this ONLY when `config.expected_rtmr3` is Some — see the conditional
+// in `dstack_zk_handle` below. Modeling it conditionally (rather than always)
+// is the audit-2026-06-24 fidelity fix: the prior unconditional model claimed a
+// stronger property than the code delivers in the default (expected_rtmr3=None)
+// deployment.
+pub uninterp spec fn proof_binds_rtmr3(
+    proof: u64,
+    public_inputs: u64,
+    expected_rtmr3: MrEnclave,
 ) -> bool;
 
 // External-body stub for the gRPC query + decode pipeline. Returns:
@@ -489,20 +510,36 @@ pub fn check_recency(
     unimplemented!()
 }
 
-// External-body stub for the public-inputs decoding + verify-equal step.
-// Returns Ok iff the proof's encoded report_data and rtmr3 match the supplied
-// expected values. Production: `check_zk_bindings` in
-// crates/contracts/core/src/handler/execute/attested.rs.
+// External-body stub: decode the public inputs and verify-equal report_data
+// against the wrapper user_data. Production: the always-run report_data check in
+// `check_zk_bindings`.
 #[verifier::external_body]
-pub fn verify_public_inputs_binds(
+pub fn verify_binds_report_data(
     proof: u64,
     public_inputs: u64,
-    expected_compose_hash: MrEnclave,
     expected_user_data: UserData,
 ) -> (r: Result<(), Error>)
     ensures
         match r {
-            Ok(()) => proof_public_inputs_binds(proof, public_inputs, expected_compose_hash, expected_user_data),
+            Ok(()) => proof_binds_report_data(proof, public_inputs, expected_user_data),
+            Err(_) => true,
+        },
+{
+    unimplemented!()
+}
+
+// External-body stub: decode the public inputs and verify-equal rtmr3 against
+// the pinned `config.expected_rtmr3`. Production: the conditional rtmr3 check in
+// `check_zk_bindings` (only run when expected_rtmr3 is Some).
+#[verifier::external_body]
+pub fn verify_binds_rtmr3(
+    proof: u64,
+    public_inputs: u64,
+    expected_rtmr3: MrEnclave,
+) -> (r: Result<(), Error>)
+    ensures
+        match r {
+            Ok(()) => proof_binds_rtmr3(proof, public_inputs, expected_rtmr3),
             Err(_) => true,
         },
 {
@@ -519,17 +556,21 @@ pub fn dstack_zk_handle(
             Ok(_) => {
                 // Either the vkey was unset (skipped) or the vkey was set AND
                 // the verifier said yes AND the recency/validity gate passed
-                // AND the proof's public inputs bind back to the
-                // wrapper-validated user_data and compose_hash.
+                // AND report_data is bound (ALWAYS) AND — only when the config
+                // pins expected_rtmr3 — rtmr3 is bound to that pinned value.
+                // The rtmr3 conjunct is a conditional implication, faithfully
+                // mirroring production (default expected_rtmr3=None ⇒ skipped).
                 &&& old(storage).config matches Some(raw)
                 &&& (raw.zkdcap_vkey == 0
                      || (zk_query_verify_succeeded(msg.zkdcap_proof, msg.zkdcap_public_inputs, raw.zkdcap_vkey)
                          && recency_ok(msg.zkdcap_public_inputs, now_packed, raw.min_tcb_eval_num)
-                         && proof_public_inputs_binds(msg.zkdcap_proof, msg.zkdcap_public_inputs, msg.compose_hash, msg.user_data)))
+                         && proof_binds_report_data(msg.zkdcap_proof, msg.zkdcap_public_inputs, msg.user_data)
+                         && (raw.expected_rtmr3 matches Some(e)
+                             ==> proof_binds_rtmr3(msg.zkdcap_proof, msg.zkdcap_public_inputs, e))))
             }
             Err(Error::ZkdcapVerificationFailed) => {
                 // Vkey was set AND (verifier said no OR recency failed OR
-                // encode/decode failed OR the binding check failed).
+                // encode/decode failed OR a binding check failed).
                 &&& old(storage).config matches Some(raw)
                 &&& raw.zkdcap_vkey != 0
             }
@@ -555,29 +596,36 @@ pub fn dstack_zk_handle(
         Err(_) => return Err(Error::ZkdcapVerificationFailed),
     }
 
-    // Gate 2 (UltraHonk recency): chain time must lie inside the proven
-    // validity window and tcb_eval_num must clear the monotonic floor. The
-    // circuit proves the window but has no clock/counter, so this decision is
-    // the consumer's.
+    // Gate 2 (UltraHonk recency): chain time must lie inside the proven validity
+    // window and min(tcb_eval_num, qe_eval_num) must clear the monotonic floor.
+    // The circuit proves the window but has no clock/counter, so this decision
+    // is the consumer's.
     match check_recency(msg.zkdcap_public_inputs, now_packed, config.min_tcb_eval_num()) {
         Ok(()) => {}
         Err(_) => return Err(Error::ZkdcapVerificationFailed),
     }
 
-    // Gate 3 (Round D Critical 4): the proof's public inputs must encode the
-    // wrapper-validated user_data and compose_hash. Without this check, an
-    // attacker can submit a valid proof for a different enclave while
-    // self-declaring user_data and compose_hash that match the wrapper's
-    // expectations.
-    match verify_public_inputs_binds(
-        msg.zkdcap_proof,
-        msg.zkdcap_public_inputs,
-        msg.compose_hash,
-        msg.user_data,
-    ) {
-        Ok(()) => Ok(Response::new().add_attribute("action", "zkdcap_verified")),
-        Err(_) => Err(Error::ZkdcapVerificationFailed),
+    // Gate 3a (Round D Critical 4, ALWAYS): the proof's public inputs must
+    // encode the wrapper-validated user_data (report_data binding). Without it
+    // an attacker could submit a valid proof for a different attested payload.
+    match verify_binds_report_data(msg.zkdcap_proof, msg.zkdcap_public_inputs, msg.user_data) {
+        Ok(()) => {}
+        Err(_) => return Err(Error::ZkdcapVerificationFailed),
     }
+
+    // Gate 3b (CONDITIONAL): when the config pins expected_rtmr3, the proof's
+    // rtmr3 must equal it (wrong-image binding). When None, skipped — the
+    // documented backwards-compat residual vector; the Ok postcondition's rtmr3
+    // conjunct is correspondingly conditional.
+    match config.expected_rtmr3() {
+        Some(e) => match verify_binds_rtmr3(msg.zkdcap_proof, msg.zkdcap_public_inputs, e) {
+            Ok(()) => {}
+            Err(_) => return Err(Error::ZkdcapVerificationFailed),
+        },
+        None => {}
+    }
+
+    Ok(Response::new().add_attribute("action", "zkdcap_verified"))
 }
 
 // ── Trivial handler harness (DstackAttestation / MockAttestation / Noop /

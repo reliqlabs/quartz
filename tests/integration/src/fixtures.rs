@@ -125,14 +125,14 @@ impl ZkdcapFixture {
 
 /// UltraHonk fixture data for the ProofVerifyUltraHonk endpoint.
 ///
-/// `public_inputs_bytes` is the packed 640-byte / 20-field dcap-noir blob built
+/// `public_inputs_bytes` is the packed 672-byte / 21-field dcap-noir blob built
 /// via the canonical `quartz_zkdcap::build_public_inputs`, so the bytes match
 /// exactly what the contract decodes. `proof_bytes` is synthetic (the mock does
 /// not run the real verifier).
 pub struct UltraHonkFixture {
     /// Synthetic UltraHonk proof bytes (non-empty, realistic length).
     pub proof_bytes: Vec<u8>,
-    /// Packed 640-byte / 20-field public inputs.
+    /// Packed 672-byte / 21-field public inputs.
     pub public_inputs_bytes: Vec<u8>,
     pub compose_hash: [u8; 32],
     pub quote_bytes: Vec<u8>,
@@ -155,12 +155,14 @@ impl UltraHonkFixture {
         }
 
         // Packed public inputs via the canonical builder: tcb_status=UpToDate(0),
-        // a fixed timestamp, tcb_eval_num=17, and a wide-open validity window.
+        // a fixed timestamp, tcb_eval_num=17, qe_eval_num=17, and a wide-open
+        // validity window.
         let public_inputs_bytes = quartz_zkdcap::build_public_inputs(
             &measurements,
             &user_data,
             0,
             1_713_052_800,
+            17,
             17,
             0,
             u64::MAX,

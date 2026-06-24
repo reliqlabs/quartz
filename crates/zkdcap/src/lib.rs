@@ -3,7 +3,7 @@
 //! This crate owns everything application-INDEPENDENT about consuming a
 //! dcap-noir UltraHonk proof on-chain:
 //!
-//! - the packed 640-byte / 20-field `public_inputs` layout and its decoders
+//! - the packed 672-byte / 21-field `public_inputs` layout and its decoders
 //!   ([`layout`]): `extract_report_data`, `extract_measurements`,
 //!   `extract_timestamp`, `extract_tcb_eval_num`, `extract_valid_from`,
 //!   `extract_valid_until`, `measurement_digest`, `build_public_inputs`,

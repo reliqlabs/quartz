@@ -16,10 +16,21 @@
 //!
 //! In mock mode, this is a no-op.
 
+use base64ct::{Base64, Encoding};
 use color_eyre::{eyre::eyre, Result};
 use serde_json::Value;
 use std::io::{Read, Write};
 use tracing::{debug, info, warn};
+
+/// Decode a base64 JSON string field from the prover and re-encode it as hex
+/// (the contract's `HexBinary` wire format).
+fn b64_field_to_hex(v: Option<&Value>, name: &str) -> Result<String> {
+    let s = v
+        .and_then(|x| x.as_str())
+        .ok_or_else(|| eyre!("prover response missing string field `{name}`"))?;
+    let bytes = Base64::decode_vec(s).map_err(|e| eyre!("base64-decode {name}: {e}"))?;
+    Ok(hex::encode(bytes))
+}
 
 /// If a prover socket is set and the attestation contains a quote, generate an
 /// UltraHonk proof and transform the attestation from DstackAttestation (raw
@@ -83,6 +94,13 @@ pub fn inject_zkdcap_proof(mut response: Value, mock: bool) -> Result<Value> {
 
     let proof_result = call_noir_prover(&socket_path, &quote_hex, &collateral_json)?;
 
+    // The prover returns base64; the contract's RawDstackZkAttestation decodes
+    // these fields as HexBinary (hex). Convert base64 -> hex here so the on-chain
+    // message deserializes. (The prover keeps emitting base64 because the dossier
+    // enclave consumes it that way; the conversion is local to this host path.)
+    let proof_hex = b64_field_to_hex(proof_result.get("proof"), "proof")?;
+    let pi_hex = b64_field_to_hex(proof_result.get("public_inputs"), "public_inputs")?;
+
     // Transform DstackAttestation → DstackZkAttestation:
     // keep user_data and compose_hash, replace quote/event_log with proof fields.
     let user_data = attestation.get("user_data").cloned().unwrap_or(Value::Null);
@@ -91,8 +109,8 @@ pub fn inject_zkdcap_proof(mut response: Value, mock: bool) -> Result<Value> {
     let zk_attestation = serde_json::json!({
         "user_data": user_data,
         "compose_hash": compose_hash,
-        "zkdcap_proof": proof_result.get("proof").cloned().unwrap_or(Value::Null),
-        "zkdcap_public_inputs": proof_result.get("public_inputs").cloned().unwrap_or(Value::Null),
+        "zkdcap_proof": proof_hex,
+        "zkdcap_public_inputs": pi_hex,
     });
 
     *attestation = zk_attestation;

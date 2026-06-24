@@ -9,7 +9,7 @@ the shared `quartz-zkdcap` crate so the proof checks live in one place.
 
 - **gnark Groth16 replaced with Noir/UltraHonk.** Attestation is verified via
   `/xion.zk.v1.Query/ProofVerifyUltraHonk`. `DstackZkAttestation` drops the
-  `zkdcap_journal` field — the packed 640-byte / 20-field `public_inputs` ARE
+  `zkdcap_journal` field — the packed 672-byte / 21-field `public_inputs` ARE
   the journal. The CLI prover socket env is `ZKDCAP_PROVER_SOCKET` (legacy
   `GNARK_SOCKET` still read as a fallback).
 - **New mandatory recency/validity checks.** The `DstackZkAttestation` handler

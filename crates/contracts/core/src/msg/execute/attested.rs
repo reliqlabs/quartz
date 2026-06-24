@@ -245,11 +245,11 @@ impl Attestation for DstackAttestation {
 ///
 /// The raw TDX quote is compressed into an UltraHonk proof verified by the
 /// chain's ZK module (`/xion.zk.v1.Query/ProofVerifyUltraHonk`). The packed
-/// `zkdcap_public_inputs` (640 bytes / 20 BN254 field elements) carry every
+/// `zkdcap_public_inputs` (672 bytes / 21 BN254 field elements) carry every
 /// field the contract binds against: measurements (MRTD, RTMR0..3),
 /// report_data, tcb_status, timestamp, and the recency window
-/// (tcb_eval_num, valid_from, valid_until). There is no separate journal —
-/// the public inputs ARE the journal.
+/// (tcb_eval_num, qe_eval_num, valid_from, valid_until). There is no separate
+/// journal — the public inputs ARE the journal.
 ///
 /// Smaller on-chain footprint, but requires proof generation (Noir/bb prover).
 #[derive(Clone, Debug, PartialEq)]
@@ -260,7 +260,7 @@ pub struct DstackZkAttestation {
     pub compose_hash: MrEnclave,
     /// UltraHonk proof bytes
     pub zkdcap_proof: Vec<u8>,
-    /// Packed UltraHonk public inputs: 640 bytes / 20 BE BN254 field elements
+    /// Packed UltraHonk public inputs: 672 bytes / 21 BE BN254 field elements
     /// (the dcap-noir layout; see `quartz_zkdcap::layout`).
     pub zkdcap_public_inputs: Vec<u8>,
 }

@@ -5,9 +5,9 @@
 //! caller's domain logic.
 
 use crate::layout::{
-    extract_measurements, extract_report_data, extract_tcb_eval_num, extract_tcb_status,
-    extract_timestamp, extract_valid_from, extract_valid_until, measurement_digest,
-    split_attestation, MEASUREMENT_REGS,
+    extract_measurements, extract_qe_eval_num, extract_report_data, extract_tcb_eval_num,
+    extract_tcb_status, extract_timestamp, extract_valid_from, extract_valid_until,
+    measurement_digest, split_attestation, MEASUREMENT_REGS,
 };
 use crate::Hash32;
 
@@ -40,7 +40,7 @@ pub enum QuoteError {
     /// pack_be high-bytes-zero invariant violated.
     Malformed,
     /// Chain time outside the proven `[valid_from, valid_until]` window, or
-    /// `tcb_eval_num` below the monotonic floor.
+    /// `min(tcb_eval_num, qe_eval_num)` below the monotonic floor.
     StaleOrFuture,
     /// The UltraHonk proof was rejected by the backend.
     ProofInvalid,
@@ -56,7 +56,10 @@ pub struct DecodedQuote {
     pub measurement_digest: Hash32,
     pub tcb_status: u8,
     pub timestamp: u64,
+    /// TCB-Info tcbEvaluationDataNumber.
     pub tcb_eval_num: u64,
+    /// QE-Identity tcbEvaluationDataNumber (split from tcb_eval_num by issue #4).
+    pub qe_eval_num: u64,
     pub valid_from: u64,
     pub valid_until: u64,
 }
@@ -69,6 +72,11 @@ impl DecodedQuote {
     /// TDX RTMR3 (the dstack compose-hash anchor).
     pub fn rtmr3(&self) -> &[u8; 48] {
         &self.measurements[4]
+    }
+    /// The recency counter the floor is applied to: the smaller of the TCB-Info
+    /// and QE-Identity evaluation-data numbers.
+    pub fn min_eval_num(&self) -> u64 {
+        self.tcb_eval_num.min(self.qe_eval_num)
     }
 }
 
@@ -113,12 +121,15 @@ pub fn verify_quote_parts<B: ProofBackend>(
     let tcb_status = extract_tcb_status(pi).ok_or(QuoteError::Malformed)?;
     let timestamp = extract_timestamp(pi).ok_or(QuoteError::Malformed)?;
     let tcb_eval_num = extract_tcb_eval_num(pi).ok_or(QuoteError::Malformed)?;
+    let qe_eval_num = extract_qe_eval_num(pi).ok_or(QuoteError::Malformed)?;
     let valid_from = extract_valid_from(pi).ok_or(QuoteError::Malformed)?;
     let valid_until = extract_valid_until(pi).ok_or(QuoteError::Malformed)?;
 
+    // Floor on the smaller of the two evaluation-data numbers (preserves the
+    // pre-issue-#4 single-counter semantics, where the circuit emitted the min).
     if !(valid_from <= now_packed
         && now_packed <= valid_until
-        && tcb_eval_num >= min_tcb_eval_num)
+        && tcb_eval_num.min(qe_eval_num) >= min_tcb_eval_num)
     {
         return Err(QuoteError::StaleOrFuture);
     }
@@ -134,6 +145,7 @@ pub fn verify_quote_parts<B: ProofBackend>(
         tcb_status,
         timestamp,
         tcb_eval_num,
+        qe_eval_num,
         valid_from,
         valid_until,
     })

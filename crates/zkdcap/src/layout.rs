@@ -1,10 +1,11 @@
 //! Packed UltraHonk `public_inputs` layout (dcap-noir circuit) and decoders.
 //!
-//! 20 BN254 field elements, each a 32-byte BIG-ENDIAN element. The Noir circuit
+//! 21 BN254 field elements, each a 32-byte BIG-ENDIAN element. The Noir circuit
 //! packs K (<=31) bytes into one element via pack_be/pack_range (value =
 //! sum b[i]*256^(K-1-i)), so a K-byte limb occupies the LOW K bytes of its
 //! 32-byte element and the high 32-K bytes are zero. Field order mirrors
-//! dcap-noir main.nr's returned `[Field; 20]`:
+//! dcap-noir main.nr's returned `[Field; 21]` (issue #4 split the single
+//! tcb_eval_num into the two source counters):
 //!   0-1   mr_td        ([0..31],[31..48])
 //!   2-3   rtmr0        ([0..31],[31..48])
 //!   4-5   rtmr1
@@ -15,15 +16,16 @@
 //!   14    timestamp    (low 8 bytes, u64 BE) -- the in-circuit verification time
 //!   15    cert_serial  (20 bytes; not gated here)
 //!   16    fmspc        (6 bytes; not gated here)
-//!   17    tcb_eval_num min(tcbEvaluationDataNumber) over TCB-Info + QE-Identity
-//!   18    valid_from   max of all signed validity lower bounds (packed date)
-//!   19    valid_until  min of all signed validity upper bounds (packed date)
+//!   17    tcb_eval_num TCB-Info tcbEvaluationDataNumber
+//!   18    qe_eval_num  QE-Identity tcbEvaluationDataNumber
+//!   19    valid_from   max of all signed validity lower bounds (packed date)
+//!   20    valid_until  min of all signed validity upper bounds (packed date)
 //!
-//! Fields 17-19 are the circuit's recency/freshness outputs: a consumer MUST
-//! range-check chain time against `[valid_from, valid_until]` and reject
-//! tcb_eval_num below a monotonic on-chain floor (the circuit has no
-//! clock/counter, so the recency decision is the consumer's). [`verify_quote`]
-//! does both.
+//! Fields 17-20 are the circuit's recency/freshness outputs: a consumer MUST
+//! range-check chain time against `[valid_from, valid_until]` and reject when
+//! the TCB-recency counters fall below a monotonic on-chain floor (the circuit
+//! has no clock/counter, so the recency decision is the consumer's).
+//! [`verify_quote`] floors on `min(tcb_eval_num, qe_eval_num)`.
 
 use sha2::{Digest, Sha256};
 
@@ -31,8 +33,8 @@ use crate::Hash32;
 
 const FR_BYTES: usize = 32;
 /// Number of BN254 field elements in the packed `public_inputs`.
-pub const ULTRAHONK_PUBLIC_INPUTS_FIELDS: usize = 20;
-/// Byte length of the packed `public_inputs` blob (20 * 32 = 640).
+pub const ULTRAHONK_PUBLIC_INPUTS_FIELDS: usize = 21;
+/// Byte length of the packed `public_inputs` blob (21 * 32 = 672).
 pub const ULTRAHONK_PUBLIC_INPUTS_LEN: usize = ULTRAHONK_PUBLIC_INPUTS_FIELDS * FR_BYTES;
 
 /// Number of TDX measurement registers carried: MRTD || RTMR0..3.
@@ -46,8 +48,9 @@ const F_REPORTDATA: usize = 10; // 3 limbs => fields 10..=12
 const F_TCBSTATUS: usize = 13;
 const F_TIMESTAMP: usize = 14;
 const F_TCB_EVAL: usize = 17;
-const F_VALID_FROM: usize = 18;
-const F_VALID_UNTIL: usize = 19;
+const F_QE_EVAL: usize = 18;
+const F_VALID_FROM: usize = 19;
+const F_VALID_UNTIL: usize = 20;
 
 fn sha256(bytes: &[u8]) -> Hash32 {
     let mut h = Sha256::new();
@@ -102,7 +105,8 @@ pub fn frame_attestation(proof: &[u8], public_inputs: &[u8]) -> Vec<u8> {
 /// circuit's packed outputs). Sharing one builder keeps the sides byte
 /// identical: `measurements` is MRTD||RTMR0..3 (240 bytes), `report_data` the
 /// 64-byte ReportData, `tcb_status` + the u64 fields ride their own fields.
-/// cert_serial (15) + fmspc (16) are left zero. Round-trips:
+/// `tcb_eval_num` is the TCB-Info counter, `qe_eval_num` the QE-Identity counter
+/// (issue #4). cert_serial (15) + fmspc (16) are left zero. Round-trips:
 /// `extract_report_data(build_public_inputs(.., rd, ..)) == Some(rd)`.
 #[allow(clippy::too_many_arguments)]
 pub fn build_public_inputs(
@@ -111,6 +115,7 @@ pub fn build_public_inputs(
     tcb_status: u8,
     timestamp: u64,
     tcb_eval_num: u64,
+    qe_eval_num: u64,
     valid_from: u64,
     valid_until: u64,
 ) -> Vec<u8> {
@@ -129,6 +134,7 @@ pub fn build_public_inputs(
     out[F_TCBSTATUS * FR_BYTES + FR_BYTES - 1] = tcb_status;
     put_limb(&mut out, F_TIMESTAMP, &timestamp.to_be_bytes());
     put_limb(&mut out, F_TCB_EVAL, &tcb_eval_num.to_be_bytes());
+    put_limb(&mut out, F_QE_EVAL, &qe_eval_num.to_be_bytes());
     put_limb(&mut out, F_VALID_FROM, &valid_from.to_be_bytes());
     put_limb(&mut out, F_VALID_UNTIL, &valid_until.to_be_bytes());
     out
@@ -192,6 +198,9 @@ pub fn measurement_digest(pi: &[u8]) -> Option<Hash32> {
 
 /// TCB status code (low byte of field 13).
 pub fn extract_tcb_status(pi: &[u8]) -> Option<u8> {
+    if pi.len() != ULTRAHONK_PUBLIC_INPUTS_LEN {
+        return None;
+    }
     let fb = pi.get(F_TCBSTATUS * FR_BYTES..F_TCBSTATUS * FR_BYTES + FR_BYTES)?;
     // high 31 bytes must be zero (single-byte field).
     if fb[..FR_BYTES - 1].iter().any(|b| *b != 0) {
@@ -214,10 +223,16 @@ pub fn extract_timestamp(pi: &[u8]) -> Option<u64> {
     scalar_u64(pi, F_TIMESTAMP)
 }
 
-/// TCB evaluation-data number (recency counter): min over the signed TCB-Info +
-/// QE-Identity. A consumer rejects values below a monotonic on-chain floor.
+/// TCB-Info evaluation-data number (recency counter, field 17). A consumer
+/// rejects values below a monotonic on-chain floor.
 pub fn extract_tcb_eval_num(pi: &[u8]) -> Option<u64> {
     scalar_u64(pi, F_TCB_EVAL)
+}
+
+/// QE-Identity evaluation-data number (recency counter, field 18). Split from
+/// the TCB-Info counter by dcap-noir issue #4.
+pub fn extract_qe_eval_num(pi: &[u8]) -> Option<u64> {
+    scalar_u64(pi, F_QE_EVAL)
 }
 
 /// Lower bound of the circuit-proven validity window (packed YYYYMMDDhhmmss):

@@ -37,7 +37,7 @@ pub struct ProofVerifyResponse {
 // ── UltraHonk endpoint (Noir/bb, current) ──────────────────────────
 
 /// xion.zk.v1.QueryVerifyUltraHonkRequest
-/// `public_inputs` is the packed 640-byte / 20-field dcap-noir blob (raw
+/// `public_inputs` is the packed 672-byte / 21-field dcap-noir blob (raw
 /// concatenated 32-byte big-endian BN254 field elements).
 #[derive(Clone, PartialEq, Message)]
 pub struct QueryVerifyUltraHonkRequest {
@@ -154,7 +154,7 @@ impl ZkMockStargate {
                 return Ok(Binary::from(encode_ultrahonk_response(false)));
             }
 
-            // public_inputs MUST be the packed 640-byte / 20-field dcap-noir blob.
+            // public_inputs MUST be the packed 672-byte / 21-field dcap-noir blob.
             if req.public_inputs.len() != quartz_zkdcap::ULTRAHONK_PUBLIC_INPUTS_LEN {
                 return Ok(Binary::from(encode_ultrahonk_response(false)));
             }

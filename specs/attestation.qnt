@@ -33,9 +33,12 @@ module attestation {
   type ZkProof = {
     proof_bytes: str,        // UltraHonk proof (opaque to this spec)
     public_inputs: str,      // packed field elements (the journal)
+    report_data: Hash,       // decoded report_data (bound to wrapper user_data)
+    rtmr3: ComposeHash,      // decoded rtmr3 (bound to config.expected_rtmr3 when pinned)
     valid_from: int,         // proven validity-window lower bound (packed date)
     valid_until: int,        // proven validity-window upper bound (packed date)
-    tcb_eval: int,           // tcb_eval_num exposed by the circuit
+    tcb_eval: int,           // TCB-Info tcbEvaluationDataNumber (field 17)
+    qe_eval: int,            // QE-Identity tcbEvaluationDataNumber (field 18, issue #4)
   }
 
   /// Raw TDX DCAP quote attestation
@@ -78,6 +81,7 @@ module attestation {
     compose_hash: ComposeHash,
     zkdcap_vkey: str,        // "" if not configured
     min_tcb_eval: int,       // monotonic TCB-recency floor (0 ⇒ no floor)
+    expected_rtmr3: ComposeHash, // "" ⇒ rtmr3 binding skipped (default)
   }
 
   type ZkModuleState = {
@@ -92,7 +96,8 @@ module attestation {
     | RejectedComposeHashMismatch
     | RejectedZkProofInvalid
     | RejectedVKeyNotFound
-    | RejectedStaleOrFuture     // chain time outside window, or tcb_eval below floor
+    | RejectedStaleOrFuture     // chain time outside window, or an eval below floor
+    | RejectedBindingMismatch   // report_data != user_data, or rtmr3 != expected_rtmr3
     | SkippedNoVKey
 
   /// Action provenance tag. Recorded as `last_action` so temporal properties
@@ -134,22 +139,41 @@ module attestation {
   val VALID_MSG_HASH = "msg_hash_1"
   val VALID_VKEY = "dcap-ultrahonk-v1"
   val VALID_QUOTE = "deadbeef_quote"
+  val VALID_RTMR3 = "rtmr3_good"   // matches config.expected_rtmr3
+  val WRONG_RTMR3 = "rtmr3_bad"
 
   // Packed YYYYMMDDhhmmss clock + the recency floor. CHAIN_TIME is a constant
   // so acceptance-implies-recency is a state-checkable invariant.
   val CHAIN_TIME = 20250101000000
   val TCB_FLOOR = 10
 
-  // In-window proof (valid_from <= CHAIN_TIME <= valid_until, eval >= floor).
+  // In-window proof, both evals >= floor, report_data/rtmr3 bind correctly.
   val VALID_PROOF = { proof_bytes: "proof_data", public_inputs: "inputs",
-                      valid_from: 20240101000000, valid_until: 20260101000000, tcb_eval: 17 }
-  // Empty proof bytes but in-window inputs — exercises the proof-invalid path.
+                      report_data: VALID_MSG_HASH, rtmr3: VALID_RTMR3,
+                      valid_from: 20240101000000, valid_until: 20260101000000, tcb_eval: 17, qe_eval: 23 }
+  // Empty proof bytes but otherwise valid — exercises the proof-invalid path.
   val EMPTY_PROOF = { proof_bytes: "", public_inputs: "",
-                      valid_from: 20240101000000, valid_until: 20260101000000, tcb_eval: 17 }
-  // Non-empty proof whose proven window is entirely in the past — exercises
-  // the recency/validity rejection.
+                      report_data: VALID_MSG_HASH, rtmr3: VALID_RTMR3,
+                      valid_from: 20240101000000, valid_until: 20260101000000, tcb_eval: 17, qe_eval: 23 }
+  // Proven window entirely in the past — exercises the recency/validity rejection.
   val STALE_PROOF = { proof_bytes: "proof_data", public_inputs: "inputs",
-                      valid_from: 20100101000000, valid_until: 20110101000000, tcb_eval: 17 }
+                      report_data: VALID_MSG_HASH, rtmr3: VALID_RTMR3,
+                      valid_from: 20100101000000, valid_until: 20110101000000, tcb_eval: 17, qe_eval: 23 }
+  // tcb_eval below the floor (qe_eval fine) — makes the min-of-both floor
+  // conjunct load-bearing (a dropped floor check would now be caught).
+  val LOW_EVAL_PROOF = { proof_bytes: "proof_data", public_inputs: "inputs",
+                      report_data: VALID_MSG_HASH, rtmr3: VALID_RTMR3,
+                      valid_from: 20240101000000, valid_until: 20260101000000, tcb_eval: 3, qe_eval: 23 }
+  // Valid proof but report_data does not bind to user_data — exercises the
+  // check_zk_bindings report_data gate.
+  val WRONG_RD_PROOF = { proof_bytes: "proof_data", public_inputs: "inputs",
+                      report_data: "wrong_rd", rtmr3: VALID_RTMR3,
+                      valid_from: 20240101000000, valid_until: 20260101000000, tcb_eval: 17, qe_eval: 23 }
+  // Valid proof but rtmr3 does not match the pinned expected_rtmr3 — exercises
+  // the wrong-image binding gate.
+  val WRONG_RTMR3_PROOF = { proof_bytes: "proof_data", public_inputs: "inputs",
+                      report_data: VALID_MSG_HASH, rtmr3: WRONG_RTMR3,
+                      valid_from: 20240101000000, valid_until: 20260101000000, tcb_eval: 17, qe_eval: 23 }
 
   // ============================================================
   // Initial state
@@ -173,6 +197,7 @@ module attestation {
       compose_hash: VALID_COMPOSE_HASH,
       zkdcap_vkey: VALID_VKEY,
       min_tcb_eval: TCB_FLOOR,
+      expected_rtmr3: VALID_RTMR3,
     },
     zk_module' = {
       registered_vkeys: Set(VALID_VKEY),
@@ -291,10 +316,12 @@ module attestation {
       }
     } else if (msg.attestation.proof.valid_from > CHAIN_TIME
                or CHAIN_TIME > msg.attestation.proof.valid_until
-               or msg.attestation.proof.tcb_eval < config.min_tcb_eval) {
+               or msg.attestation.proof.tcb_eval < config.min_tcb_eval
+               or msg.attestation.proof.qe_eval < config.min_tcb_eval) {
       // Recency/validity gate: chain time must lie inside the proof's proven
-      // [valid_from, valid_until] window AND tcb_eval must clear the floor.
-      // The circuit proves the window but has no clock/counter.
+      // [valid_from, valid_until] window AND min(tcb_eval, qe_eval) must clear
+      // the floor (here: either eval below the floor rejects). The circuit
+      // proves the window but has no clock/counter.
       all {
         last_result' = RejectedStaleOrFuture,
         messages_rejected' = messages_rejected + 1,
@@ -315,8 +342,22 @@ module attestation {
         last_input' = msg,
         last_action' = ActVerifyZk,
       }
+    } else if (msg.attestation.proof.report_data != msg.attestation.user_data
+               or (config.expected_rtmr3 != "" and msg.attestation.proof.rtmr3 != config.expected_rtmr3)) {
+      // Binding gate (check_zk_bindings, runs after proof verification): the
+      // decoded report_data MUST equal the wrapper user_data (always); the
+      // decoded rtmr3 MUST equal the pinned expected_rtmr3 (only when pinned).
+      all {
+        last_result' = RejectedBindingMismatch,
+        messages_rejected' = messages_rejected + 1,
+        messages_accepted' = messages_accepted,
+        config' = config,
+        zk_module' = zk_module,
+        last_input' = msg,
+        last_action' = ActVerifyZk,
+      }
     } else {
-      // ZK proof verified
+      // ZK proof verified + bound
       all {
         last_result' = Accepted,
         messages_accepted' = messages_accepted + 1,
@@ -375,7 +416,7 @@ module attestation {
     nondet msg_hash = oneOf(Set(VALID_MSG_HASH, "wrong_hash"))
     nondet user_data = oneOf(Set(VALID_MSG_HASH, "wrong_hash", "tampered"))
     nondet compose_hash = oneOf(Set(VALID_COMPOSE_HASH, WRONG_COMPOSE_HASH))
-    nondet proof = oneOf(Set(VALID_PROOF, EMPTY_PROOF, STALE_PROOF))
+    nondet proof = oneOf(Set(VALID_PROOF, EMPTY_PROOF, STALE_PROOF, LOW_EVAL_PROOF, WRONG_RD_PROOF, WRONG_RTMR3_PROOF))
     nondet att_variant = oneOf(Set(Quote, Zk))
     nondet quote = oneOf(Set(VALID_QUOTE, ""))
     val msg: AttestedMessage = {
@@ -462,6 +503,7 @@ module attestation {
         or last_result == RejectedComposeHashMismatch
         or last_result == RejectedVKeyNotFound
         or last_result == RejectedStaleOrFuture
+        or last_result == RejectedBindingMismatch
         or last_result == RejectedZkProofInvalid
     else true
   }
@@ -489,6 +531,21 @@ module attestation {
       last_input.attestation.proof.valid_from <= CHAIN_TIME
         and CHAIN_TIME <= last_input.attestation.proof.valid_until
         and last_input.attestation.proof.tcb_eval >= config.min_tcb_eval
+        and last_input.attestation.proof.qe_eval >= config.min_tcb_eval
+    else true
+  }
+
+  /// check_zk_bindings: whenever a ZK verify reaches `Accepted`, the accepted
+  /// proof's decoded report_data equals the wrapper user_data (ALWAYS), and its
+  /// decoded rtmr3 equals the pinned config.expected_rtmr3 when one is pinned
+  /// (the conditional mirrors production: expected_rtmr3 == "" ⇒ skipped).
+  /// Mirrors check_zk_bindings in the production handler and the Verus
+  /// proof_binds_report_data / proof_binds_rtmr3 gates.
+  val inv_zk_accept_requires_binding: bool = {
+    if (last_action == ActVerifyZk and last_result == Accepted)
+      last_input.attestation.proof.report_data == last_input.attestation.user_data
+        and (config.expected_rtmr3 == ""
+             or last_input.attestation.proof.rtmr3 == config.expected_rtmr3)
     else true
   }
 
@@ -558,5 +615,6 @@ module attestation {
     and inv_variant_outcome_consistent
     and inv_zk_accept_requires_vkey
     and inv_zk_accept_requires_recency
+    and inv_zk_accept_requires_binding
   }
 }

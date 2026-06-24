@@ -260,6 +260,7 @@ mod tests {
             tcb_status: 0,
             timestamp: 0,
             tcb_eval_num: 0,
+            qe_eval_num: 0,
             valid_from: 0,
             valid_until: 0,
         }

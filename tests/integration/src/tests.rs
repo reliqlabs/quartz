@@ -437,7 +437,7 @@ fn test_ultrahonk_mock_rejects_wrong_public_inputs_len() {
 
     let req = QueryVerifyUltraHonkRequest {
         proof: vec![0x42; 2048],
-        public_inputs: vec![0u8; 512], // not the packed 640-byte blob
+        public_inputs: vec![0u8; 512], // not the packed 672-byte blob
         vkey_name: "dcap-ultrahonk-v1".to_string(),
         vkey_id: 0,
     };
