@@ -1223,6 +1223,7 @@ dependencies = [
  "hex",
  "k256",
  "prost 0.13.5",
+ "quartz-zkdcap",
  "serde",
  "serde_json",
  "sha2",
@@ -1242,11 +1243,21 @@ dependencies = [
  "hex",
  "prost 0.13.5",
  "quartz-contract-core",
+ "quartz-zkdcap",
  "serde",
  "serde_json",
  "sha2",
  "tokio",
  "ureq",
+]
+
+[[package]]
+name = "quartz-zkdcap"
+version = "0.5.1"
+dependencies = [
+ "cosmwasm-std",
+ "prost 0.13.5",
+ "sha2",
 ]
 
 [[package]]

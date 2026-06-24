@@ -56,30 +56,37 @@ pub const SEQUENCE_NUM: Item<Uint64> = Item::new(SEQUENCE_NUM_KEY);
 pub struct Config {
     mr_enclave: MrEnclave,
     light_client_opts: LightClientOpts,
-    /// Verification key name registered in Xion's ZK module for zkdcap proof verification.
-    /// When set, DstackAttestation handler queries the ZK module directly.
+    /// Verification key name registered in Xion's ZK module for the dcap-noir
+    /// UltraHonk proof. When set, the `DstackZkAttestation` handler queries
+    /// `/xion.zk.v1.Query/ProofVerifyUltraHonk` directly.
     zkdcap_vkey: Option<String>,
     /// Expected TDX RTMR3 (48-byte SHA-384 measurement register).
     ///
     /// When `Some`, the `DstackZkAttestation` handler additionally verifies
-    /// that the proof's journal-committed `rtmr3` equals this value. This is
-    /// the path-(c) closure of the Round D Critical 4 `compose_hash` binding
-    /// gap (2026-05-21): the contract owner pins the expected post-boot
-    /// RTMR3 of the deployed dstack VM (which incorporates `compose_hash`
-    /// via dstack's boot-time TDX RTMR extension), and the wrapper enforces
-    /// `journal.rtmr3 == config.expected_rtmr3`. Without this field, an
+    /// that the proof's public-inputs `rtmr3` equals this value. This is the
+    /// path-(c) closure of the Round D Critical 4 `compose_hash` binding gap
+    /// (2026-05-21): the contract owner pins the expected post-boot RTMR3 of
+    /// the deployed dstack VM (which incorporates `compose_hash` via dstack's
+    /// boot-time TDX RTMR extension), and the wrapper enforces
+    /// `public_inputs.rtmr3 == config.expected_rtmr3`. Without this field, an
     /// attacker with a valid proof for image Y can submit
     /// `self.compose_hash = config.mr_enclave (value for image X)` and pass
     /// all other checks.
     ///
-    /// Deployers should compute `expected_rtmr3` once from a known-good
-    /// quote of the intended dstack image (e.g., from the `rtmr3` field of
-    /// a `DcapJournal` produced by the canonical sp1-guest run). When
-    /// `None`, the binding is skipped — backwards-compatible with existing
-    /// deployments, but the residual `compose_hash` substitution vector
-    /// remains open.
+    /// Deployers should compute `expected_rtmr3` once from a known-good quote
+    /// of the intended dstack image (the RTMR3 the dcap-noir circuit exposes).
+    /// When `None`, the binding is skipped — backwards-compatible with existing
+    /// deployments, but the residual `compose_hash` substitution vector remains
+    /// open.
     #[serde(default, with = "rtmr_opt_serde")]
     expected_rtmr3: Option<[u8; 48]>,
+    /// Monotonic TCB-recency floor: the `DstackZkAttestation` handler rejects
+    /// any proof whose `tcb_eval_num` (the circuit's min tcbEvaluationDataNumber
+    /// over TCB-Info + QE-Identity) is below this. The circuit has no counter,
+    /// so the staleness decision is the consumer's; raise this over time as
+    /// Intel publishes new TCB evaluations. `0` (the default) means no floor.
+    #[serde(default)]
+    min_tcb_eval_num: u64,
 }
 
 impl Config {
@@ -93,6 +100,7 @@ impl Config {
             light_client_opts,
             zkdcap_vkey,
             expected_rtmr3: None,
+            min_tcb_eval_num: 0,
         }
     }
 
@@ -109,7 +117,14 @@ impl Config {
             light_client_opts,
             zkdcap_vkey,
             expected_rtmr3: Some(expected_rtmr3),
+            min_tcb_eval_num: 0,
         }
+    }
+
+    /// Builder: pin the monotonic TCB-recency floor. See the field docstring.
+    pub fn with_min_tcb_eval_num(mut self, min_tcb_eval_num: u64) -> Self {
+        self.min_tcb_eval_num = min_tcb_eval_num;
+        self
     }
 
     pub fn light_client_opts(&self) -> &LightClientOpts {
@@ -127,6 +142,10 @@ impl Config {
     pub fn expected_rtmr3(&self) -> Option<&[u8; 48]> {
         self.expected_rtmr3.as_ref()
     }
+
+    pub fn min_tcb_eval_num(&self) -> u64 {
+        self.min_tcb_eval_num
+    }
 }
 
 #[cw_serde]
@@ -137,6 +156,9 @@ pub struct RawConfig {
     /// Hex-encoded 48-byte expected RTMR3. See `Config::expected_rtmr3`.
     #[serde(default)]
     expected_rtmr3: Option<HexBinary>,
+    /// Monotonic TCB-recency floor. See `Config::min_tcb_eval_num`.
+    #[serde(default)]
+    min_tcb_eval_num: u64,
 }
 
 impl RawConfig {
@@ -150,6 +172,10 @@ impl RawConfig {
 
     pub fn expected_rtmr3(&self) -> Option<&[u8]> {
         self.expected_rtmr3.as_ref().map(|h| h.as_slice())
+    }
+
+    pub fn min_tcb_eval_num(&self) -> u64 {
+        self.min_tcb_eval_num
     }
 }
 
@@ -170,6 +196,7 @@ impl TryFrom<RawConfig> for Config {
                 .map_err(|e| StdError::msg(format!("light_client_opts: {e}")))?,
             zkdcap_vkey: value.zkdcap_vkey,
             expected_rtmr3,
+            min_tcb_eval_num: value.min_tcb_eval_num,
         })
     }
 }
@@ -181,6 +208,7 @@ impl From<Config> for RawConfig {
             light_client_opts: value.light_client_opts.into(),
             zkdcap_vkey: value.zkdcap_vkey,
             expected_rtmr3: value.expected_rtmr3.map(HexBinary::from),
+            min_tcb_eval_num: value.min_tcb_eval_num,
         }
     }
 }

@@ -1,0 +1,38 @@
+[package]
+name = "quartz-zkdcap"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+categories = ["cryptography::cryptocurrencies", "wasm"]
+keywords = ["cosmos", "cosmwasm", "tee", "dstack", "zkdcap"]
+description = """
+Canonical Noir/UltraHonk TDX attestation verification primitives for Quartz:
+the packed public_inputs layout + decoders, the recency/validity + tcb-eval
+checks, and the Xion ProofVerifyUltraHonk backend. Application-independent;
+shared by quartz-contract-core, dossier, and verified-rcv so the proof checks
+live in one place.
+"""
+
+[features]
+default = []
+# Pulls in the CosmWasm Xion `ProofVerifyUltraHonk` backend.
+xion-backend = ["dep:cosmwasm-std", "dep:prost"]
+# Test/dev backend that accepts any proof (exercises the decode + check path
+# without the ZK crypto). NEVER enable in a production wasm.
+accepting = []
+std = ["sha2/std"]
+
+[dependencies]
+sha2.workspace = true
+cosmwasm-std = { workspace = true, optional = true, features = [
+    "stargate",
+    "cosmwasm_2_0",
+] }
+prost = { workspace = true, optional = true, features = ["derive"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(kani_slow)'] }

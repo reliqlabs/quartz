@@ -3911,6 +3911,7 @@ dependencies = [
  "hex",
  "k256",
  "prost",
+ "quartz-zkdcap",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -4065,6 +4066,15 @@ dependencies = [
  "displaydoc",
  "tendermint",
  "tendermint-light-client",
+]
+
+[[package]]
+name = "quartz-zkdcap"
+version = "0.5.1"
+dependencies = [
+ "cosmwasm-std",
+ "prost",
+ "sha2 0.10.9",
 ]
 
 [[package]]

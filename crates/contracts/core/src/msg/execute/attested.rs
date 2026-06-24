@@ -239,28 +239,30 @@ impl Attestation for DstackAttestation {
     }
 }
 
-// ── Dstack ZK Attestation (zkdcap proof, verified via ZK module) ───
+// ── Dstack ZK Attestation (zkdcap UltraHonk proof, verified via ZK module) ──
 
-/// TDX attestation using a zkdcap Groth16 proof.
+/// TDX attestation using a dcap-noir UltraHonk proof.
 ///
-/// The raw TDX quote is compressed into a Groth16 proof (~352 bytes)
-/// verified by the chain's ZK module. The journal contains all fields
-/// the contract needs (compose_hash, report_data, tcb_status).
+/// The raw TDX quote is compressed into an UltraHonk proof verified by the
+/// chain's ZK module (`/xion.zk.v1.Query/ProofVerifyUltraHonk`). The packed
+/// `zkdcap_public_inputs` (640 bytes / 20 BN254 field elements) carry every
+/// field the contract binds against: measurements (MRTD, RTMR0..3),
+/// report_data, tcb_status, timestamp, and the recency window
+/// (tcb_eval_num, valid_from, valid_until). There is no separate journal —
+/// the public inputs ARE the journal.
 ///
-/// Smaller on-chain footprint, but requires proof generation (~5s gnark).
+/// Smaller on-chain footprint, but requires proof generation (Noir/bb prover).
 #[derive(Clone, Debug, PartialEq)]
 pub struct DstackZkAttestation {
     /// The user data (report_data) embedded in the TDX quote
     pub user_data: UserData,
     /// compose-hash: the TDX equivalent of mr_enclave (from RTMR3)
     pub compose_hash: MrEnclave,
-    /// zkdcap Groth16 proof bytes
+    /// UltraHonk proof bytes
     pub zkdcap_proof: Vec<u8>,
-    /// zkdcap public inputs (concatenated 32-byte big-endian field elements)
+    /// Packed UltraHonk public inputs: 640 bytes / 20 BE BN254 field elements
+    /// (the dcap-noir layout; see `quartz_zkdcap::layout`).
     pub zkdcap_public_inputs: Vec<u8>,
-    /// zkdcap journal (DcapJournal — contains tcb_status,
-    /// measurements, report_data, timestamp)
-    pub zkdcap_journal: Vec<u8>,
 }
 
 impl DstackZkAttestation {
@@ -269,14 +271,12 @@ impl DstackZkAttestation {
         compose_hash: MrEnclave,
         zkdcap_proof: Vec<u8>,
         zkdcap_public_inputs: Vec<u8>,
-        zkdcap_journal: Vec<u8>,
     ) -> Self {
         Self {
             user_data,
             compose_hash,
             zkdcap_proof,
             zkdcap_public_inputs,
-            zkdcap_journal,
         }
     }
 }
@@ -287,7 +287,6 @@ pub struct RawDstackZkAttestation {
     pub compose_hash: HexBinary,
     pub zkdcap_proof: HexBinary,
     pub zkdcap_public_inputs: HexBinary,
-    pub zkdcap_journal: HexBinary,
 }
 
 impl TryFrom<RawDstackZkAttestation> for DstackZkAttestation {
@@ -299,7 +298,6 @@ impl TryFrom<RawDstackZkAttestation> for DstackZkAttestation {
             compose_hash: value.compose_hash.to_array()?,
             zkdcap_proof: value.zkdcap_proof.into(),
             zkdcap_public_inputs: value.zkdcap_public_inputs.into(),
-            zkdcap_journal: value.zkdcap_journal.into(),
         })
     }
 }
@@ -311,7 +309,6 @@ impl From<DstackZkAttestation> for RawDstackZkAttestation {
             compose_hash: value.compose_hash.into(),
             zkdcap_proof: value.zkdcap_proof.into(),
             zkdcap_public_inputs: value.zkdcap_public_inputs.into(),
-            zkdcap_journal: value.zkdcap_journal.into(),
         }
     }
 }
@@ -337,7 +334,7 @@ impl Attestation for DstackZkAttestation {
 /// Enum that accepts either a raw quote or a ZK proof attestation.
 ///
 /// Used as `DefaultAttestation` so contracts can accept whichever the
-/// host submits — raw DstackAttestation when no gnark prover is
+/// host submits — raw DstackAttestation when no noir prover is
 /// available, or DstackZkAttestation when one is.
 #[derive(Clone, Debug, PartialEq)]
 pub enum DstackAnyAttestation {

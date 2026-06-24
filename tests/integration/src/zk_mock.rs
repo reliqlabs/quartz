@@ -1,8 +1,8 @@
 //! Mock for Xion's native ZK module (`xion.zk.v1`).
 //!
-//! Handles both proof verification endpoints:
-//! - `/xion.zk.v1.Query/ProofVerify` — circom/SnarkJS format (current)
-//! - `/xion.zk.v1.Query/ProofVerifyGnark` — gnark native binary format (v29+)
+//! Handles the proof verification endpoints:
+//! - `/xion.zk.v1.Query/ProofVerify` — circom/SnarkJS format (legacy live test)
+//! - `/xion.zk.v1.Query/ProofVerifyUltraHonk` — Noir/bb UltraHonk (current)
 
 use cosmwasm_std::{
     Addr, Api, Binary, BlockInfo, CustomMsg, CustomQuery, GrpcQuery, Querier, StdError, StdResult,
@@ -34,13 +34,13 @@ pub struct ProofVerifyResponse {
     pub verified: bool,
 }
 
-// ── gnark native endpoint (v29+) ───────────────────────────────────
+// ── UltraHonk endpoint (Noir/bb, current) ──────────────────────────
 
-/// xion.zk.v1.QueryVerifyGnarkRequest
-/// proof and public_inputs are gnark native binary format.
-/// public_inputs: concatenated 32-byte big-endian fr.Element values.
+/// xion.zk.v1.QueryVerifyUltraHonkRequest
+/// `public_inputs` is the packed 640-byte / 20-field dcap-noir blob (raw
+/// concatenated 32-byte big-endian BN254 field elements).
 #[derive(Clone, PartialEq, Message)]
-pub struct QueryVerifyGnarkRequest {
+pub struct QueryVerifyUltraHonkRequest {
     #[prost(bytes = "vec", tag = "1")]
     pub proof: Vec<u8>,
     #[prost(bytes = "vec", tag = "2")]
@@ -51,9 +51,9 @@ pub struct QueryVerifyGnarkRequest {
     pub vkey_id: u64,
 }
 
-/// xion.zk.v1.ProofVerifyGnarkResponse
+/// xion.zk.v1.ProofVerifyUltraHonkResponse
 #[derive(Clone, PartialEq, Message)]
-pub struct ProofVerifyGnarkResponse {
+pub struct ProofVerifyUltraHonkResponse {
     #[prost(bool, tag = "1")]
     pub verified: bool,
 }
@@ -61,7 +61,7 @@ pub struct ProofVerifyGnarkResponse {
 // ── Mock handler ───────────────────────────────────────────────────
 
 const ZK_VERIFY_PATH: &str = "/xion.zk.v1.Query/ProofVerify";
-const ZK_VERIFY_GNARK_PATH: &str = "/xion.zk.v1.Query/ProofVerifyGnark";
+const ZK_VERIFY_ULTRAHONK_PATH: &str = "/xion.zk.v1.Query/ProofVerifyUltraHonk";
 
 /// Mock Stargate handler that intercepts Xion ZK module queries.
 #[derive(Clone)]
@@ -134,43 +134,43 @@ impl ZkMockStargate {
         Ok(Binary::from(encode_response(true)))
     }
 
-    /// Handle gnark native ProofVerifyGnark
-    fn handle_proof_verify_gnark(&self, data: &[u8]) -> StdResult<Binary> {
-        let req = QueryVerifyGnarkRequest::decode(data)
-            .map_err(|e| StdError::msg(format!("decode QueryVerifyGnarkRequest: {e}")))?;
+    /// Handle Noir/bb ProofVerifyUltraHonk
+    fn handle_proof_verify_ultrahonk(&self, data: &[u8]) -> StdResult<Binary> {
+        let req = QueryVerifyUltraHonkRequest::decode(data)
+            .map_err(|e| StdError::msg(format!("decode QueryVerifyUltraHonkRequest: {e}")))?;
 
         if req.proof.is_empty() {
-            return Ok(Binary::from(encode_gnark_response(false)));
+            return Ok(Binary::from(encode_ultrahonk_response(false)));
         }
 
         if !self.always_verify {
-            return Ok(Binary::from(encode_gnark_response(false)));
+            return Ok(Binary::from(encode_ultrahonk_response(false)));
         }
 
         if self.validate_structure {
-            // gnark proof: must be non-empty binary (serialized groth16.Proof)
-            // Typical BN254 Groth16 proof is ~384 bytes (3 curve points)
-            if req.proof.len() < 96 {
-                return Ok(Binary::from(encode_gnark_response(false)));
+            // UltraHonk proofs are large; a real bb proof is multiple KB. Just
+            // sanity-check it's not a stub.
+            if req.proof.len() < 64 {
+                return Ok(Binary::from(encode_ultrahonk_response(false)));
             }
 
-            // public_inputs: concatenated 32-byte field elements
-            if req.public_inputs.is_empty() || req.public_inputs.len() % 32 != 0 {
-                return Ok(Binary::from(encode_gnark_response(false)));
+            // public_inputs MUST be the packed 640-byte / 20-field dcap-noir blob.
+            if req.public_inputs.len() != quartz_zkdcap::ULTRAHONK_PUBLIC_INPUTS_LEN {
+                return Ok(Binary::from(encode_ultrahonk_response(false)));
             }
 
             if req.vkey_name.is_empty() && req.vkey_id == 0 {
-                return Ok(Binary::from(encode_gnark_response(false)));
+                return Ok(Binary::from(encode_ultrahonk_response(false)));
             }
         }
 
-        Ok(Binary::from(encode_gnark_response(true)))
+        Ok(Binary::from(encode_ultrahonk_response(true)))
     }
 
     pub fn dispatch(&self, path: &str, data: &[u8]) -> StdResult<Binary> {
         match path {
             ZK_VERIFY_PATH => self.handle_proof_verify(data),
-            ZK_VERIFY_GNARK_PATH => self.handle_proof_verify_gnark(data),
+            ZK_VERIFY_ULTRAHONK_PATH => self.handle_proof_verify_ultrahonk(data),
             _ => Err(StdError::msg(format!("unexpected ZK query path: {path}"))),
         }
     }
@@ -183,8 +183,8 @@ fn encode_response(verified: bool) -> Vec<u8> {
     buf
 }
 
-fn encode_gnark_response(verified: bool) -> Vec<u8> {
-    let resp = ProofVerifyGnarkResponse { verified };
+fn encode_ultrahonk_response(verified: bool) -> Vec<u8> {
+    let resp = ProofVerifyUltraHonkResponse { verified };
     let mut buf = Vec::new();
     resp.encode(&mut buf).expect("prost encode");
     buf

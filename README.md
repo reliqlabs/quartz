@@ -1,6 +1,6 @@
 # Quartz
 
-> Fork of [informalsystems/cycles-quartz](https://github.com/informalsystems/cycles-quartz), modernized for dstack TDX and zkdcap.
+> Fork of [informalsystems/cycles-quartz](https://github.com/informalsystems/cycles-quartz), modernized for dstack TDX and zkdcap (Noir/UltraHonk).
 
 Quartz is a framework for privacy-preserving computation via Trusted Execution
 Environments (TEEs) organized and secured by smart contracts on Xion.
@@ -21,17 +21,18 @@ WARNING: Quartz is under heavy development and not ready for production use.
 ## Architecture
 
 - **TEE**: dstack CVM (Intel TDX). Enclaves run as standard Docker containers.
-- **Attestation**: TDX quotes verified on-chain via zkdcap Groth16 proofs through Xion's native ZK module.
+- **Attestation**: TDX quotes verified on-chain via zkdcap Noir/UltraHonk proofs through Xion's native ZK module (`ProofVerifyUltraHonk`).
 - **Chain**: Xion (`xiond`, `uxion`, CosmWasm 3).
-- **Prover**: gnark Groth16 (~5s CPU, <1s GPU) via Unix socket.
+- **Prover**: Noir/bb UltraHonk via Unix socket (`zkdcap/noir-prove-server`).
 - **Key management**: dstack KMS deterministic key derivation.
 - **Encryption**: ECIES (secp256k1) for user-to-enclave privacy.
 
 ## Crates
 
-- **`quartz-contract-core`** -- CosmWasm contract library. Session management, `DstackAttestation` verification via Xion ZK module, `zkdcap_vkey` config.
+- **`quartz-zkdcap`** -- Canonical UltraHonk attestation primitives: the packed `public_inputs` layout + decoders, the recency/validity + tcb-eval checks, and the Xion `ProofVerifyUltraHonk` backend. Application-independent; shared so the proof checks live in one place (also consumed by dossier and verified-rcv).
+- **`quartz-contract-core`** -- CosmWasm contract library. Session management, `DstackZkAttestation` verification (built on `quartz-zkdcap`), `zkdcap_vkey` config.
 - **`quartz-enclave-core`** -- Enclave-side library. `DstackAttestor`, `DstackKeyManager`, ECIES encryption, light-client proof verification.
-- **`quartz` (CLI)** -- Build, deploy, handshake. Integrates `xiond` and gnark prover.
+- **`quartz` (CLI)** -- Build, deploy, handshake. Integrates `xiond` and the Noir prover.
 
 ## Specs and Tests
 

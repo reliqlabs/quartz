@@ -7,14 +7,18 @@
 //    - Checks compose_hash matches contract config
 //    - Accepts (DCAP quote is available for off-chain verification)
 //
-// 2. DstackZkAttestation (zkdcap Groth16 proof):
+// 2. DstackZkAttestation (zkdcap UltraHonk proof):
 //    - Checks user_data hash matches the message
 //    - Checks compose_hash matches contract config
-//    - Queries the Xion ZK module with the zkdcap proof
+//    - Queries the Xion ZK module (ProofVerifyUltraHonk) with the proof
+//    - Range-checks chain time against the proof's proven validity window and
+//      rejects tcb_eval_num below the monotonic floor (the circuit has no
+//      clock/counter, so this is the consumer's decision)
 //    - Accepts if proof verifies
 //
-// DstackAnyAttestation is the runtime enum: the contract accepts either
-// variant and delegates to the appropriate handler.
+// The packed public_inputs ARE the journal (no separate journal blob under
+// UltraHonk). DstackAnyAttestation is the runtime enum: the contract accepts
+// either variant and delegates to the appropriate handler.
 
 module attestation {
 
@@ -27,9 +31,11 @@ module attestation {
   type VKeyName = str
 
   type ZkProof = {
-    proof_bytes: str,        // Groth16 proof (opaque to this spec)
-    public_inputs: str,      // field elements
-    journal: str,            // DcapJournal
+    proof_bytes: str,        // UltraHonk proof (opaque to this spec)
+    public_inputs: str,      // packed field elements (the journal)
+    valid_from: int,         // proven validity-window lower bound (packed date)
+    valid_until: int,        // proven validity-window upper bound (packed date)
+    tcb_eval: int,           // tcb_eval_num exposed by the circuit
   }
 
   /// Raw TDX DCAP quote attestation
@@ -71,6 +77,7 @@ module attestation {
   type ContractConfig = {
     compose_hash: ComposeHash,
     zkdcap_vkey: str,        // "" if not configured
+    min_tcb_eval: int,       // monotonic TCB-recency floor (0 ⇒ no floor)
   }
 
   type ZkModuleState = {
@@ -85,6 +92,7 @@ module attestation {
     | RejectedComposeHashMismatch
     | RejectedZkProofInvalid
     | RejectedVKeyNotFound
+    | RejectedStaleOrFuture     // chain time outside window, or tcb_eval below floor
     | SkippedNoVKey
 
   /// Action provenance tag. Recorded as `last_action` so temporal properties
@@ -124,10 +132,24 @@ module attestation {
   val VALID_COMPOSE_HASH = "aabbccdd"
   val WRONG_COMPOSE_HASH = "deadbeef"
   val VALID_MSG_HASH = "msg_hash_1"
-  val VALID_VKEY = "zkdcap-gnark"
-  val VALID_PROOF = { proof_bytes: "proof_data", public_inputs: "inputs", journal: "journal" }
-  val EMPTY_PROOF = { proof_bytes: "", public_inputs: "", journal: "" }
+  val VALID_VKEY = "dcap-ultrahonk-v1"
   val VALID_QUOTE = "deadbeef_quote"
+
+  // Packed YYYYMMDDhhmmss clock + the recency floor. CHAIN_TIME is a constant
+  // so acceptance-implies-recency is a state-checkable invariant.
+  val CHAIN_TIME = 20250101000000
+  val TCB_FLOOR = 10
+
+  // In-window proof (valid_from <= CHAIN_TIME <= valid_until, eval >= floor).
+  val VALID_PROOF = { proof_bytes: "proof_data", public_inputs: "inputs",
+                      valid_from: 20240101000000, valid_until: 20260101000000, tcb_eval: 17 }
+  // Empty proof bytes but in-window inputs — exercises the proof-invalid path.
+  val EMPTY_PROOF = { proof_bytes: "", public_inputs: "",
+                      valid_from: 20240101000000, valid_until: 20260101000000, tcb_eval: 17 }
+  // Non-empty proof whose proven window is entirely in the past — exercises
+  // the recency/validity rejection.
+  val STALE_PROOF = { proof_bytes: "proof_data", public_inputs: "inputs",
+                      valid_from: 20100101000000, valid_until: 20110101000000, tcb_eval: 17 }
 
   // ============================================================
   // Initial state
@@ -150,6 +172,7 @@ module attestation {
     config' = {
       compose_hash: VALID_COMPOSE_HASH,
       zkdcap_vkey: VALID_VKEY,
+      min_tcb_eval: TCB_FLOOR,
     },
     zk_module' = {
       registered_vkeys: Set(VALID_VKEY),
@@ -266,6 +289,21 @@ module attestation {
         last_input' = msg,
         last_action' = ActVerifyZk,
       }
+    } else if (msg.attestation.proof.valid_from > CHAIN_TIME
+               or CHAIN_TIME > msg.attestation.proof.valid_until
+               or msg.attestation.proof.tcb_eval < config.min_tcb_eval) {
+      // Recency/validity gate: chain time must lie inside the proof's proven
+      // [valid_from, valid_until] window AND tcb_eval must clear the floor.
+      // The circuit proves the window but has no clock/counter.
+      all {
+        last_result' = RejectedStaleOrFuture,
+        messages_rejected' = messages_rejected + 1,
+        messages_accepted' = messages_accepted,
+        config' = config,
+        zk_module' = zk_module,
+        last_input' = msg,
+        last_action' = ActVerifyZk,
+      }
     } else if (msg.attestation.proof.proof_bytes == "" and not(zk_module.accept_all)) {
       // Empty proof rejected (unless mock mode)
       all {
@@ -337,7 +375,7 @@ module attestation {
     nondet msg_hash = oneOf(Set(VALID_MSG_HASH, "wrong_hash"))
     nondet user_data = oneOf(Set(VALID_MSG_HASH, "wrong_hash", "tampered"))
     nondet compose_hash = oneOf(Set(VALID_COMPOSE_HASH, WRONG_COMPOSE_HASH))
-    nondet proof = oneOf(Set(VALID_PROOF, EMPTY_PROOF))
+    nondet proof = oneOf(Set(VALID_PROOF, EMPTY_PROOF, STALE_PROOF))
     nondet att_variant = oneOf(Set(Quote, Zk))
     nondet quote = oneOf(Set(VALID_QUOTE, ""))
     val msg: AttestedMessage = {
@@ -423,6 +461,7 @@ module attestation {
         or last_result == RejectedUserDataMismatch
         or last_result == RejectedComposeHashMismatch
         or last_result == RejectedVKeyNotFound
+        or last_result == RejectedStaleOrFuture
         or last_result == RejectedZkProofInvalid
     else true
   }
@@ -438,6 +477,20 @@ module attestation {
   /// State-only stub kept as `true` — the real obligation is captured
   /// by the temporal property `temporal_zk_accept_requires_vkey` below.
   val inv_zk_accept_requires_vkey: bool = true
+
+  /// UltraHonk recency: whenever a ZK verify reaches `Accepted`, the accepted
+  /// proof's proven validity window contained the chain time AND its tcb_eval
+  /// cleared the floor. CHAIN_TIME and config.min_tcb_eval are stable (no
+  /// action mutates them), so this acceptance-implies-recency obligation is
+  /// state-checkable. Mirrors the `recency_ok` gate in the Verus prototype and
+  /// `quartz_zkdcap::verify_quote_parts`.
+  val inv_zk_accept_requires_recency: bool = {
+    if (last_action == ActVerifyZk and last_result == Accepted)
+      last_input.attestation.proof.valid_from <= CHAIN_TIME
+        and CHAIN_TIME <= last_input.attestation.proof.valid_until
+        and last_input.attestation.proof.tcb_eval >= config.min_tcb_eval
+    else true
+  }
 
   // ============================================================
   // Temporal properties
@@ -504,5 +557,6 @@ module attestation {
     and inv_compose_hash_mismatch_rejected
     and inv_variant_outcome_consistent
     and inv_zk_accept_requires_vkey
+    and inv_zk_accept_requires_recency
   }
 }

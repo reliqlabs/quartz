@@ -1,13 +1,43 @@
 # Changelog
 
-## Unreleased: dstack/TDX Modernization
+## Unreleased: zkdcap Noir/UltraHonk migration
+
+Migrates on-chain attestation from gnark Groth16 to Noir/UltraHonk and extracts
+the shared `quartz-zkdcap` crate so the proof checks live in one place.
+
+### Breaking Changes
+
+- **gnark Groth16 replaced with Noir/UltraHonk.** Attestation is verified via
+  `/xion.zk.v1.Query/ProofVerifyUltraHonk`. `DstackZkAttestation` drops the
+  `zkdcap_journal` field — the packed 640-byte / 20-field `public_inputs` ARE
+  the journal. The CLI prover socket env is `ZKDCAP_PROVER_SOCKET` (legacy
+  `GNARK_SOCKET` still read as a fallback).
+- **New mandatory recency/validity checks.** The `DstackZkAttestation` handler
+  now range-checks chain time against the proof's proven `[valid_from,
+  valid_until]` window and rejects `tcb_eval_num` below `Config.min_tcb_eval_num`
+  (new config field; defaults to 0 = no floor). The circuit has no clock/counter,
+  so this is the consumer's decision.
+
+### Features
+
+- **`quartz-zkdcap` crate** -- canonical UltraHonk attestation primitives (packed
+  `public_inputs` layout + decoders, `verify_quote`/`verify_quote_parts` with the
+  recency/validity + tcb-eval checks, the Xion `ProofVerifyUltraHonk` backend).
+  Application-independent; shared by `quartz-contract-core`, dossier, and
+  verified-rcv so circuit/layout changes are a one-place edit.
+- Noir/bb UltraHonk prover integration (`zkdcap/noir-prove-server`) via Unix socket
+- Verus prototype + Quint spec updated to the UltraHonk proof shape, incl. the
+  recency/eval-floor gate (Verus: 15 verified/0 errors; Quint: typecheck + run +
+  Apalache verify clean)
+
+## Earlier: dstack/TDX Modernization
 
 Fork of [informalsystems/cycles-quartz](https://github.com/informalsystems/cycles-quartz) by Reliq Labs.
 
 ### Breaking Changes
 
 - **Intel SGX replaced with dstack TDX.** Enclaves now run as standard Docker containers on dstack confidential VMs (Intel TDX). Gramine, SGX signing, AESM, and all MobileCoin SGX libs removed.
-- **On-chain DCAP verification replaced with zkdcap.** Attestation verified via Groth16 zero-knowledge proofs through the Xion ZK module (direct gRPC query, ~1M gas). The `dcap-verifier` and `tcbinfo` contracts are no longer needed.
+- **On-chain DCAP verification replaced with zkdcap.** Attestation verified via zero-knowledge proofs through the Xion ZK module (direct gRPC query). The `dcap-verifier` and `tcbinfo` contracts are no longer needed.
 - **Neutron replaced with Xion.** Chain binary is now `xiond`, denom is `uxion`.
 - **CosmWasm 2.1 upgraded to CosmWasm 3.**
 
@@ -16,8 +46,7 @@ Fork of [informalsystems/cycles-quartz](https://github.com/informalsystems/cycle
 - `DstackAttestor` -- TDX attestation via dstack guest agent socket API
 - `DstackKeyManager` -- Deterministic key derivation via dstack KMS
 - ECIES encryption promoted from examples to core framework module
-- gnark Groth16 prover integration (~5s CPU, <1s GPU) via Unix socket
-- `zkdcap_vkey` config for Groth16 verification key storage
+- `zkdcap_vkey` config for ZK verification key storage
 - `DstackAttestation` type with direct ZK module query verification
 - Quint formal spec for handshake protocol (`specs/handshake.qnt`)
 - Integration tests with ZK module mock via `cw_multi_test` (`tests/integration/`)

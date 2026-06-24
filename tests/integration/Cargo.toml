@@ -14,6 +14,7 @@ cw2 = "3"
 
 # quartz — without mock so DstackAttestation handler queries ZK module
 quartz-contract-core = { path = "../../crates/contracts/core" }
+quartz-zkdcap = { path = "../../crates/zkdcap" }
 
 # networking
 ureq = { version = "2", features = ["json"] }

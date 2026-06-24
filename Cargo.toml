@@ -5,6 +5,7 @@ members = [
     "crates/common",
     "crates/contracts/core",
     "crates/contracts/core/derive",
+    "crates/zkdcap",
     "crates/enclave/*",
     "crates/utils/cw-client",
     "crates/utils/cw-prover",
@@ -122,6 +123,7 @@ quartz-enclave-core = { version = "0.5.1", path = "crates/enclave/core", default
 quartz-proto = { version = "0.5.1", path = "crates/enclave/proto", default-features = false }
 quartz-tm-prover = { version = "0.5.1", path = "crates/utils/tm-prover", default-features = false }
 quartz-tm-stateless-verifier = { version = "0.5.1", path = "crates/enclave/tm-stateless-verifier", default-features = false }
+quartz-zkdcap = { version = "0.5.1", path = "crates/zkdcap", default-features = false }
 cw-client = { version = "0.5.1", path = "crates/utils/cw-client", default-features = false }
 
 [profile.release]

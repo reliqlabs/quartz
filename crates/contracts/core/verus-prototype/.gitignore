@@ -1,0 +1,5 @@
+# Verus compiles each prototype to a same-named binary on verification.
+# Keep only the source specs.
+*
+!*.rs
+!.gitignore

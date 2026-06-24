@@ -78,12 +78,14 @@ pub type UserData = u64;  // opaque 64-byte buffer in production; we only use
 pub struct RawConfig {
     pub mr_enclave: MrEnclave,
     pub zkdcap_vkey: u64,  // 0 ⇒ "no vkey configured" (empty string in prod)
+    pub min_tcb_eval_num: u64, // monotonic TCB-recency floor (0 ⇒ no floor)
 }
 
 #[derive(PartialEq, Eq)]
 pub struct Config {
     pub mr_enclave: MrEnclave,
     pub zkdcap_vkey: u64,
+    pub min_tcb_eval_num: u64,
 }
 
 impl Config {
@@ -100,6 +102,11 @@ impl Config {
     {
         if self.zkdcap_vkey == 0 { None } else { Some(self.zkdcap_vkey) }
     }
+
+    pub open spec fn spec_min_tcb_eval_num(&self) -> u64 { self.min_tcb_eval_num }
+    pub fn min_tcb_eval_num(&self) -> (m: u64)
+        ensures m == self.spec_min_tcb_eval_num(),
+    { self.min_tcb_eval_num }
 }
 
 pub enum Error {
@@ -136,6 +143,7 @@ impl Item {
                     &&& storage.config matches Some(raw)
                     &&& c.mr_enclave == raw.mr_enclave
                     &&& c.zkdcap_vkey == raw.zkdcap_vkey
+                    &&& c.min_tcb_eval_num == raw.min_tcb_eval_num
                 }
                 Ok(None) => storage.config.is_none(),
                 Err(e) => e is Std,
@@ -145,6 +153,7 @@ impl Item {
             Some(raw) => Ok(Some(Config {
                 mr_enclave: raw.mr_enclave,
                 zkdcap_vkey: raw.zkdcap_vkey,
+                min_tcb_eval_num: raw.min_tcb_eval_num,
             })),
             None => Ok(None),
         }
@@ -383,34 +392,30 @@ pub fn attested_handle_with_fallible_att(
 
 // ── DstackZkAttestation handler (non-mock branch) ──────────────────────────
 //
-// gRPC querier is modelled as an external_body function returning the verified
-// bool. encode/decode failures are folded into a single nondeterministic
-// failure path (an Err Result from the stub).
+// UltraHonk migration (gnark → Noir/bb): the on-chain query is now
+// `/xion.zk.v1.Query/ProofVerifyUltraHonk` (modelled by `zk_query_verify`),
+// and there is no separate journal — the packed `public_inputs` ARE the
+// journal, so the binding reads report_data + rtmr3 straight from them.
+// Production: `quartz_zkdcap::verify_quote_parts` (decode + recency + proof)
+// then `check_zk_bindings` (report_data == user_data, rtmr3 == expected).
 //
-// Round D Critical 4 fix (2026-05-20, cross-critique ratified 5-of-5 DEFEND):
-// the prior prototype carried only the proof and public_inputs as opaque
-// blobs, and its Ok postcondition terminated at "the verifier said yes on
-// these inputs". The wrapper's user_data and compose_hash pre-checks
-// validate self-declared fields on the attestation, not values extracted
-// from the proof; the production handler at
-// crates/contracts/core/src/handler/execute/attested.rs:94-99 forwards the
-// proof and public_inputs verbatim to ProofVerifyGnark without any
-// equality check binding the public inputs back to the self-declared
-// fields. The Verus side now models this binding requirement explicitly
-// via a new uninterpreted predicate `proof_journal_binds` and a new
-// external_body verification step `verify_proof_journal_binds` that is
-// called after the gnark verifier confirms the proof. The production
-// side must implement the binding check (decoding zkdcap_public_inputs
-// or zkdcap_journal and verify-equaling the encoded report_data and
-// compose_hash against the message's self-declared fields) before this
-// Verus spec corresponds to deployed behavior. The production hook is
-// flagged in the ledger as a Quartz-agent follow-up.
+// Three abstract gates model the production flow:
+//   1. zk_query_verify_succeeded — the UltraHonk verifier accepts the proof.
+//   2. recency_ok — chain time lies inside the proof's proven
+//      [valid_from, valid_until] validity window AND tcb_eval_num is at or
+//      above the monotonic floor. (Both are folded into one uninterpreted
+//      predicate over the public inputs + now_packed; the production split is
+//      in `quartz_zkdcap::verify_quote_parts`.) NEW under UltraHonk: the
+//      circuit has no clock/counter, so staleness is the consumer's decision.
+//   3. proof_public_inputs_binds — the public inputs encode the expected
+//      report_data (== user_data) and rtmr3/compose_hash. Round D Critical 4;
+//      now IMPLEMENTED in production (check_zk_bindings), no longer a hook.
 
 pub struct DstackZkAttestation {
     pub zkdcap_proof: u64,         // opaque blob; only encoded, not inspected
-    pub zkdcap_public_inputs: u64, // public inputs to the gnark verifier
-    pub user_data: UserData,       // self-declared; wrapper pre-checks bind this
-    pub compose_hash: MrEnclave,   // self-declared; wrapper pre-checks bind this
+    pub zkdcap_public_inputs: u64, // packed UltraHonk public inputs (the journal)
+    pub user_data: UserData,       // self-declared; bound to public_inputs below
+    pub compose_hash: MrEnclave,   // self-declared; bound to public_inputs below
 }
 
 // Spec-level uninterpreted predicate for "the verifier said yes on these
@@ -421,13 +426,23 @@ pub uninterp spec fn zk_query_verify_succeeded(
     vkey: u64,
 ) -> bool;
 
+// Spec-level uninterpreted predicate for the recency/validity gate: chain
+// time `now_packed` lies inside the proof's proven validity window AND the
+// public inputs' tcb_eval_num is at or above the monotonic floor. Production:
+// the range-check + floor check inside `quartz_zkdcap::verify_quote_parts`.
+pub uninterp spec fn recency_ok(
+    public_inputs: u64,
+    now_packed: u64,
+    min_tcb_eval: u64,
+) -> bool;
+
 // Spec-level uninterpreted predicate for "the proof's public inputs encode
-// the expected user_data and compose_hash." This is the binding the
-// production handler must enforce by decoding zkdcap_public_inputs (or
-// zkdcap_journal) and verify-equaling the encoded values against the
-// message's self-declared `user_data` and `compose_hash`. Round D
-// Critical 4 fix.
-pub uninterp spec fn proof_journal_binds(
+// the expected user_data and compose_hash." Under UltraHonk the production
+// handler enforces this by decoding the packed `zkdcap_public_inputs` and
+// verify-equaling the decoded report_data against `user_data` and the decoded
+// rtmr3 against the pinned compose_hash (`check_zk_bindings`). Round D
+// Critical 4 — implemented.
+pub uninterp spec fn proof_public_inputs_binds(
     proof: u64,
     public_inputs: u64,
     expected_compose_hash: MrEnclave,
@@ -456,14 +471,30 @@ pub fn zk_query_verify(
     unimplemented!()
 }
 
-// External-body stub for the public-inputs / journal decoding +
-// verify-equal step. Returns Ok iff the proof's encoded report_data and
-// compose_hash match the supplied expected values. Production
-// implementation lives at crates/contracts/core/src/handler/execute/attested.rs
-// and is flagged in .colosseum/ledger.md as the Quartz-agent follow-up
-// for Round D Critical 4.
+// External-body stub for the recency/validity gate. Returns Ok iff chain time
+// lies inside the proven window and tcb_eval_num clears the floor. Production:
+// the checks inside `quartz_zkdcap::verify_quote_parts`.
 #[verifier::external_body]
-pub fn verify_proof_journal_binds(
+pub fn check_recency(
+    public_inputs: u64,
+    now_packed: u64,
+    min_tcb_eval: u64,
+) -> (r: Result<(), Error>)
+    ensures
+        match r {
+            Ok(()) => recency_ok(public_inputs, now_packed, min_tcb_eval),
+            Err(_) => true,
+        },
+{
+    unimplemented!()
+}
+
+// External-body stub for the public-inputs decoding + verify-equal step.
+// Returns Ok iff the proof's encoded report_data and rtmr3 match the supplied
+// expected values. Production: `check_zk_bindings` in
+// crates/contracts/core/src/handler/execute/attested.rs.
+#[verifier::external_body]
+pub fn verify_public_inputs_binds(
     proof: u64,
     public_inputs: u64,
     expected_compose_hash: MrEnclave,
@@ -471,7 +502,7 @@ pub fn verify_proof_journal_binds(
 ) -> (r: Result<(), Error>)
     ensures
         match r {
-            Ok(()) => proof_journal_binds(proof, public_inputs, expected_compose_hash, expected_user_data),
+            Ok(()) => proof_public_inputs_binds(proof, public_inputs, expected_compose_hash, expected_user_data),
             Err(_) => true,
         },
 {
@@ -481,22 +512,24 @@ pub fn verify_proof_journal_binds(
 pub fn dstack_zk_handle(
     msg: DstackZkAttestation,
     storage: &mut Storage,
+    now_packed: u64,
 ) -> (r: Result<Response, Error>)
     ensures
         match r {
             Ok(_) => {
                 // Either the vkey was unset (skipped) or the vkey was set AND
-                // the verifier said yes AND the proof's public inputs bind
-                // back to the wrapper-validated user_data and compose_hash.
-                // The binding clause is the Round D Critical 4 fix.
+                // the verifier said yes AND the recency/validity gate passed
+                // AND the proof's public inputs bind back to the
+                // wrapper-validated user_data and compose_hash.
                 &&& old(storage).config matches Some(raw)
                 &&& (raw.zkdcap_vkey == 0
                      || (zk_query_verify_succeeded(msg.zkdcap_proof, msg.zkdcap_public_inputs, raw.zkdcap_vkey)
-                         && proof_journal_binds(msg.zkdcap_proof, msg.zkdcap_public_inputs, msg.compose_hash, msg.user_data)))
+                         && recency_ok(msg.zkdcap_public_inputs, now_packed, raw.min_tcb_eval_num)
+                         && proof_public_inputs_binds(msg.zkdcap_proof, msg.zkdcap_public_inputs, msg.compose_hash, msg.user_data)))
             }
             Err(Error::ZkdcapVerificationFailed) => {
-                // Vkey was set AND (verifier said no OR encode/decode failed
-                // OR the binding check failed).
+                // Vkey was set AND (verifier said no OR recency failed OR
+                // encode/decode failed OR the binding check failed).
                 &&& old(storage).config matches Some(raw)
                 &&& raw.zkdcap_vkey != 0
             }
@@ -514,7 +547,7 @@ pub fn dstack_zk_handle(
         None => return Ok(Response::new().add_attribute("action", "zkdcap_verify_skipped")),
     };
 
-    // First gate: the gnark verifier accepts the proof against the supplied
+    // Gate 1: the UltraHonk verifier accepts the proof against the supplied
     // public inputs.
     match zk_query_verify(msg.zkdcap_proof, msg.zkdcap_public_inputs, vkey) {
         Ok(true) => {}
@@ -522,12 +555,21 @@ pub fn dstack_zk_handle(
         Err(_) => return Err(Error::ZkdcapVerificationFailed),
     }
 
-    // Second gate (Round D Critical 4 fix): the proof's public inputs must
-    // encode the wrapper-validated user_data and compose_hash. Without this
-    // check, an attacker can submit a valid proof for a different enclave
-    // while self-declaring user_data and compose_hash that match the
-    // wrapper's expectations.
-    match verify_proof_journal_binds(
+    // Gate 2 (UltraHonk recency): chain time must lie inside the proven
+    // validity window and tcb_eval_num must clear the monotonic floor. The
+    // circuit proves the window but has no clock/counter, so this decision is
+    // the consumer's.
+    match check_recency(msg.zkdcap_public_inputs, now_packed, config.min_tcb_eval_num()) {
+        Ok(()) => {}
+        Err(_) => return Err(Error::ZkdcapVerificationFailed),
+    }
+
+    // Gate 3 (Round D Critical 4): the proof's public inputs must encode the
+    // wrapper-validated user_data and compose_hash. Without this check, an
+    // attacker can submit a valid proof for a different enclave while
+    // self-declaring user_data and compose_hash that match the wrapper's
+    // expectations.
+    match verify_public_inputs_binds(
         msg.zkdcap_proof,
         msg.zkdcap_public_inputs,
         msg.compose_hash,

@@ -1,6 +1,6 @@
 # Quartz
 
-Fork of informalsystems/cycles-quartz, modernized for dstack TDX + zkdcap + Xion.
+Fork of informalsystems/cycles-quartz, modernized for dstack TDX + zkdcap (Noir/UltraHonk) + Xion.
 
 ## Two-agent split
 
@@ -47,9 +47,9 @@ Three things the Colosseum agent here may not be aware of yet. If a fresh spec-a
 
 **Open product blockers (in approximate order of urgency):**
 
-- **zkdcap verifier migration**: circom `ProofVerify` → gnark `ProofVerifyGnark` endpoint. Live blocker for testnet flow. See `crates/cli/src/handler/zkdcap.rs` + `tests/integration/src/zk_mock.rs` (both endpoints already mocked).
-- **Register zkdcap gnark vkey on testnet**: keygen tool at `zkdcap/circuits/dcap-gnark/cmd/keygen/`.
-- **Set `config.expected_rtmr3` on new deployments**: as of 2026-05-21 the `DstackZkAttestation` handler enforces `journal.rtmr3 == config.expected_rtmr3` when the field is populated. Without it, the contract is vulnerable to a "wrong-image-attestation" substitution (attacker submits a valid proof for image Y with `self.compose_hash` of image X). Compute `expected_rtmr3` once from a known-good quote of the intended dstack image and set it on instantiate. Existing deployments keep working without the field (binding skipped); new deployments should always populate it.
+- **zkdcap verifier migration → DONE (Noir/UltraHonk)**: attestation verifies via `/xion.zk.v1.Query/ProofVerifyUltraHonk`, built on the shared `quartz-zkdcap` crate. The packed 640-byte / 20-field `public_inputs` replace the old gnark journal. See `crates/zkdcap/`, `crates/contracts/core/src/handler/execute/attested.rs`, `crates/cli/src/handler/zkdcap.rs`, `tests/integration/src/zk_mock.rs`.
+- **UltraHonk vkey on testnet**: `dcap-ultrahonk-v1` (registered; shared with dossier/verified-rcv). Circuit + prover live in `zkdcap/circuits/dcap-noir` + `zkdcap/noir-prove-server`.
+- **Set `config.min_tcb_eval_num` + `config.expected_rtmr3` on new deployments**: the `DstackZkAttestation` handler range-checks chain time against the proof's proven `[valid_from, valid_until]` window and rejects `tcb_eval_num` below `min_tcb_eval_num` (default 0 = no floor; raise as Intel publishes new TCB evals). It also enforces `public_inputs.rtmr3 == config.expected_rtmr3` when that field is populated — without it the contract is vulnerable to a "wrong-image-attestation" substitution (attacker submits a valid proof for image Y with `self.compose_hash` of image X). Compute `expected_rtmr3` once from a known-good quote of the intended dstack image and set it on instantiate. Existing deployments keep working without the field (binding skipped); new deployments should populate both.
 - **Anti-sniping for BidBoard auction contract** (separate repo at `/Users/mvid/Development/reliq/bidboard`, but the integration touches Quartz).
 - **IBE-based key management**: commonware `feat/threshold-ibe` branch. Blocked on chain signature support in xiond.
 
@@ -73,24 +73,26 @@ cd tests/integration && cargo test testnet -- --ignored  # live testnet
 ## Architecture
 
 - **TEE**: dstack CVM (Intel TDX). No SGX, no Gramine.
-- **Attestation**: DstackAttestor → TDX quote → zkdcap Groth16 proof → Xion ZK module (`/xion.zk.v1.Query/ProofVerify` via `query_grpc()`)
+- **Attestation**: DstackAttestor → TDX quote → zkdcap Noir/UltraHonk proof → Xion ZK module (`/xion.zk.v1.Query/ProofVerifyUltraHonk` via `query_grpc()`), built on `quartz-zkdcap`
 - **Chain**: Xion (xiond v28+, uxion, CosmWasm 3)
-- **Config**: `zkdcap_vkey` field in Config — name of the verification key registered in Xion's ZK module
+- **Config**: `zkdcap_vkey` (UltraHonk vkey name in Xion's ZK module), `expected_rtmr3` (optional pinned RTMR3), `min_tcb_eval_num` (monotonic TCB-recency floor)
 - **Key management**: DstackKeyManager (dstack KMS) is default. DstackAttestor for TEE quotes.
 - **Encryption**: ECIES in `quartz-enclave-core::encryption`
 - **Mock mode**: `--mock` CLI flag, `mock` feature flag. Swaps DstackAttestor→MockAttestor, DstackAttestation→MockAttestation, skips ZK verification.
-- **Prover**: gnark Groth16 via Unix socket (GNARK_SOCKET env var)
+- **Prover**: Noir/bb UltraHonk via Unix socket (`ZKDCAP_PROVER_SOCKET`, legacy `GNARK_SOCKET` fallback); server at `zkdcap/noir-prove-server`
 
 ## Key files
 
-- `crates/contracts/core/src/handler/execute/attested.rs` — DstackAttestation handler, ZK module query
-- `crates/contracts/core/src/state.rs` — Config with zkdcap_vkey
+- `crates/zkdcap/` — `quartz-zkdcap`: canonical UltraHonk layout/decoders + `verify_quote`/`verify_quote_parts` (recency/validity + tcb-eval) + Xion `ProofVerifyUltraHonk` backend. Shared with dossier + verified-rcv.
+- `crates/contracts/core/src/handler/execute/attested.rs` — DstackZkAttestation handler (verify_quote_parts + check_zk_bindings), ZK module query
+- `crates/contracts/core/src/state.rs` — Config with zkdcap_vkey + expected_rtmr3 + min_tcb_eval_num
 - `crates/enclave/core/src/attestor.rs` — DstackAttestor + MockAttestor
 - `crates/enclave/core/src/key_manager/dstack.rs` — DstackKeyManager
 - `crates/enclave/core/src/encryption.rs` — ECIES helpers
-- `crates/cli/src/handler/zkdcap.rs` — gnark prover integration
-- `specs/handshake.qnt` — Quint formal spec (11 invariants)
-- `tests/integration/src/zk_mock.rs` — ZK module mock (both ProofVerify and ProofVerifyGnark)
+- `crates/cli/src/handler/zkdcap.rs` — Noir prover integration
+- `specs/handshake.qnt` — Quint formal spec (11 invariants); `specs/attestation.qnt` — attestation/UltraHonk spec
+- `crates/contracts/core/verus-prototype/attested.rs` — Verus prototype of the attested handler family
+- `tests/integration/src/zk_mock.rs` — ZK module mock (ProofVerify + ProofVerifyUltraHonk)
 
 ## Related repos
 
@@ -98,4 +100,4 @@ cd tests/integration && cargo test testnet -- --ignored  # live testnet
 - `/Users/mvid/Development/reliq/oauth3` — OAuth2 proxy with dstack attestation
 - `/Users/mvid/Development/reliq/bidboard` — Sponsorship auction contract
 - `/Users/mvid/Development/burnt/commonware` — IBE module on feat/threshold-ibe branch
-- `/Users/mvid/Development/burnt/xion` — Xion chain (release/v29 has gnark ZK support)
+- `/Users/mvid/Development/burnt/xion` — Xion chain (release/v29 has UltraHonk ZK support: `ProofVerifyUltraHonk`)

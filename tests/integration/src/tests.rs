@@ -377,107 +377,97 @@ fn test_handshake_with_quote_attestation() {
 }
 
 // ============================================================
-// Tests: gnark native ZK mock (ProofVerifyGnark endpoint)
+// Tests: UltraHonk ZK mock (ProofVerifyUltraHonk endpoint)
 // ============================================================
 
+const ZK_VERIFY_ULTRAHONK_PATH: &str = "/xion.zk.v1.Query/ProofVerifyUltraHonk";
+
 #[test]
-fn test_gnark_mock_accepts_valid_proof() {
-    use crate::zk_mock::{QueryVerifyGnarkRequest, ProofVerifyGnarkResponse};
-    use crate::fixtures::GnarkFixture;
+fn test_ultrahonk_mock_accepts_valid_proof() {
+    use crate::fixtures::UltraHonkFixture;
+    use crate::zk_mock::{ProofVerifyUltraHonkResponse, QueryVerifyUltraHonkRequest};
     use prost::Message;
 
     let mock = crate::zk_mock::ZkMockStargate::validating();
-    let fixture = GnarkFixture::generate();
+    let fixture = UltraHonkFixture::generate();
 
-    let req = QueryVerifyGnarkRequest {
+    let req = QueryVerifyUltraHonkRequest {
         proof: fixture.proof_bytes,
         public_inputs: fixture.public_inputs_bytes,
-        vkey_name: "zkdcap-gnark".to_string(),
+        vkey_name: "dcap-ultrahonk-v1".to_string(),
         vkey_id: 0,
     };
     let mut req_bytes = Vec::new();
     req.encode(&mut req_bytes).unwrap();
 
-    let resp_bytes = mock.dispatch(
-        "/xion.zk.v1.Query/ProofVerifyGnark",
-        &req_bytes,
-    ).unwrap();
+    let resp_bytes = mock.dispatch(ZK_VERIFY_ULTRAHONK_PATH, &req_bytes).unwrap();
 
-    let resp = ProofVerifyGnarkResponse::decode(resp_bytes.as_slice()).unwrap();
-    assert!(resp.verified, "valid gnark proof should verify");
+    let resp = ProofVerifyUltraHonkResponse::decode(resp_bytes.as_slice()).unwrap();
+    assert!(resp.verified, "valid UltraHonk proof should verify");
 }
 
 #[test]
-fn test_gnark_mock_rejects_empty_proof() {
-    use crate::zk_mock::{QueryVerifyGnarkRequest, ProofVerifyGnarkResponse};
+fn test_ultrahonk_mock_rejects_empty_proof() {
+    use crate::zk_mock::{ProofVerifyUltraHonkResponse, QueryVerifyUltraHonkRequest};
     use prost::Message;
 
     let mock = crate::zk_mock::ZkMockStargate::validating();
 
-    let req = QueryVerifyGnarkRequest {
+    let req = QueryVerifyUltraHonkRequest {
         proof: vec![],
-        public_inputs: vec![0u8; 64],
-        vkey_name: "zkdcap-gnark".to_string(),
+        public_inputs: vec![0u8; quartz_zkdcap::ULTRAHONK_PUBLIC_INPUTS_LEN],
+        vkey_name: "dcap-ultrahonk-v1".to_string(),
         vkey_id: 0,
     };
     let mut req_bytes = Vec::new();
     req.encode(&mut req_bytes).unwrap();
 
-    let resp_bytes = mock.dispatch(
-        "/xion.zk.v1.Query/ProofVerifyGnark",
-        &req_bytes,
-    ).unwrap();
+    let resp_bytes = mock.dispatch(ZK_VERIFY_ULTRAHONK_PATH, &req_bytes).unwrap();
 
-    let resp = ProofVerifyGnarkResponse::decode(resp_bytes.as_slice()).unwrap();
+    let resp = ProofVerifyUltraHonkResponse::decode(resp_bytes.as_slice()).unwrap();
     assert!(!resp.verified, "empty proof should not verify");
 }
 
 #[test]
-fn test_gnark_mock_rejects_bad_public_inputs() {
-    use crate::zk_mock::{QueryVerifyGnarkRequest, ProofVerifyGnarkResponse};
+fn test_ultrahonk_mock_rejects_wrong_public_inputs_len() {
+    use crate::zk_mock::{ProofVerifyUltraHonkResponse, QueryVerifyUltraHonkRequest};
     use prost::Message;
 
     let mock = crate::zk_mock::ZkMockStargate::validating();
 
-    let req = QueryVerifyGnarkRequest {
-        proof: vec![0x42; 384], // valid size
-        public_inputs: vec![0u8; 33], // not a multiple of 32
-        vkey_name: "zkdcap-gnark".to_string(),
+    let req = QueryVerifyUltraHonkRequest {
+        proof: vec![0x42; 2048],
+        public_inputs: vec![0u8; 512], // not the packed 640-byte blob
+        vkey_name: "dcap-ultrahonk-v1".to_string(),
         vkey_id: 0,
     };
     let mut req_bytes = Vec::new();
     req.encode(&mut req_bytes).unwrap();
 
-    let resp_bytes = mock.dispatch(
-        "/xion.zk.v1.Query/ProofVerifyGnark",
-        &req_bytes,
-    ).unwrap();
+    let resp_bytes = mock.dispatch(ZK_VERIFY_ULTRAHONK_PATH, &req_bytes).unwrap();
 
-    let resp = ProofVerifyGnarkResponse::decode(resp_bytes.as_slice()).unwrap();
-    assert!(!resp.verified, "misaligned public inputs should not verify");
+    let resp = ProofVerifyUltraHonkResponse::decode(resp_bytes.as_slice()).unwrap();
+    assert!(!resp.verified, "wrong-length public inputs should not verify");
 }
 
 #[test]
-fn test_gnark_mock_rejects_short_proof() {
-    use crate::zk_mock::{QueryVerifyGnarkRequest, ProofVerifyGnarkResponse};
+fn test_ultrahonk_mock_rejects_short_proof() {
+    use crate::zk_mock::{ProofVerifyUltraHonkResponse, QueryVerifyUltraHonkRequest};
     use prost::Message;
 
     let mock = crate::zk_mock::ZkMockStargate::validating();
 
-    let req = QueryVerifyGnarkRequest {
-        proof: vec![0x42; 50], // too short for BN254 Groth16
-        public_inputs: vec![0u8; 64],
-        vkey_name: "zkdcap-gnark".to_string(),
+    let req = QueryVerifyUltraHonkRequest {
+        proof: vec![0x42; 32], // too short
+        public_inputs: vec![0u8; quartz_zkdcap::ULTRAHONK_PUBLIC_INPUTS_LEN],
+        vkey_name: "dcap-ultrahonk-v1".to_string(),
         vkey_id: 0,
     };
     let mut req_bytes = Vec::new();
     req.encode(&mut req_bytes).unwrap();
 
-    let resp_bytes = mock.dispatch(
-        "/xion.zk.v1.Query/ProofVerifyGnark",
-        &req_bytes,
-    ).unwrap();
+    let resp_bytes = mock.dispatch(ZK_VERIFY_ULTRAHONK_PATH, &req_bytes).unwrap();
 
-    let resp = ProofVerifyGnarkResponse::decode(resp_bytes.as_slice()).unwrap();
+    let resp = ProofVerifyUltraHonkResponse::decode(resp_bytes.as_slice()).unwrap();
     assert!(!resp.verified, "short proof should not verify");
 }

@@ -1,14 +1,18 @@
 //! zkdcap proof generation and attestation type transformation.
 //!
-//! The enclave produces a DstackAttestation (raw TDX quote). If a gnark
-//! prover is available (GNARK_SOCKET env var), this module generates a
-//! Groth16 proof and transforms the attestation into a DstackZkAttestation
-//! before submitting to the contract.
+//! The enclave produces a DstackAttestation (raw TDX quote). If a Noir/bb
+//! prover is available (`ZKDCAP_PROVER_SOCKET`, or the legacy `GNARK_SOCKET`),
+//! this module generates an UltraHonk proof and transforms the attestation into
+//! a DstackZkAttestation before submitting to the contract.
 //!
-//! Without GNARK_SOCKET, the raw DstackAttestation is submitted as-is.
+//! Without a prover socket, the raw DstackAttestation is submitted as-is.
 //!
-//! The gnark server communicates over a Unix socket.
-//! At ~5s CPU / <1s GPU, proof generation runs inline during the handshake.
+//! The prover (`quartz/../zkdcap/noir-prove-server`) listens on a unix socket
+//! and expects `POST /prove {quote_hex, collateral_json, timestamp}`, returning
+//! `{proof, public_inputs}` (both base64). It does NOT fetch Intel collateral
+//! itself — the caller must supply `collateral_json` (carried on the enclave's
+//! attestation response under `collateral`). There is no separate journal: the
+//! packed `public_inputs` ARE the journal.
 //!
 //! In mock mode, this is a no-op.
 
@@ -17,21 +21,23 @@ use serde_json::Value;
 use std::io::{Read, Write};
 use tracing::{debug, info, warn};
 
-/// If GNARK_SOCKET is set and the attestation contains a quote,
-/// generate a zkdcap proof and transform the attestation from
-/// DstackAttestation (raw quote) to DstackZkAttestation (ZK proof).
-///
-/// If GNARK_SOCKET is not set, the raw DstackAttestation is left as-is.
+/// If a prover socket is set and the attestation contains a quote, generate an
+/// UltraHonk proof and transform the attestation from DstackAttestation (raw
+/// quote) to DstackZkAttestation (ZK proof). Otherwise the raw DstackAttestation
+/// is left as-is.
 pub fn inject_zkdcap_proof(mut response: Value, mock: bool) -> Result<Value> {
     if mock {
         debug!("mock mode: skipping zkdcap proof generation");
         return Ok(response);
     }
 
-    let socket_path = match std::env::var("GNARK_SOCKET") {
+    // Prefer the new var; fall back to the legacy GNARK_SOCKET name.
+    let socket_path = match std::env::var("ZKDCAP_PROVER_SOCKET")
+        .or_else(|_| std::env::var("GNARK_SOCKET"))
+    {
         Ok(path) => path,
         Err(_) => {
-            warn!("GNARK_SOCKET not set, submitting raw DstackAttestation");
+            warn!("ZKDCAP_PROVER_SOCKET not set, submitting raw DstackAttestation");
             return Ok(response);
         }
     };
@@ -58,27 +64,35 @@ pub fn inject_zkdcap_proof(mut response: Value, mock: bool) -> Result<Value> {
         return Ok(response);
     }
 
-    info!("Generating zkdcap proof via gnark server...");
+    // The Noir prover needs Intel collateral (TCB-Info, QE-Identity, certs, CRLs)
+    // for this quote's FMSPC. Unlike the old gnark `/prove-full`, it does not
+    // fetch collateral itself; the host/enclave must supply it on the attestation
+    // response. Fail loudly on a configured-but-unsatisfiable prover rather than
+    // silently dropping to an unverifiable raw quote.
+    let collateral_json = match attestation.get("collateral") {
+        Some(c) if !c.is_null() => c.clone(),
+        _ => {
+            return Err(eyre!(
+                "prover socket is set but the attestation response carries no `collateral`; \
+                 the Noir prover requires Intel collateral (see crate docs)"
+            ));
+        }
+    };
 
-    let proof_result = call_gnark_prover(&socket_path, &quote_hex)?;
+    info!("Generating zkdcap proof via Noir prover...");
+
+    let proof_result = call_noir_prover(&socket_path, &quote_hex, &collateral_json)?;
 
     // Transform DstackAttestation → DstackZkAttestation:
-    // Keep user_data and compose_hash, replace quote/event_log with proof fields.
-    let user_data = attestation
-        .get("user_data")
-        .cloned()
-        .unwrap_or(Value::Null);
-    let compose_hash = attestation
-        .get("compose_hash")
-        .cloned()
-        .unwrap_or(Value::Null);
+    // keep user_data and compose_hash, replace quote/event_log with proof fields.
+    let user_data = attestation.get("user_data").cloned().unwrap_or(Value::Null);
+    let compose_hash = attestation.get("compose_hash").cloned().unwrap_or(Value::Null);
 
     let zk_attestation = serde_json::json!({
         "user_data": user_data,
         "compose_hash": compose_hash,
         "zkdcap_proof": proof_result.get("proof").cloned().unwrap_or(Value::Null),
-        "zkdcap_public_inputs": proof_result.get("public_inputs").cloned().unwrap_or(Value::Array(vec![])),
-        "zkdcap_journal": proof_result.get("journal").cloned().unwrap_or(Value::Null),
+        "zkdcap_public_inputs": proof_result.get("public_inputs").cloned().unwrap_or(Value::Null),
     });
 
     *attestation = zk_attestation;
@@ -87,15 +101,11 @@ pub fn inject_zkdcap_proof(mut response: Value, mock: bool) -> Result<Value> {
     Ok(response)
 }
 
-/// Call the gnark prover server over Unix socket.
+/// Call the Noir prove server over its unix socket.
 ///
-/// The gnark server expects HTTP POST /prove with:
-///   { "quote_hex": "...", "pre_verified_json": {...}, "timestamp": ... }
-///
-/// For the initial handshake integration, we send the quote_hex and let
-/// the gnark server handle collateral fetching and pre-verification
-/// internally. This matches the gnark server's /prove-full endpoint.
-fn call_gnark_prover(socket_path: &str, quote_hex: &str) -> Result<Value> {
+/// Sends `POST /prove {quote_hex, collateral_json, timestamp}` and returns the
+/// parsed `{proof, public_inputs}` JSON (both base64).
+fn call_noir_prover(socket_path: &str, quote_hex: &str, collateral_json: &Value) -> Result<Value> {
     use serde_json::json;
 
     let now_secs = std::time::SystemTime::now()
@@ -105,16 +115,17 @@ fn call_gnark_prover(socket_path: &str, quote_hex: &str) -> Result<Value> {
 
     let request_body = json!({
         "quote_hex": quote_hex,
+        "collateral_json": collateral_json,
         "timestamp": now_secs,
     });
     let body_bytes =
         serde_json::to_vec(&request_body).map_err(|e| eyre!("serialize request: {e}"))?;
 
     let mut stream = std::os::unix::net::UnixStream::connect(socket_path)
-        .map_err(|e| eyre!("failed to connect to gnark server at {}: {}", socket_path, e))?;
+        .map_err(|e| eyre!("failed to connect to prover at {}: {}", socket_path, e))?;
 
     stream
-        .set_read_timeout(Some(std::time::Duration::from_secs(60)))
+        .set_read_timeout(Some(std::time::Duration::from_secs(120)))
         .ok();
 
     let request = format!(
@@ -140,13 +151,9 @@ fn call_gnark_prover(socket_path: &str, quote_hex: &str) -> Result<Value> {
 
     if !status_line.contains("200") {
         let body = &response_str[body_start..];
-        return Err(eyre!(
-            "gnark server returned {}: {}",
-            status_line,
-            body.trim()
-        ));
+        return Err(eyre!("prover returned {}: {}", status_line, body.trim()));
     }
 
     let body = &response[body_start..];
-    serde_json::from_slice(body).map_err(|e| eyre!("parse gnark response: {e}"))
+    serde_json::from_slice(body).map_err(|e| eyre!("parse prover response: {e}"))
 }
