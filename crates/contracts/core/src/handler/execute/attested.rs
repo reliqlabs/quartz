@@ -24,20 +24,56 @@ use crate::{
 //     verified-equal against the wrapper-supplied `self.user_data`. Closes the
 //     "anybody-can-substitute-the-attested-user-data" vector.
 //
-// (2) rtmr3 binding (compose_hash transitive): enforced when
-//     `config.expected_rtmr3` is set. The public-inputs `rtmr3` (48-byte
-//     SHA-384 TDX measurement register) is verified-equal against the
-//     on-chain-pinned value. When `None`, skipped (backwards-compat); the
-//     residual "wrong-image-attestation" vector remains open until pinned.
+// (2) image binding (per-register TDX measurement pins): for each of
+//     MRTD/RTMR0/RTMR1/RTMR2/RTMR3 that the config pins, the proof's decoded
+//     register is verified-equal against the pinned value; unset registers are
+//     skipped. SECURE-BY-DEFAULT: if a vkey is configured (verification on) and
+//     NO register is pinned, verification is REJECTED unless
+//     `config.allow_any_image` is set (trust any genuine TDX enclave). This
+//     closes the silent "no image binding" footgun. dstack register semantics +
+//     the per-instance RTMR3 caveat are documented on `state::Config`.
 //
 // In the prior gnark design these fields were decoded from a separate
 // `zkdcap_journal` blob; under UltraHonk the packed `public_inputs` ARE the
 // journal, so the bytes come straight from `quartz_zkdcap`'s decoder.
 #[cfg(not(feature = "mock"))]
+struct ImagePins<'a> {
+    mrtd: Option<&'a [u8]>,
+    rtmr0: Option<&'a [u8]>,
+    rtmr1: Option<&'a [u8]>,
+    rtmr2: Option<&'a [u8]>,
+    rtmr3: Option<&'a [u8]>,
+    allow_any_image: bool,
+}
+
+// Verify one register if pinned. Returns Ok(true) if it was pinned (and matched),
+// Ok(false) if unpinned, Err on wrong-length or mismatch.
+#[cfg(not(feature = "mock"))]
+fn check_reg(actual: &[u8; 48], expected: Option<&[u8]>, name: &str) -> Result<bool, Error> {
+    match expected {
+        None => Ok(false),
+        Some(e) => {
+            if e.len() != 48 {
+                return Err(Error::ZkdcapVerificationFailed(format!(
+                    "config.expected_{name} wrong length: expected 48, got {}",
+                    e.len()
+                )));
+            }
+            if actual.as_slice() != e {
+                return Err(Error::ZkdcapVerificationFailed(format!(
+                    "public_inputs {name} does not match config.expected_{name}"
+                )));
+            }
+            Ok(true)
+        }
+    }
+}
+
+#[cfg(not(feature = "mock"))]
 fn check_zk_bindings(
     decoded: &quartz_zkdcap::DecodedQuote,
     expected_user_data: &[u8; 64],
-    expected_rtmr3: Option<&[u8]>,
+    pins: &ImagePins<'_>,
 ) -> Result<(), Error> {
     // report_data binding (always enforced)
     if &decoded.report_data != expected_user_data {
@@ -46,19 +82,21 @@ fn check_zk_bindings(
         ));
     }
 
-    // rtmr3 binding (conditional on config.expected_rtmr3 being set)
-    if let Some(expected) = expected_rtmr3 {
-        if expected.len() != 48 {
-            return Err(Error::ZkdcapVerificationFailed(format!(
-                "config.expected_rtmr3 wrong length: expected 48, got {}",
-                expected.len()
-            )));
-        }
-        if decoded.rtmr3().as_slice() != expected {
-            return Err(Error::ZkdcapVerificationFailed(
-                "public_inputs rtmr3 does not match config.expected_rtmr3".to_string(),
-            ));
-        }
+    // Per-register image pins. measurements order: [MRTD, RTMR0, RTMR1, RTMR2, RTMR3].
+    let m = &decoded.measurements;
+    let mut any_pinned = false;
+    any_pinned |= check_reg(&m[0], pins.mrtd, "mrtd")?;
+    any_pinned |= check_reg(&m[1], pins.rtmr0, "rtmr0")?;
+    any_pinned |= check_reg(&m[2], pins.rtmr1, "rtmr1")?;
+    any_pinned |= check_reg(&m[3], pins.rtmr2, "rtmr2")?;
+    any_pinned |= check_reg(&m[4], pins.rtmr3, "rtmr3")?;
+
+    // Secure-by-default: verifying without any image pin requires an explicit
+    // opt-in (the image is then unbound — trust any genuine TDX enclave).
+    if !any_pinned && !pins.allow_any_image {
+        return Err(Error::ZkdcapVerificationFailed(
+            "no image register pinned: set expected_mrtd/rtmr0/rtmr1/rtmr2/rtmr3 or allow_any_image".to_string(),
+        ));
     }
 
     Ok(())
@@ -155,7 +193,15 @@ impl Handler for DstackZkAttestation {
             )
         })?;
 
-        check_zk_bindings(&decoded, &self.user_data, config.expected_rtmr3())?;
+        let pins = ImagePins {
+            mrtd: config.expected_mrtd(),
+            rtmr0: config.expected_rtmr0(),
+            rtmr1: config.expected_rtmr1(),
+            rtmr2: config.expected_rtmr2(),
+            rtmr3: config.expected_rtmr3(),
+            allow_any_image: config.allow_any_image(),
+        };
+        check_zk_bindings(&decoded, &self.user_data, &pins)?;
 
         Ok(Response::new().add_attribute("action", "zkdcap_verified"))
     }
@@ -266,18 +312,38 @@ mod tests {
         }
     }
 
+    // Full DecodedQuote with explicit per-register measurements.
+    fn decoded_full(report_data: [u8; 64], measurements: [[u8; 48]; MEASUREMENT_REGS]) -> DecodedQuote {
+        DecodedQuote {
+            report_data,
+            measurements,
+            measurement_digest: [0u8; 32],
+            tcb_status: 0,
+            timestamp: 0,
+            tcb_eval_num: 0,
+            qe_eval_num: 0,
+            valid_from: 0,
+            valid_until: 0,
+        }
+    }
+
+    fn no_pins(allow_any_image: bool) -> ImagePins<'static> {
+        ImagePins { mrtd: None, rtmr0: None, rtmr1: None, rtmr2: None, rtmr3: None, allow_any_image }
+    }
+
     #[test]
     fn report_data_binding_accepts_matching() {
         let user_data = [0xAAu8; 64];
         let d = decoded_with(user_data, [0xBBu8; 48]);
-        check_zk_bindings(&d, &user_data, None).unwrap();
+        // allow_any_image so the require-one rule doesn't fire for this case.
+        check_zk_bindings(&d, &user_data, &no_pins(true)).unwrap();
     }
 
     #[test]
     fn report_data_binding_rejects_mismatch() {
         let user_data = [0xAAu8; 64];
         let d = decoded_with([0xCCu8; 64], [0xBBu8; 48]);
-        let err = check_zk_bindings(&d, &user_data, None).unwrap_err();
+        let err = check_zk_bindings(&d, &user_data, &no_pins(true)).unwrap_err();
         assert!(format!("{err}").contains("report_data"));
     }
 
@@ -286,32 +352,68 @@ mod tests {
         let user_data = [0xAAu8; 64];
         let rtmr3 = [0xBBu8; 48];
         let d = decoded_with(user_data, rtmr3);
-        check_zk_bindings(&d, &user_data, Some(&rtmr3)).unwrap();
+        let mut p = no_pins(false);
+        p.rtmr3 = Some(&rtmr3);
+        check_zk_bindings(&d, &user_data, &p).unwrap();
     }
 
     #[test]
     fn rtmr3_binding_rejects_mismatch_when_pinned() {
         let user_data = [0xAAu8; 64];
         let d = decoded_with(user_data, [0xCCu8; 48]);
-        let err = check_zk_bindings(&d, &user_data, Some(&[0xBBu8; 48])).unwrap_err();
+        let want = [0xBBu8; 48];
+        let mut p = no_pins(false);
+        p.rtmr3 = Some(&want);
+        let err = check_zk_bindings(&d, &user_data, &p).unwrap_err();
         assert!(format!("{err}").contains("rtmr3"));
     }
 
     #[test]
-    fn rtmr3_binding_skipped_when_none() {
-        // With no expected_rtmr3 pinned, any rtmr3 is accepted (backwards-compat
-        // for deployments that pre-date the config field).
+    fn mrtd_and_rtmr1_pins_enforced() {
         let user_data = [0xAAu8; 64];
-        let d = decoded_with(user_data, [0xCCu8; 48]);
-        check_zk_bindings(&d, &user_data, None).unwrap();
+        let mut m = [[0u8; 48]; MEASUREMENT_REGS];
+        m[0] = [0x11; 48]; // MRTD
+        m[2] = [0x22; 48]; // RTMR1
+        let d = decoded_full(user_data, m);
+        // both match -> ok
+        let mrtd = [0x11u8; 48];
+        let rtmr1 = [0x22u8; 48];
+        let mut p = no_pins(false);
+        p.mrtd = Some(&mrtd);
+        p.rtmr1 = Some(&rtmr1);
+        check_zk_bindings(&d, &user_data, &p).unwrap();
+        // mrtd mismatch -> err naming mrtd
+        let bad = [0x99u8; 48];
+        let mut p2 = no_pins(false);
+        p2.mrtd = Some(&bad);
+        let err = check_zk_bindings(&d, &user_data, &p2).unwrap_err();
+        assert!(format!("{err}").contains("mrtd"));
     }
 
     #[test]
-    fn rejects_wrong_length_expected_rtmr3() {
+    fn secure_by_default_rejects_when_no_pin_and_not_allowed() {
+        let user_data = [0xAAu8; 64];
+        let d = decoded_with(user_data, [0xCCu8; 48]);
+        let err = check_zk_bindings(&d, &user_data, &no_pins(false)).unwrap_err();
+        assert!(format!("{err}").contains("no image register pinned"));
+    }
+
+    #[test]
+    fn allow_any_image_permits_no_pin() {
+        let user_data = [0xAAu8; 64];
+        let d = decoded_with(user_data, [0xCCu8; 48]);
+        check_zk_bindings(&d, &user_data, &no_pins(true)).unwrap();
+    }
+
+    #[test]
+    fn rejects_wrong_length_pin() {
         let user_data = [0xAAu8; 64];
         let d = decoded_with(user_data, [0xBBu8; 48]);
-        // 32-byte expected_rtmr3 when 48 is required
-        let err = check_zk_bindings(&d, &user_data, Some(&[0u8; 32])).unwrap_err();
+        // 32-byte rtmr3 pin when 48 is required
+        let short = [0u8; 32];
+        let mut p = no_pins(false);
+        p.rtmr3 = Some(&short);
+        let err = check_zk_bindings(&d, &user_data, &p).unwrap_err();
         assert!(format!("{err}").contains("wrong length"));
     }
 }

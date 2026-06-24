@@ -81,7 +81,9 @@ module attestation {
     compose_hash: ComposeHash,
     zkdcap_vkey: str,        // "" if not configured
     min_tcb_eval: int,       // monotonic TCB-recency floor (0 ⇒ no floor)
-    expected_rtmr3: ComposeHash, // "" ⇒ rtmr3 binding skipped (default)
+    expected_rtmr3: ComposeHash, // "" ⇒ no register pinned (abstracts the
+                                 // production mrtd/rtmr0-3 pin set)
+    allow_any_image: bool,   // escape hatch: verify with no register pinned
   }
 
   type ZkModuleState = {
@@ -110,6 +112,8 @@ module attestation {
     | ActVerifyZk
     | ActEnableMock
     | ActClearVkey
+    | ActClearImagePin
+    | ActAllowAnyImage
 
   // ============================================================
   // State
@@ -198,6 +202,7 @@ module attestation {
       zkdcap_vkey: VALID_VKEY,
       min_tcb_eval: TCB_FLOOR,
       expected_rtmr3: VALID_RTMR3,
+      allow_any_image: false,
     },
     zk_module' = {
       registered_vkeys: Set(VALID_VKEY),
@@ -343,10 +348,13 @@ module attestation {
         last_action' = ActVerifyZk,
       }
     } else if (msg.attestation.proof.report_data != msg.attestation.user_data
-               or (config.expected_rtmr3 != "" and msg.attestation.proof.rtmr3 != config.expected_rtmr3)) {
+               or (config.expected_rtmr3 != "" and msg.attestation.proof.rtmr3 != config.expected_rtmr3)
+               or (config.expected_rtmr3 == "" and not(config.allow_any_image))) {
       // Binding gate (check_zk_bindings, runs after proof verification): the
       // decoded report_data MUST equal the wrapper user_data (always); the
-      // decoded rtmr3 MUST equal the pinned expected_rtmr3 (only when pinned).
+      // decoded rtmr3 MUST equal the pinned expected_rtmr3 (only when pinned);
+      // and SECURE-BY-DEFAULT, if no register is pinned, verification is
+      // rejected unless allow_any_image is set (the require-one rule).
       all {
         last_result' = RejectedBindingMismatch,
         messages_rejected' = messages_rejected + 1,
@@ -408,6 +416,29 @@ module attestation {
     last_action' = ActClearVkey,
   }
 
+  /// Unpin the image (no register pinned). Makes the secure-by-default
+  /// require-one reject path reachable.
+  action clear_image_pin: bool = all {
+    config' = { ...config, expected_rtmr3: "" },
+    zk_module' = zk_module,
+    last_result' = last_result,
+    messages_accepted' = messages_accepted,
+    messages_rejected' = messages_rejected,
+    last_input' = last_input,
+    last_action' = ActClearImagePin,
+  }
+
+  /// Opt into the allow-any-image escape hatch.
+  action allow_any_image: bool = all {
+    config' = { ...config, allow_any_image: true },
+    zk_module' = zk_module,
+    last_result' = last_result,
+    messages_accepted' = messages_accepted,
+    messages_rejected' = messages_rejected,
+    last_input' = last_input,
+    last_action' = ActAllowAnyImage,
+  }
+
   // ============================================================
   // Step
   // ============================================================
@@ -434,6 +465,8 @@ module attestation {
       verify_any(msg),
       enable_mock,
       clear_vkey,
+      clear_image_pin,
+      allow_any_image,
     }
   }
 
@@ -586,6 +619,20 @@ module attestation {
              and zk_module.registered_vkeys.contains(config.zkdcap_vkey)
              and (not(zk_module.accept_all)
                   or next(last_input.attestation.proof.proof_bytes) != ""))
+  )
+
+  /// Secure-by-default image binding (require-one). At the moment `verify_zk`
+  /// produces `Accepted`, the then-current config had EITHER a pinned image
+  /// register OR `allow_any_image` explicitly set — you cannot accept a proof
+  /// while leaving the image unbound by accident. Temporal (not state) form for
+  /// the same reason as the vkey property: `clear_image_pin`/`allow_any_image`
+  /// are separate transitions, and `verify_zk` preserves config, so the
+  /// pre-transition config IS the config the verifier used. Mirrors the
+  /// require-one gate in the production handler and the Verus model.
+  temporal temporal_zk_accept_requires_image = always(
+    (next(last_action) == ActVerifyZk
+     and next(last_result) == Accepted)
+    implies (config.expected_rtmr3 != "" or config.allow_any_image)
   )
 
   /// Once mock mode is enabled (`accept_all = true`), it stays enabled.

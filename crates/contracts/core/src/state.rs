@@ -60,31 +60,36 @@ pub struct Config {
     /// UltraHonk proof. When set, the `DstackZkAttestation` handler queries
     /// `/xion.zk.v1.Query/ProofVerifyUltraHonk` directly.
     zkdcap_vkey: Option<String>,
-    /// Expected TDX RTMR3 (48-byte SHA-384 measurement register).
-    ///
-    /// When `Some`, the `DstackZkAttestation` handler additionally verifies
-    /// that the proof's public-inputs `rtmr3` equals this value. This is the
-    /// path-(c) closure of the Round D Critical 4 `compose_hash` binding gap
-    /// (2026-05-21): the contract owner pins the expected post-boot RTMR3 of
-    /// the deployed dstack VM (which incorporates `compose_hash` via dstack's
-    /// boot-time TDX RTMR extension), and the wrapper enforces
-    /// `public_inputs.rtmr3 == config.expected_rtmr3`. Without this field, an
-    /// attacker with a valid proof for image Y can submit
-    /// `self.compose_hash = config.mr_enclave (value for image X)` and pass
-    /// all other checks.
-    ///
-    /// Deployers should compute `expected_rtmr3` once from a known-good quote
-    /// of the intended dstack image (the RTMR3 the dcap-noir circuit exposes).
-    /// When `None`, the binding is skipped — backwards-compatible with existing
-    /// deployments, but the residual `compose_hash` substitution vector remains
-    /// open.
+    /// Per-register TDX measurement pins for the image binding. Each register
+    /// that is `Some` is ENFORCED (the proof's decoded value must equal it);
+    /// `None` is SKIPPED. dstack mapping (see attestation.md): MRTD = virtual
+    /// firmware; RTMR0 = virtual HW config (vCPU/RAM/devices); RTMR1 = kernel;
+    /// RTMR2 = kernel cmdline + initrd; RTMR3 = app layer (compose-hash +
+    /// per-instance data). MRTD/RTMR1/RTMR2 are stable per dstack base image;
+    /// RTMR0 only for a fixed VM shape; RTMR3 is per-instance so a constant pin
+    /// binds a single instance (prefer compose-hash binding via event-log replay
+    /// for stable app identity — a follow-up). Secure-by-default: when a vkey is
+    /// configured (verification on) at least one register must be pinned, unless
+    /// `allow_any_image` is set.
+    #[serde(default, with = "rtmr_opt_serde")]
+    expected_mrtd: Option<[u8; 48]>,
+    #[serde(default, with = "rtmr_opt_serde")]
+    expected_rtmr0: Option<[u8; 48]>,
+    #[serde(default, with = "rtmr_opt_serde")]
+    expected_rtmr1: Option<[u8; 48]>,
+    #[serde(default, with = "rtmr_opt_serde")]
+    expected_rtmr2: Option<[u8; 48]>,
     #[serde(default, with = "rtmr_opt_serde")]
     expected_rtmr3: Option<[u8; 48]>,
+    /// Escape hatch: allow verification with NO register pinned (trust any
+    /// genuine TDX enclave). Default `false` = secure-by-default.
+    #[serde(default)]
+    allow_any_image: bool,
     /// Monotonic TCB-recency floor: the `DstackZkAttestation` handler rejects
-    /// any proof whose `tcb_eval_num` (the circuit's min tcbEvaluationDataNumber
-    /// over TCB-Info + QE-Identity) is below this. The circuit has no counter,
-    /// so the staleness decision is the consumer's; raise this over time as
-    /// Intel publishes new TCB evaluations. `0` (the default) means no floor.
+    /// any proof whose `tcb_eval_num`/`qe_eval_num` is below this (floor is on
+    /// the smaller). The circuit has no counter, so the staleness decision is
+    /// the consumer's; raise this over time as Intel publishes new TCB
+    /// evaluations. `0` (the default) means no floor.
     #[serde(default)]
     min_tcb_eval_num: u64,
 }
@@ -99,26 +104,55 @@ impl Config {
             mr_enclave,
             light_client_opts,
             zkdcap_vkey,
+            expected_mrtd: None,
+            expected_rtmr0: None,
+            expected_rtmr1: None,
+            expected_rtmr2: None,
             expected_rtmr3: None,
+            allow_any_image: false,
             min_tcb_eval_num: 0,
         }
     }
 
     /// Builder variant: same as `new` but also pins the expected RTMR3.
-    /// Recommended for production deployments — see the field docstring.
     pub fn new_with_rtmr3(
         mr_enclave: MrEnclave,
         light_client_opts: LightClientOpts,
         zkdcap_vkey: Option<String>,
         expected_rtmr3: [u8; 48],
     ) -> Self {
-        Self {
-            mr_enclave,
-            light_client_opts,
-            zkdcap_vkey,
-            expected_rtmr3: Some(expected_rtmr3),
-            min_tcb_eval_num: 0,
-        }
+        Self::new(mr_enclave, light_client_opts, zkdcap_vkey).with_expected_rtmr3(expected_rtmr3)
+    }
+
+    /// Builder: pin the full base-image measurement set (any subset). Pass
+    /// `None` for registers you don't want to enforce.
+    pub fn with_image_pins(
+        mut self,
+        mrtd: Option<[u8; 48]>,
+        rtmr0: Option<[u8; 48]>,
+        rtmr1: Option<[u8; 48]>,
+        rtmr2: Option<[u8; 48]>,
+        rtmr3: Option<[u8; 48]>,
+    ) -> Self {
+        self.expected_mrtd = mrtd;
+        self.expected_rtmr0 = rtmr0;
+        self.expected_rtmr1 = rtmr1;
+        self.expected_rtmr2 = rtmr2;
+        self.expected_rtmr3 = rtmr3;
+        self
+    }
+
+    /// Builder: pin RTMR3 only.
+    pub fn with_expected_rtmr3(mut self, rtmr3: [u8; 48]) -> Self {
+        self.expected_rtmr3 = Some(rtmr3);
+        self
+    }
+
+    /// Builder: opt out of the secure-by-default image-pin requirement (trust
+    /// any genuine TDX enclave). Use only when image identity is bound elsewhere.
+    pub fn with_allow_any_image(mut self, allow: bool) -> Self {
+        self.allow_any_image = allow;
+        self
     }
 
     /// Builder: pin the monotonic TCB-recency floor. See the field docstring.
@@ -139,8 +173,23 @@ impl Config {
         self.zkdcap_vkey.as_deref()
     }
 
+    pub fn expected_mrtd(&self) -> Option<&[u8; 48]> {
+        self.expected_mrtd.as_ref()
+    }
+    pub fn expected_rtmr0(&self) -> Option<&[u8; 48]> {
+        self.expected_rtmr0.as_ref()
+    }
+    pub fn expected_rtmr1(&self) -> Option<&[u8; 48]> {
+        self.expected_rtmr1.as_ref()
+    }
+    pub fn expected_rtmr2(&self) -> Option<&[u8; 48]> {
+        self.expected_rtmr2.as_ref()
+    }
     pub fn expected_rtmr3(&self) -> Option<&[u8; 48]> {
         self.expected_rtmr3.as_ref()
+    }
+    pub fn allow_any_image(&self) -> bool {
+        self.allow_any_image
     }
 
     pub fn min_tcb_eval_num(&self) -> u64 {
@@ -153,9 +202,19 @@ pub struct RawConfig {
     mr_enclave: HexBinary,
     light_client_opts: RawLightClientOpts,
     zkdcap_vkey: Option<String>,
-    /// Hex-encoded 48-byte expected RTMR3. See `Config::expected_rtmr3`.
+    /// Hex-encoded 48-byte expected TDX measurement registers. See `Config`.
+    #[serde(default)]
+    expected_mrtd: Option<HexBinary>,
+    #[serde(default)]
+    expected_rtmr0: Option<HexBinary>,
+    #[serde(default)]
+    expected_rtmr1: Option<HexBinary>,
+    #[serde(default)]
+    expected_rtmr2: Option<HexBinary>,
     #[serde(default)]
     expected_rtmr3: Option<HexBinary>,
+    #[serde(default)]
+    allow_any_image: bool,
     /// Monotonic TCB-recency floor. See `Config::min_tcb_eval_num`.
     #[serde(default)]
     min_tcb_eval_num: u64,
@@ -170,8 +229,23 @@ impl RawConfig {
         self.zkdcap_vkey.as_deref()
     }
 
+    pub fn expected_mrtd(&self) -> Option<&[u8]> {
+        self.expected_mrtd.as_ref().map(|h| h.as_slice())
+    }
+    pub fn expected_rtmr0(&self) -> Option<&[u8]> {
+        self.expected_rtmr0.as_ref().map(|h| h.as_slice())
+    }
+    pub fn expected_rtmr1(&self) -> Option<&[u8]> {
+        self.expected_rtmr1.as_ref().map(|h| h.as_slice())
+    }
+    pub fn expected_rtmr2(&self) -> Option<&[u8]> {
+        self.expected_rtmr2.as_ref().map(|h| h.as_slice())
+    }
     pub fn expected_rtmr3(&self) -> Option<&[u8]> {
         self.expected_rtmr3.as_ref().map(|h| h.as_slice())
+    }
+    pub fn allow_any_image(&self) -> bool {
+        self.allow_any_image
     }
 
     pub fn min_tcb_eval_num(&self) -> u64 {
@@ -183,11 +257,11 @@ impl TryFrom<RawConfig> for Config {
     type Error = StdError;
 
     fn try_from(value: RawConfig) -> Result<Self, Self::Error> {
-        let expected_rtmr3 = value
-            .expected_rtmr3
-            .map(|h| h.to_array::<48>())
-            .transpose()
-            .map_err(|e| StdError::msg(format!("expected_rtmr3: {e}")))?;
+        fn reg(h: Option<HexBinary>, name: &str) -> Result<Option<[u8; 48]>, StdError> {
+            h.map(|h| h.to_array::<48>())
+                .transpose()
+                .map_err(|e| StdError::msg(format!("{name}: {e}")))
+        }
         Ok(Self {
             mr_enclave: value.mr_enclave.to_array()?,
             light_client_opts: value
@@ -195,7 +269,12 @@ impl TryFrom<RawConfig> for Config {
                 .try_into()
                 .map_err(|e| StdError::msg(format!("light_client_opts: {e}")))?,
             zkdcap_vkey: value.zkdcap_vkey,
-            expected_rtmr3,
+            expected_mrtd: reg(value.expected_mrtd, "expected_mrtd")?,
+            expected_rtmr0: reg(value.expected_rtmr0, "expected_rtmr0")?,
+            expected_rtmr1: reg(value.expected_rtmr1, "expected_rtmr1")?,
+            expected_rtmr2: reg(value.expected_rtmr2, "expected_rtmr2")?,
+            expected_rtmr3: reg(value.expected_rtmr3, "expected_rtmr3")?,
+            allow_any_image: value.allow_any_image,
             min_tcb_eval_num: value.min_tcb_eval_num,
         })
     }
@@ -207,7 +286,12 @@ impl From<Config> for RawConfig {
             mr_enclave: value.mr_enclave.into(),
             light_client_opts: value.light_client_opts.into(),
             zkdcap_vkey: value.zkdcap_vkey,
+            expected_mrtd: value.expected_mrtd.map(HexBinary::from),
+            expected_rtmr0: value.expected_rtmr0.map(HexBinary::from),
+            expected_rtmr1: value.expected_rtmr1.map(HexBinary::from),
+            expected_rtmr2: value.expected_rtmr2.map(HexBinary::from),
             expected_rtmr3: value.expected_rtmr3.map(HexBinary::from),
+            allow_any_image: value.allow_any_image,
             min_tcb_eval_num: value.min_tcb_eval_num,
         }
     }

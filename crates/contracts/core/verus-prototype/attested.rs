@@ -79,7 +79,11 @@ pub struct RawConfig {
     pub mr_enclave: MrEnclave,
     pub zkdcap_vkey: u64,  // 0 ⇒ "no vkey configured" (empty string in prod)
     pub min_tcb_eval_num: u64, // monotonic TCB-recency floor (0 ⇒ no floor)
-    pub expected_rtmr3: Option<MrEnclave>, // None ⇒ rtmr3 binding skipped
+    // expected_rtmr3 here abstracts the per-register image pin set
+    // (production: expected_mrtd/rtmr0/rtmr1/rtmr2/rtmr3). Some ⇒ an image
+    // register is pinned and bound; None ⇒ no register pinned.
+    pub expected_rtmr3: Option<MrEnclave>,
+    pub allow_any_image: bool, // escape hatch: verify with no image pin
 }
 
 #[derive(PartialEq, Eq)]
@@ -88,6 +92,7 @@ pub struct Config {
     pub zkdcap_vkey: u64,
     pub min_tcb_eval_num: u64,
     pub expected_rtmr3: Option<MrEnclave>,
+    pub allow_any_image: bool,
 }
 
 impl Config {
@@ -114,6 +119,11 @@ impl Config {
     pub fn expected_rtmr3(&self) -> (r: Option<MrEnclave>)
         ensures r == self.spec_expected_rtmr3(),
     { self.expected_rtmr3 }
+
+    pub open spec fn spec_allow_any_image(&self) -> bool { self.allow_any_image }
+    pub fn allow_any_image(&self) -> (b: bool)
+        ensures b == self.spec_allow_any_image(),
+    { self.allow_any_image }
 }
 
 pub enum Error {
@@ -152,6 +162,7 @@ impl Item {
                     &&& c.zkdcap_vkey == raw.zkdcap_vkey
                     &&& c.min_tcb_eval_num == raw.min_tcb_eval_num
                     &&& c.expected_rtmr3 == raw.expected_rtmr3
+                    &&& c.allow_any_image == raw.allow_any_image
                 }
                 Ok(None) => storage.config.is_none(),
                 Err(e) => e is Std,
@@ -162,6 +173,7 @@ impl Item {
                 mr_enclave: raw.mr_enclave,
                 zkdcap_vkey: raw.zkdcap_vkey,
                 min_tcb_eval_num: raw.min_tcb_eval_num,
+                allow_any_image: raw.allow_any_image,
                 expected_rtmr3: raw.expected_rtmr3,
             })),
             None => Ok(None),
@@ -555,18 +567,20 @@ pub fn dstack_zk_handle(
         match r {
             Ok(_) => {
                 // Either the vkey was unset (skipped) or the vkey was set AND
-                // the verifier said yes AND the recency/validity gate passed
-                // AND report_data is bound (ALWAYS) AND — only when the config
-                // pins expected_rtmr3 — rtmr3 is bound to that pinned value.
-                // The rtmr3 conjunct is a conditional implication, faithfully
-                // mirroring production (default expected_rtmr3=None ⇒ skipped).
+                // the verifier said yes AND recency passed AND report_data is
+                // bound (ALWAYS) AND — when an image register is pinned — rtmr3
+                // is bound to it, AND (secure-by-default) an image register WAS
+                // pinned OR allow_any_image was explicitly set. The last conjunct
+                // is the require-one rule: you cannot verify a proof while
+                // leaving the image unbound unless you opt in.
                 &&& old(storage).config matches Some(raw)
                 &&& (raw.zkdcap_vkey == 0
                      || (zk_query_verify_succeeded(msg.zkdcap_proof, msg.zkdcap_public_inputs, raw.zkdcap_vkey)
                          && recency_ok(msg.zkdcap_public_inputs, now_packed, raw.min_tcb_eval_num)
                          && proof_binds_report_data(msg.zkdcap_proof, msg.zkdcap_public_inputs, msg.user_data)
                          && (raw.expected_rtmr3 matches Some(e)
-                             ==> proof_binds_rtmr3(msg.zkdcap_proof, msg.zkdcap_public_inputs, e))))
+                             ==> proof_binds_rtmr3(msg.zkdcap_proof, msg.zkdcap_public_inputs, e))
+                         && (raw.expected_rtmr3 is Some || raw.allow_any_image)))
             }
             Err(Error::ZkdcapVerificationFailed) => {
                 // Vkey was set AND (verifier said no OR recency failed OR
@@ -613,16 +627,20 @@ pub fn dstack_zk_handle(
         Err(_) => return Err(Error::ZkdcapVerificationFailed),
     }
 
-    // Gate 3b (CONDITIONAL): when the config pins expected_rtmr3, the proof's
-    // rtmr3 must equal it (wrong-image binding). When None, skipped — the
-    // documented backwards-compat residual vector; the Ok postcondition's rtmr3
-    // conjunct is correspondingly conditional.
+    // Gate 3b (image binding + secure-by-default require-one): when an image
+    // register is pinned, the proof's rtmr3 must equal it (wrong-image binding).
+    // When NOTHING is pinned, reject UNLESS allow_any_image is explicitly set —
+    // you cannot verify a proof while leaving the image unbound by accident.
     match config.expected_rtmr3() {
         Some(e) => match verify_binds_rtmr3(msg.zkdcap_proof, msg.zkdcap_public_inputs, e) {
             Ok(()) => {}
             Err(_) => return Err(Error::ZkdcapVerificationFailed),
         },
-        None => {}
+        None => {
+            if !config.allow_any_image() {
+                return Err(Error::ZkdcapVerificationFailed);
+            }
+        }
     }
 
     Ok(Response::new().add_attribute("action", "zkdcap_verified"))
