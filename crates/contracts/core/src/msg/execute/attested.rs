@@ -155,14 +155,13 @@ impl Attestation for MockAttestation {
 
 // ── Dstack Attestation (raw quote, verified by on-chain DCAP) ──────
 
-/// TDX attestation using the raw TDX DCAP quote.
+/// TDX attestation carrying the raw TDX DCAP quote.
 ///
-/// The quote is verified on-chain by the dcap-qvl library or a DCAP
-/// verifier contract. Use this when no ZK prover is available, or
-/// when the chain supports native DCAP verification.
-///
-/// Larger on-chain footprint (~1.2 KB quote + collateral) but no
-/// proof generation latency.
+/// NOTE: on-chain DCAP verification is NOT implemented. The handler for this
+/// variant fails closed (`Error::RawDcapUnsupported`) unless the contract is
+/// built with the `insecure-accept-raw-quote` feature (dev/test only). Use the
+/// `DstackZkAttestation` (zkdcap UltraHonk) path for verified attestation. This
+/// variant exists for a future native on-chain DCAP verifier or off-chain use.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DstackAttestation {
     /// The user data (report_data) embedded in the TDX quote

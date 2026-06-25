@@ -5,7 +5,10 @@
 //! this module generates an UltraHonk proof and transforms the attestation into
 //! a DstackZkAttestation before submitting to the contract.
 //!
-//! Without a prover socket, the raw DstackAttestation is submitted as-is.
+//! Without a prover socket, the raw DstackAttestation is submitted as-is. Note
+//! that a production contract rejects raw quotes (the on-chain handler fails
+//! closed unless built with `insecure-accept-raw-quote`), so a prover is
+//! effectively required against a secure deployment.
 //!
 //! The prover (`quartz/../zkdcap/noir-prove-server`) listens on a unix socket
 //! and expects `POST /prove {quote_hex, collateral_json, timestamp}`, returning
@@ -48,7 +51,10 @@ pub fn inject_zkdcap_proof(mut response: Value, mock: bool) -> Result<Value> {
     {
         Ok(path) => path,
         Err(_) => {
-            warn!("ZKDCAP_PROVER_SOCKET not set, submitting raw DstackAttestation");
+            warn!(
+                "ZKDCAP_PROVER_SOCKET not set, submitting raw DstackAttestation; \
+                 a secure contract will REJECT this (raw DCAP verification fails closed)"
+            );
             return Ok(response);
         }
     };

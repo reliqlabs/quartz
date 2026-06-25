@@ -12,8 +12,14 @@ cw-multi-test = { version = "3", features = ["stargate", "cosmwasm_2_0"] }
 cw-storage-plus = "3"
 cw2 = "3"
 
-# quartz — without mock so DstackAttestation handler queries ZK module
-quartz-contract-core = { path = "../../crates/contracts/core" }
+# quartz — non-mock (real handlers), with insecure-accept-raw-quote so these
+# in-process trusted-host tests can use a raw DstackAttestation as a carrier for
+# the handshake/session state machine. Production builds must NOT set that
+# feature (raw DCAP verification fails closed); the ZK path (ZkMockStargate)
+# exercises the verified flow.
+quartz-contract-core = { path = "../../crates/contracts/core", features = [
+    "insecure-accept-raw-quote",
+] }
 quartz-zkdcap = { path = "../../crates/zkdcap" }
 
 # networking

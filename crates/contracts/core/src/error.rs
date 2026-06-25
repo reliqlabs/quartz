@@ -20,6 +20,11 @@ pub enum Error {
     ContractAddrMismatch,
     #[error("zkdcap verification failed: {0}")]
     ZkdcapVerificationFailed(String),
+    #[error(
+        "raw DCAP quote verification is not implemented on-chain; \
+         submit a DstackZkAttestation (zkdcap UltraHonk proof) instead"
+    )]
+    RawDcapUnsupported,
 }
 
 impl From<K256Error> for Error {

@@ -2,7 +2,9 @@
 // Mirrors src/handler/execute/attested.rs at the spec level.
 //
 // Six handler impls in the production file:
-//   1. impl Handler for DstackAttestation        — non-mock: no-op accept
+//   1. impl Handler for DstackAttestation        — non-mock: FAILS CLOSED
+//                                                  (Err(RawDcapUnsupported);
+//                                                  on-chain DCAP not implemented)
 //   2. impl Handler for DstackZkAttestation      — CONFIG.load → vkey check
 //                                                  → gRPC query → decode
 //                                                  → verified-field check
@@ -24,8 +26,12 @@
 //   - DstackZkAttestation::handle Err(ZkdcapVerificationFailed) ⇒ EITHER
 //     the gRPC query returned verified=false, OR encode/decode failed
 //     (collapsed: the spec just witnesses one of those cases).
-//   - DstackAttestation, MockAttestation, Noop, DstackAnyAttestation: trivial
+//   - MockAttestation, Noop, DstackAnyAttestation(zk-or-trivial inner): trivial
 //     Ok pre/post (collapsed into a single harness `trivial_handler`).
+//   - DstackAttestation (non-mock): FAILS CLOSED — `raw_dcap_handler` proves it
+//     returns Err(RawDcapUnsupported) unconditionally. This is the footgun fix:
+//     an unverified raw quote is never accepted, so it cannot downgrade a
+//     zkdcap-configured contract via the untagged DstackAnyAttestation fallback.
 //
 // SHA-256 / user_data modelling: option (c). UserData is opaque (a u64
 // here, but the handler doesn't construct or destructure it). The interesting
@@ -133,6 +139,7 @@ pub enum Error {
     UserDataMismatch,
     MrEnclaveMismatch,
     ZkdcapVerificationFailed,
+    RawDcapUnsupported,
 }
 
 pub struct Storage {
@@ -201,8 +208,9 @@ impl Response {
 // `ConcreteMsg` stands in for any M: Handler + HasUserData whose handler is a
 // pure no-op (e.g. CoreInstantiate with the storage write factored out, or
 // the trivial Noop<T>). `ConcreteAtt` stands in for A: Attestation +
-// Handler + HasUserData with no internal state to mutate (MockAttestation,
-// DstackAttestation in the non-mock placeholder branch).
+// Handler + HasUserData with no internal state to mutate (MockAttestation).
+// The non-mock DstackAttestation is NOT modelled here — it fails closed; see
+// `raw_dcap_handler` below.
 
 pub struct ConcreteMsg { pub user_data: UserData }
 pub struct ConcreteAtt {
@@ -216,8 +224,7 @@ impl ConcreteMsg {
         ensures u == self.spec_user_data(),
     { self.user_data }
 
-    // No-op handler. Models impl Handler for MockAttestation / Noop<T> /
-    // DstackAttestation-non-mock-branch.
+    // No-op handler. Models impl Handler for MockAttestation / Noop<T>.
     pub fn handle(self, _storage: &mut Storage) -> (r: Result<Response, Error>)
         ensures r is Ok,
     { Ok(Response::default()) }
@@ -242,10 +249,11 @@ impl ConcreteAtt {
     // handler that can return Err (e.g. DstackZkAttestation's gRPC path,
     // or a future A whose body touches storage and can fail). The ensures
     // clause constrains the Err to be a non-wrapper-specific variant
-    // because production attestation handlers (DstackAttestation,
-    // MockAttestation, DstackZkAttestation, Noop) cannot return
-    // UserDataMismatch or MrEnclaveMismatch (those are constructed only
-    // by the Attested wrapper itself, not by inner handlers).
+    // because production attestation handlers (DstackAttestation's
+    // RawDcapUnsupported, DstackZkAttestation's ZkdcapVerificationFailed,
+    // MockAttestation, Noop) cannot return UserDataMismatch or
+    // MrEnclaveMismatch (those are constructed only by the Attested wrapper
+    // itself, not by inner handlers).
     #[verifier::external_body]
     pub fn handle_maybe_err(self, _storage: &mut Storage) -> (r: Result<Response, Error>)
         ensures
@@ -648,11 +656,10 @@ pub fn dstack_zk_handle(
     Ok(Response::new().add_attribute("action", "zkdcap_verified"))
 }
 
-// ── Trivial handler harness (DstackAttestation / MockAttestation / Noop /
-//    DstackAnyAttestation) ──────────────────────────────────────────────────
-// All four collapse to the same shape: ignore all inputs, return Ok. We
-// represent them via one parametric harness rather than four near-identical
-// proofs.
+// ── Trivial handler harness (MockAttestation / Noop / DstackAnyAttestation
+//    zk-or-trivial inner) ──────────────────────────────────────────────────
+// These collapse to the same shape: ignore all inputs, return Ok. We represent
+// them via one parametric harness rather than near-identical proofs.
 
 pub struct TrivialAttestation { pub tag: u64 }  // tag distinguishes which one
 
@@ -663,6 +670,28 @@ pub fn trivial_handler(
     ensures r is Ok,
 {
     Ok(Response::default())
+}
+
+// ── Raw DCAP handler harness (DstackAttestation, non-mock) ──────────────────
+// FAILS CLOSED. On-chain DCAP verification is not implemented, so the raw-quote
+// handler rejects unconditionally with RawDcapUnsupported. Proving `r is Err`
+// (and the variant) is the formal counterpart of the footgun fix: an unverified
+// raw quote is never accepted, so it cannot downgrade a zkdcap-configured
+// contract via the untagged DstackAnyAttestation fallback. RawDcapUnsupported
+// is neither UserDataMismatch nor MrEnclaveMismatch, so it is consistent with
+// the `handle_maybe_err` non-wrapper-variant discipline.
+
+pub struct RawDcapAttestation { pub user_data: UserData, pub mr_enclave: MrEnclave }
+
+pub fn raw_dcap_handler(
+    _att: RawDcapAttestation,
+    _storage: &mut Storage,
+) -> (r: Result<Response, Error>)
+    ensures
+        r is Err,
+        r matches Err(e) ==> e is RawDcapUnsupported,
+{
+    Err(Error::RawDcapUnsupported)
 }
 
 // ── Lemma: wrapper Ok ⇒ inner discipline held ──────────────────────────────

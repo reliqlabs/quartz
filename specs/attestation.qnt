@@ -3,9 +3,15 @@
 // Models the on-chain verification of attested messages via two paths:
 //
 // 1. DstackAttestation (raw TDX DCAP quote):
-//    - Checks user_data hash matches the message
-//    - Checks compose_hash matches contract config
-//    - Accepts (DCAP quote is available for off-chain verification)
+//    - The Attested wrapper checks user_data hash matches the message and
+//      compose_hash matches config (both HOST-SUPPLIED, not extracted from the
+//      quote)
+//    - Then FAILS CLOSED: on-chain DCAP verification is not implemented, so the
+//      raw-quote handler rejects (RejectedRawUnsupported). Accepting an
+//      unverified raw quote would let a host forge an attestation and, via the
+//      untagged enum fallback, downgrade a zkdcap-configured contract. The
+//      production default rejects; an insecure-accept-raw-quote build (dev/test)
+//      is out of scope for this safety model.
 //
 // 2. DstackZkAttestation (zkdcap UltraHonk proof):
 //    - Checks user_data hash matches the message
@@ -95,7 +101,7 @@ module attestation {
 
   type VerificationResult =
     | Accepted
-    | AcceptedQuote            // raw quote accepted (no ZK)
+    | RejectedRawUnsupported   // raw quote rejected: on-chain DCAP not implemented (fail closed)
     | RejectedUserDataMismatch
     | RejectedComposeHashMismatch
     | RejectedZkProofInvalid
@@ -233,8 +239,9 @@ module attestation {
   // ============================================================
 
   /// Verify a raw quote attestation.
-  /// Checks user_data + compose_hash, then accepts.
-  /// The raw quote is available for off-chain or future on-chain DCAP verification.
+  /// The Attested wrapper checks user_data + compose_hash first (host-supplied),
+  /// then the raw-quote handler FAILS CLOSED — on-chain DCAP verification is not
+  /// implemented, so a passing wrapper check still rejects (RejectedRawUnsupported).
   action verify_quote(msg: AttestedMessage): bool = all {
     msg.attestation.variant == Quote,
     if (msg.msg_hash != msg.attestation.user_data) {
@@ -258,11 +265,12 @@ module attestation {
         last_action' = ActVerifyQuote,
       }
     } else {
-      // Quote accepted — user_data and compose_hash verified
+      // Wrapper checks passed, but the raw-quote handler fails closed:
+      // on-chain DCAP verification is not implemented.
       all {
-        last_result' = AcceptedQuote,
-        messages_accepted' = messages_accepted + 1,
-        messages_rejected' = messages_rejected,
+        last_result' = RejectedRawUnsupported,
+        messages_rejected' = messages_rejected + 1,
+        messages_accepted' = messages_accepted,
         config' = config,
         zk_module' = zk_module,
         last_input' = msg,
@@ -490,8 +498,7 @@ module attestation {
   /// Real check: whenever last_result is an acceptance, last_input's
   /// msg_hash and attestation.user_data must have matched.
   val inv_user_data_mismatch_rejected: bool = {
-    if (last_result == Accepted or last_result == AcceptedQuote
-        or last_result == SkippedNoVKey)
+    if (last_result == Accepted or last_result == SkippedNoVKey)
       last_input.msg_hash == last_input.attestation.user_data
     else true
   }
@@ -499,8 +506,7 @@ module attestation {
   /// A message with wrong compose_hash is never accepted (after the
   /// dummy init state, which we exclude via the input being non-empty).
   val inv_compose_hash_mismatch_rejected: bool = {
-    if ((last_result == Accepted or last_result == AcceptedQuote
-         or last_result == SkippedNoVKey)
+    if ((last_result == Accepted or last_result == SkippedNoVKey)
         and last_input.msg_hash != "")
       last_input.attestation.compose_hash == config.compose_hash
     else true
@@ -526,8 +532,9 @@ module attestation {
   /// outcomes.
   val inv_variant_outcome_consistent: bool = {
     if (last_action == ActVerifyQuote)
-      // Quote path produces AcceptedQuote / user_data / compose_hash rejections
-      last_result == AcceptedQuote
+      // Quote path fails closed: RejectedRawUnsupported / user_data / compose_hash rejections.
+      // It NEVER produces an acceptance.
+      last_result == RejectedRawUnsupported
         or last_result == RejectedUserDataMismatch
         or last_result == RejectedComposeHashMismatch
     else if (last_action == ActVerifyZk)
@@ -540,6 +547,17 @@ module attestation {
         or last_result == RejectedStaleOrFuture
         or last_result == RejectedBindingMismatch
         or last_result == RejectedZkProofInvalid
+    else true
+  }
+
+  /// The raw-quote path NEVER accepts (fail closed). Whenever the raw-quote
+  /// handler ran, the result is a rejection, never `Accepted`. This is the core
+  /// of the footgun fix: an unverified raw quote cannot be accepted, so it
+  /// cannot downgrade a zkdcap-configured contract via the untagged
+  /// DstackAnyAttestation fallback.
+  val inv_raw_quote_never_accepted: bool = {
+    if (last_action == ActVerifyQuote)
+      last_result != Accepted
     else true
   }
 
@@ -662,6 +680,7 @@ module attestation {
     and inv_user_data_mismatch_rejected
     and inv_compose_hash_mismatch_rejected
     and inv_variant_outcome_consistent
+    and inv_raw_quote_never_accepted
     and inv_zk_accept_requires_vkey
     and inv_zk_accept_requires_recency
     and inv_zk_accept_requires_binding

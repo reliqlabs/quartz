@@ -17,6 +17,14 @@ A CosmWasm framework for securely interacting with TEE enclaves (dstack/TDX).
 [features]
 default = []
 mock = []
+# DANGER: accept raw DstackAttestation quotes WITHOUT any on-chain verification.
+# The raw-quote handler performs zero TDX verification, so the wrapper's only
+# checks (user_data, compose_hash) compare host-supplied fields a malicious host
+# can forge. Enabling this lets a host submit a forged attestation and, via the
+# untagged DstackAnyAttestation fallback, downgrade a zkdcap-configured contract
+# to no verification. Dev/test against a trusted host only; production builds
+# MUST leave this off and use the zkdcap (DstackZkAttestation) path.
+insecure-accept-raw-quote = []
 std = ["k256/std", "serde/std", "serde_json/std", "sha2/std", "cosmwasm-std/std", "cosmwasm-std/stargate"]
 library = []
 

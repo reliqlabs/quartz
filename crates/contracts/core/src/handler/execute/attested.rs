@@ -120,12 +120,19 @@ fn check_compose_hash(
 
 // ── DstackAttestation handler (raw quote) ──────────────────────────
 
-/// Raw DCAP quote verification.
+/// Raw DCAP quote verification — FAILS CLOSED.
 ///
-/// For chains that support native DCAP verification or have a DCAP
-/// verifier contract deployed. Currently a no-op placeholder — the
-/// Attested<M,A> wrapper already verifies user_data and compose_hash.
-/// Full on-chain DCAP verification would be added here.
+/// On-chain DCAP quote verification is not implemented. This handler does NOT
+/// verify the raw TDX quote, and the surrounding `Attested<M,A>` wrapper only
+/// compares `user_data` and `compose_hash`, both of which are HOST-SUPPLIED
+/// fields (not extracted from the quote). Accepting here would let a malicious
+/// host forge an attestation with attacker-chosen user_data/compose_hash and,
+/// via the untagged `DstackAnyAttestation` fallback, downgrade a
+/// zkdcap-configured contract to zero verification. So by default this rejects
+/// with `Error::RawDcapUnsupported`; submit a `DstackZkAttestation` (zkdcap
+/// UltraHonk proof) instead. A future native on-chain DCAP verifier would
+/// replace this body. The `insecure-accept-raw-quote` feature reinstates the
+/// old unverified-accept behaviour for dev/test against a trusted host only.
 #[cfg(not(feature = "mock"))]
 impl Handler for DstackAttestation {
     fn handle(
@@ -134,11 +141,15 @@ impl Handler for DstackAttestation {
         _env: &Env,
         _info: &MessageInfo,
     ) -> Result<Response, Error> {
-        // TODO: On-chain DCAP quote verification.
-        // For now, user_data and compose_hash checks in the Attested wrapper
-        // provide the core integrity guarantees. The raw quote is available
-        // for off-chain verification or future on-chain DCAP support.
-        Ok(Response::new().add_attribute("action", "dcap_quote_accepted"))
+        #[cfg(not(feature = "insecure-accept-raw-quote"))]
+        {
+            Err(Error::RawDcapUnsupported)
+        }
+        // DANGER: opt-in, no verification. Never enable in production.
+        #[cfg(feature = "insecure-accept-raw-quote")]
+        {
+            Ok(Response::new().add_attribute("action", "dcap_quote_unverified_accepted"))
+        }
     }
 }
 
@@ -496,5 +507,24 @@ mod tests {
         let d = decoded_rtmr3([0u8; 48]);
         let err = check_compose_hash(&d, None, &[0xAB]).unwrap_err();
         assert!(format!("{err}").contains("event_log"));
+    }
+
+    // ── raw DstackAttestation handler fails closed ─────────────────────
+
+    // The raw-quote path does zero TDX verification; by default (no
+    // `insecure-accept-raw-quote` feature) it must reject so a host cannot
+    // submit a forged/unverified quote, nor downgrade a zkdcap-configured
+    // contract via the untagged DstackAnyAttestation fallback.
+    #[cfg(not(feature = "insecure-accept-raw-quote"))]
+    #[test]
+    fn raw_dstack_handler_fails_closed() {
+        use cosmwasm_std::testing::{message_info, mock_dependencies, mock_env};
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let sender = deps.api.addr_make("sender");
+        let info = message_info(&sender, &[]);
+        let att = DstackAttestation::new([0u8; 64], [0u8; 32], vec![1, 2, 3], None);
+        let err = Handler::handle(att, deps.as_mut(), &env, &info).unwrap_err();
+        assert!(matches!(err, Error::RawDcapUnsupported));
     }
 }
