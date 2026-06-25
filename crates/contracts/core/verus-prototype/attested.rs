@@ -92,6 +92,7 @@ pub struct RawConfig {
     // The require-one rule + the binding gate below are mechanism-agnostic.
     pub expected_rtmr3: Option<MrEnclave>,
     pub allow_any_image: bool, // escape hatch: verify with no image pin
+    pub max_tcb_status: u64,   // max acceptable TCB-status severity (0 ⇒ UpToDate only)
 }
 
 #[derive(PartialEq, Eq)]
@@ -101,6 +102,7 @@ pub struct Config {
     pub min_tcb_eval_num: u64,
     pub expected_rtmr3: Option<MrEnclave>,
     pub allow_any_image: bool,
+    pub max_tcb_status: u64,
 }
 
 impl Config {
@@ -122,6 +124,11 @@ impl Config {
     pub fn min_tcb_eval_num(&self) -> (m: u64)
         ensures m == self.spec_min_tcb_eval_num(),
     { self.min_tcb_eval_num }
+
+    pub open spec fn spec_max_tcb_status(&self) -> u64 { self.max_tcb_status }
+    pub fn max_tcb_status(&self) -> (m: u64)
+        ensures m == self.spec_max_tcb_status(),
+    { self.max_tcb_status }
 
     pub open spec fn spec_expected_rtmr3(&self) -> Option<MrEnclave> { self.expected_rtmr3 }
     pub fn expected_rtmr3(&self) -> (r: Option<MrEnclave>)
@@ -172,6 +179,7 @@ impl Item {
                     &&& c.min_tcb_eval_num == raw.min_tcb_eval_num
                     &&& c.expected_rtmr3 == raw.expected_rtmr3
                     &&& c.allow_any_image == raw.allow_any_image
+                    &&& c.max_tcb_status == raw.max_tcb_status
                 }
                 Ok(None) => storage.config.is_none(),
                 Err(e) => e is Std,
@@ -184,6 +192,7 @@ impl Item {
                 min_tcb_eval_num: raw.min_tcb_eval_num,
                 allow_any_image: raw.allow_any_image,
                 expected_rtmr3: raw.expected_rtmr3,
+                max_tcb_status: raw.max_tcb_status,
             })),
             None => Ok(None),
         }
@@ -470,6 +479,15 @@ pub uninterp spec fn recency_ok(
     min_tcb_eval: u64,
 ) -> bool;
 
+// Spec-level uninterpreted predicate for the TCB-status gate: the proof's
+// decoded tcb_status severity is at or below `max_tcb_status` (lower = better).
+// Production: the `tcb_status <= max_tcb_status` check in
+// `quartz_zkdcap::verify_quote_parts`. Revoked is rejected in-circuit.
+pub uninterp spec fn tcb_status_ok(
+    public_inputs: u64,
+    max_tcb_status: u64,
+) -> bool;
+
 // Spec-level uninterpreted predicate: the proof's public inputs encode the
 // expected report_data (== wrapper user_data). Production `check_zk_bindings`
 // enforces this UNCONDITIONALLY.
@@ -532,6 +550,23 @@ pub fn check_recency(
     unimplemented!()
 }
 
+// External-body stub for the TCB-status gate. Returns Ok iff the proof's decoded
+// tcb_status severity is within `max_tcb_status`. Production:
+// `quartz_zkdcap::verify_quote_parts`.
+#[verifier::external_body]
+pub fn check_tcb_status(
+    public_inputs: u64,
+    max_tcb_status: u64,
+) -> (r: Result<(), Error>)
+    ensures
+        match r {
+            Ok(()) => tcb_status_ok(public_inputs, max_tcb_status),
+            Err(_) => true,
+        },
+{
+    unimplemented!()
+}
+
 // External-body stub: decode the public inputs and verify-equal report_data
 // against the wrapper user_data. Production: the always-run report_data check in
 // `check_zk_bindings`.
@@ -587,6 +622,7 @@ pub fn dstack_zk_handle(
                 &&& raw.zkdcap_vkey != 0
                 &&& zk_query_verify_succeeded(msg.zkdcap_proof, msg.zkdcap_public_inputs, raw.zkdcap_vkey)
                 &&& recency_ok(msg.zkdcap_public_inputs, now_packed, raw.min_tcb_eval_num)
+                &&& tcb_status_ok(msg.zkdcap_public_inputs, raw.max_tcb_status)
                 &&& proof_binds_report_data(msg.zkdcap_proof, msg.zkdcap_public_inputs, msg.user_data)
                 &&& (raw.expected_rtmr3 matches Some(e)
                      ==> proof_binds_rtmr3(msg.zkdcap_proof, msg.zkdcap_public_inputs, e))
@@ -628,6 +664,14 @@ pub fn dstack_zk_handle(
     // The circuit proves the window but has no clock/counter, so this decision
     // is the consumer's.
     match check_recency(msg.zkdcap_public_inputs, now_packed, config.min_tcb_eval_num()) {
+        Ok(()) => {}
+        Err(_) => return Err(Error::ZkdcapVerificationFailed),
+    }
+
+    // Gate 2b (TCB-status policy): reject a platform whose status severity
+    // exceeds config.max_tcb_status (lower = better). Revoked is rejected
+    // in-circuit.
+    match check_tcb_status(msg.zkdcap_public_inputs, config.max_tcb_status()) {
         Ok(()) => {}
         Err(_) => return Err(Error::ZkdcapVerificationFailed),
     }

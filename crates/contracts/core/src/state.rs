@@ -99,6 +99,16 @@ pub struct Config {
     /// evaluations. `0` (the default) means no floor.
     #[serde(default)]
     min_tcb_eval_num: u64,
+    /// Maximum acceptable TCB-status severity (lower = better; see
+    /// `quartz_zkdcap::tcb_status`). The `DstackZkAttestation` handler rejects a
+    /// proof whose decoded `tcb_status` exceeds this. SECURE-BY-DEFAULT: `0`
+    /// (the default) is `UP_TO_DATE` only. Raise it explicitly to accept
+    /// advisory statuses (e.g. `1` = also accept `SW_HARDENING_NEEDED`); the
+    /// circuit already rejects `REVOKED` in-circuit. Note real Intel TDX
+    /// platforms commonly report `SW_HARDENING_NEEDED`, so an operator on such a
+    /// platform must raise this consciously.
+    #[serde(default)]
+    max_tcb_status: u8,
 }
 
 impl Config {
@@ -119,6 +129,7 @@ impl Config {
             expected_compose_hash: None,
             allow_any_image: false,
             min_tcb_eval_num: 0,
+            max_tcb_status: 0, // UP_TO_DATE only (secure-by-default)
         }
     }
 
@@ -176,6 +187,13 @@ impl Config {
         self
     }
 
+    /// Builder: set the maximum acceptable TCB-status severity (lower = better;
+    /// see `quartz_zkdcap::tcb_status`). Default is `0` (UP_TO_DATE only).
+    pub fn with_max_tcb_status(mut self, max_tcb_status: u8) -> Self {
+        self.max_tcb_status = max_tcb_status;
+        self
+    }
+
     pub fn light_client_opts(&self) -> &LightClientOpts {
         &self.light_client_opts
     }
@@ -213,6 +231,10 @@ impl Config {
     pub fn min_tcb_eval_num(&self) -> u64 {
         self.min_tcb_eval_num
     }
+
+    pub fn max_tcb_status(&self) -> u8 {
+        self.max_tcb_status
+    }
 }
 
 #[cw_serde]
@@ -239,6 +261,10 @@ pub struct RawConfig {
     /// Monotonic TCB-recency floor. See `Config::min_tcb_eval_num`.
     #[serde(default)]
     min_tcb_eval_num: u64,
+    /// Maximum acceptable TCB-status severity. See `Config::max_tcb_status`.
+    /// Default `0` = UP_TO_DATE only (secure-by-default).
+    #[serde(default)]
+    max_tcb_status: u8,
 }
 
 impl RawConfig {
@@ -275,6 +301,10 @@ impl RawConfig {
     pub fn min_tcb_eval_num(&self) -> u64 {
         self.min_tcb_eval_num
     }
+
+    pub fn max_tcb_status(&self) -> u8 {
+        self.max_tcb_status
+    }
 }
 
 impl TryFrom<RawConfig> for Config {
@@ -301,6 +331,7 @@ impl TryFrom<RawConfig> for Config {
             expected_compose_hash: value.expected_compose_hash.map(|h| h.to_vec()),
             allow_any_image: value.allow_any_image,
             min_tcb_eval_num: value.min_tcb_eval_num,
+            max_tcb_status: value.max_tcb_status,
         })
     }
 }
@@ -319,6 +350,7 @@ impl From<Config> for RawConfig {
             expected_compose_hash: value.expected_compose_hash.map(HexBinary::from),
             allow_any_image: value.allow_any_image,
             min_tcb_eval_num: value.min_tcb_eval_num,
+            max_tcb_status: value.max_tcb_status,
         }
     }
 }

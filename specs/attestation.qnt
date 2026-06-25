@@ -45,6 +45,7 @@ module attestation {
     valid_until: int,        // proven validity-window upper bound (packed date)
     tcb_eval: int,           // TCB-Info tcbEvaluationDataNumber (field 17)
     qe_eval: int,            // QE-Identity tcbEvaluationDataNumber (field 18, issue #4)
+    tcb_status: int,         // decoded TCB-status severity (field 13; lower = better)
   }
 
   /// Raw TDX DCAP quote attestation
@@ -92,6 +93,7 @@ module attestation {
                                  // register pins AND the compose-hash pin
                                  // (bound via RTMR3 event-log replay).
     allow_any_image: bool,   // escape hatch: verify with no image pin
+    max_tcb_status: int,     // max acceptable TCB-status severity (0 ⇒ UpToDate only)
   }
 
   type ZkModuleState = {
@@ -107,6 +109,7 @@ module attestation {
     | RejectedZkProofInvalid
     | RejectedVKeyNotFound
     | RejectedStaleOrFuture     // chain time outside window, or an eval below floor
+    | RejectedTcbStatus         // tcb_status severity above config.max_tcb_status
     | RejectedBindingMismatch   // report_data != user_data, or rtmr3 != expected_rtmr3
     | RejectedNoVKey            // no vkey configured: cannot verify, so fail closed
     | SkippedNoVKey             // neutral init marker only (never produced by a verify)
@@ -163,30 +166,35 @@ module attestation {
   // In-window proof, both evals >= floor, report_data/rtmr3 bind correctly.
   val VALID_PROOF = { proof_bytes: "proof_data", public_inputs: "inputs",
                       report_data: VALID_MSG_HASH, rtmr3: VALID_RTMR3,
-                      valid_from: 20240101000000, valid_until: 20260101000000, tcb_eval: 17, qe_eval: 23 }
+                      valid_from: 20240101000000, valid_until: 20260101000000, tcb_eval: 17, qe_eval: 23, tcb_status: 0 }
   // Empty proof bytes but otherwise valid — exercises the proof-invalid path.
   val EMPTY_PROOF = { proof_bytes: "", public_inputs: "",
                       report_data: VALID_MSG_HASH, rtmr3: VALID_RTMR3,
-                      valid_from: 20240101000000, valid_until: 20260101000000, tcb_eval: 17, qe_eval: 23 }
+                      valid_from: 20240101000000, valid_until: 20260101000000, tcb_eval: 17, qe_eval: 23, tcb_status: 0 }
   // Proven window entirely in the past — exercises the recency/validity rejection.
   val STALE_PROOF = { proof_bytes: "proof_data", public_inputs: "inputs",
                       report_data: VALID_MSG_HASH, rtmr3: VALID_RTMR3,
-                      valid_from: 20100101000000, valid_until: 20110101000000, tcb_eval: 17, qe_eval: 23 }
+                      valid_from: 20100101000000, valid_until: 20110101000000, tcb_eval: 17, qe_eval: 23, tcb_status: 0 }
   // tcb_eval below the floor (qe_eval fine) — makes the min-of-both floor
   // conjunct load-bearing (a dropped floor check would now be caught).
   val LOW_EVAL_PROOF = { proof_bytes: "proof_data", public_inputs: "inputs",
                       report_data: VALID_MSG_HASH, rtmr3: VALID_RTMR3,
-                      valid_from: 20240101000000, valid_until: 20260101000000, tcb_eval: 3, qe_eval: 23 }
+                      valid_from: 20240101000000, valid_until: 20260101000000, tcb_eval: 3, qe_eval: 23, tcb_status: 0 }
   // Valid proof but report_data does not bind to user_data — exercises the
   // check_zk_bindings report_data gate.
   val WRONG_RD_PROOF = { proof_bytes: "proof_data", public_inputs: "inputs",
                       report_data: "wrong_rd", rtmr3: VALID_RTMR3,
-                      valid_from: 20240101000000, valid_until: 20260101000000, tcb_eval: 17, qe_eval: 23 }
+                      valid_from: 20240101000000, valid_until: 20260101000000, tcb_eval: 17, qe_eval: 23, tcb_status: 0 }
   // Valid proof but rtmr3 does not match the pinned expected_rtmr3 — exercises
   // the wrong-image binding gate.
   val WRONG_RTMR3_PROOF = { proof_bytes: "proof_data", public_inputs: "inputs",
                       report_data: VALID_MSG_HASH, rtmr3: WRONG_RTMR3,
-                      valid_from: 20240101000000, valid_until: 20260101000000, tcb_eval: 17, qe_eval: 23 }
+                      valid_from: 20240101000000, valid_until: 20260101000000, tcb_eval: 17, qe_eval: 23, tcb_status: 0 }
+  // Valid proof but a TCB-status severity above the policy (4 = OutOfDate) —
+  // exercises the tcb_status gate (config.max_tcb_status = 0 = UpToDate only).
+  val HIGH_STATUS_PROOF = { proof_bytes: "proof_data", public_inputs: "inputs",
+                      report_data: VALID_MSG_HASH, rtmr3: VALID_RTMR3,
+                      valid_from: 20240101000000, valid_until: 20260101000000, tcb_eval: 17, qe_eval: 23, tcb_status: 4 }
 
   // ============================================================
   // Initial state
@@ -212,6 +220,7 @@ module attestation {
       min_tcb_eval: TCB_FLOOR,
       expected_rtmr3: VALID_RTMR3,
       allow_any_image: false,
+      max_tcb_status: 0, // UpToDate only (secure-by-default)
     },
     zk_module' = {
       registered_vkeys: Set(VALID_VKEY),
@@ -348,6 +357,19 @@ module attestation {
         last_input' = msg,
         last_action' = ActVerifyZk,
       }
+    } else if (msg.attestation.proof.tcb_status > config.max_tcb_status) {
+      // TCB-status gate: reject a platform whose status severity exceeds the
+      // policy (lower = better). Revoked is rejected in-circuit; this gates the
+      // OutOfDate / config-or-SW-hardening-needed statuses.
+      all {
+        last_result' = RejectedTcbStatus,
+        messages_rejected' = messages_rejected + 1,
+        messages_accepted' = messages_accepted,
+        config' = config,
+        zk_module' = zk_module,
+        last_input' = msg,
+        last_action' = ActVerifyZk,
+      }
     } else if (msg.attestation.proof.proof_bytes == "" and not(zk_module.accept_all)) {
       // Empty proof rejected (unless mock mode)
       all {
@@ -460,7 +482,7 @@ module attestation {
     nondet msg_hash = oneOf(Set(VALID_MSG_HASH, "wrong_hash"))
     nondet user_data = oneOf(Set(VALID_MSG_HASH, "wrong_hash", "tampered"))
     nondet compose_hash = oneOf(Set(VALID_COMPOSE_HASH, WRONG_COMPOSE_HASH))
-    nondet proof = oneOf(Set(VALID_PROOF, EMPTY_PROOF, STALE_PROOF, LOW_EVAL_PROOF, WRONG_RD_PROOF, WRONG_RTMR3_PROOF))
+    nondet proof = oneOf(Set(VALID_PROOF, EMPTY_PROOF, STALE_PROOF, LOW_EVAL_PROOF, WRONG_RD_PROOF, WRONG_RTMR3_PROOF, HIGH_STATUS_PROOF))
     nondet att_variant = oneOf(Set(Quote, Zk))
     nondet quote = oneOf(Set(VALID_QUOTE, ""))
     val msg: AttestedMessage = {
@@ -548,6 +570,7 @@ module attestation {
         or last_result == RejectedComposeHashMismatch
         or last_result == RejectedVKeyNotFound
         or last_result == RejectedStaleOrFuture
+        or last_result == RejectedTcbStatus
         or last_result == RejectedBindingMismatch
         or last_result == RejectedZkProofInvalid
     else true
@@ -589,6 +612,16 @@ module attestation {
         and CHAIN_TIME <= last_input.attestation.proof.valid_until
         and last_input.attestation.proof.tcb_eval >= config.min_tcb_eval
         and last_input.attestation.proof.qe_eval >= config.min_tcb_eval
+    else true
+  }
+
+  /// TCB-status policy: whenever a ZK verify reaches `Accepted`, the accepted
+  /// proof's decoded tcb_status severity is within the configured maximum.
+  /// Mirrors the `tcb_status <= max_tcb_status` gate in
+  /// `quartz_zkdcap::verify_quote_parts`.
+  val inv_zk_accept_requires_tcb_status: bool = {
+    if (last_action == ActVerifyZk and last_result == Accepted)
+      last_input.attestation.proof.tcb_status <= config.max_tcb_status
     else true
   }
 
@@ -687,6 +720,7 @@ module attestation {
     and inv_raw_quote_never_accepted
     and inv_zk_accept_requires_vkey
     and inv_zk_accept_requires_recency
+    and inv_zk_accept_requires_tcb_status
     and inv_zk_accept_requires_binding
   }
 }

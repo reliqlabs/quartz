@@ -11,6 +11,28 @@ use crate::layout::{
 };
 use crate::Hash32;
 
+/// TCB status severity codes carried in packed `public_inputs` field 13 (lower is
+/// better), mirroring the dcap-noir circuit (`crates/dcap/src/tcb.nr`,
+/// `merge_status` = max(platform, qe)). The circuit asserts the merged status is
+/// not `REVOKED` in-circuit, so a valid proof carries `0..=5`; the
+/// `max_tcb_status` policy passed to [`verify_quote_parts`] gates the rest.
+pub mod tcb_status {
+    /// All TCB components at the latest secure level.
+    pub const UP_TO_DATE: u8 = 0;
+    /// Up to date but SW-side mitigations are recommended.
+    pub const SW_HARDENING_NEEDED: u8 = 1;
+    /// Up to date but platform configuration changes are recommended.
+    pub const CONFIGURATION_NEEDED: u8 = 2;
+    /// Both configuration changes and SW hardening are recommended.
+    pub const CONFIG_AND_SW_HARDENING_NEEDED: u8 = 3;
+    /// The platform TCB is out of date (behind on security updates).
+    pub const OUT_OF_DATE: u8 = 4;
+    /// Out of date AND configuration changes are recommended.
+    pub const OUT_OF_DATE_CONFIG_NEEDED: u8 = 5;
+    /// Revoked. Rejected in-circuit, so it never reaches a consumer.
+    pub const REVOKED: u8 = 6;
+}
+
 /// The one impure edge: UltraHonk proof verification against the
 /// currently-governed vkey. The CosmWasm adapter ([`crate::xion`]) queries
 /// `/xion.zk.v1.Query/ProofVerifyUltraHonk`.
@@ -42,6 +64,10 @@ pub enum QuoteError {
     /// Chain time outside the proven `[valid_from, valid_until]` window, or
     /// `min(tcb_eval_num, qe_eval_num)` below the monotonic floor.
     StaleOrFuture,
+    /// The proof's TCB status severity exceeds the configured `max_tcb_status`
+    /// (e.g. the platform is `OUT_OF_DATE`, or needs config / SW hardening beyond
+    /// policy). `REVOKED` is already rejected in-circuit. See [`tcb_status`].
+    TcbStatusUnacceptable,
     /// The UltraHonk proof was rejected by the backend.
     ProofInvalid,
 }
@@ -91,15 +117,17 @@ pub fn verify_quote<B: ProofBackend>(
     attestation: &[u8],
     now_packed: u64,
     min_tcb_eval_num: u64,
+    max_tcb_status: u8,
 ) -> Result<DecodedQuote, QuoteError> {
     let (proof, pi) = split_attestation(attestation).ok_or(QuoteError::Malformed)?;
-    verify_quote_parts(backend, proof, pi, now_packed, min_tcb_eval_num)
+    verify_quote_parts(backend, proof, pi, now_packed, min_tcb_eval_num, max_tcb_status)
 }
 
 /// Verify an UltraHonk proof produced by the dcap-noir circuit:
 /// 1. decode the packed `public_inputs` (report_data, measurements, recency),
 /// 2. range-check chain time against the proven `[valid_from, valid_until]`
-///    window and reject `tcb_eval_num` below the monotonic floor,
+///    window, reject `tcb_eval_num` below the monotonic floor, and reject a
+///    `tcb_status` severity above `max_tcb_status` (see [`tcb_status`]),
 /// 3. verify the proof via `backend`.
 ///
 /// Cheap decode + recency checks run before the (on-chain gRPC) proof call. It
@@ -114,6 +142,7 @@ pub fn verify_quote_parts<B: ProofBackend>(
     pi: &[u8],
     now_packed: u64,
     min_tcb_eval_num: u64,
+    max_tcb_status: u8,
 ) -> Result<DecodedQuote, QuoteError> {
     let report_data = extract_report_data(pi).ok_or(QuoteError::Malformed)?;
     let measurements = extract_measurements(pi).ok_or(QuoteError::Malformed)?;
@@ -132,6 +161,14 @@ pub fn verify_quote_parts<B: ProofBackend>(
         && tcb_eval_num.min(qe_eval_num) >= min_tcb_eval_num)
     {
         return Err(QuoteError::StaleOrFuture);
+    }
+
+    // TCB-status policy: reject platforms whose status severity exceeds the
+    // caller's maximum (lower = better; see `tcb_status`). Revoked is already
+    // rejected in-circuit. The caller chooses the threshold (e.g. UP_TO_DATE
+    // only, or allow SW_HARDENING_NEEDED).
+    if tcb_status > max_tcb_status {
+        return Err(QuoteError::TcbStatusUnacceptable);
     }
 
     if !backend.verify(proof, pi) {

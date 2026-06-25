@@ -223,6 +223,7 @@ impl Handler for DstackZkAttestation {
             &self.zkdcap_public_inputs,
             now_packed,
             config.min_tcb_eval_num(),
+            config.max_tcb_status(),
         )
         .map_err(|e| {
             Error::ZkdcapVerificationFailed(
@@ -230,6 +231,9 @@ impl Handler for DstackZkAttestation {
                     QuoteError::Malformed => "malformed public_inputs",
                     QuoteError::StaleOrFuture => {
                         "attestation outside validity window or tcb_eval below floor"
+                    }
+                    QuoteError::TcbStatusUnacceptable => {
+                        "tcb_status severity exceeds config.max_tcb_status"
                     }
                     QuoteError::ProofInvalid => "proof verification returned false",
                 }
