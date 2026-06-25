@@ -20,12 +20,12 @@
 //   - Attested<M,A>::handle Err(UserDataMismatch) ⇒ user_data differed.
 //   - Attested<M,A>::handle Err(MrEnclaveMismatch) ⇒ CONFIG was loaded AND
 //     mr_enclaves differed.
-//   - DstackZkAttestation::handle Ok-Verified ⇒ vkey_name nonempty AND gRPC
-//     query reported verified=true.
-//   - DstackZkAttestation::handle Ok-Skipped ⇒ vkey_name was empty.
-//   - DstackZkAttestation::handle Err(ZkdcapVerificationFailed) ⇒ EITHER
-//     the gRPC query returned verified=false, OR encode/decode failed
-//     (collapsed: the spec just witnesses one of those cases).
+//   - DstackZkAttestation::handle Ok ⇒ vkey_name nonempty AND the verifier
+//     said yes AND recency AND report_data bound AND the require-one image rule.
+//     (No Ok-Skip: an unset vkey FAILS CLOSED, see below.)
+//   - DstackZkAttestation::handle Err(ZkdcapVerificationFailed) ⇒ EITHER no vkey
+//     was configured (fail closed), OR the gRPC query returned verified=false,
+//     OR encode/decode failed, OR a binding check failed (collapsed).
 //   - MockAttestation, Noop, DstackAnyAttestation(zk-or-trivial inner): trivial
 //     Ok pre/post (collapsed into a single harness `trivial_handler`).
 //   - DstackAttestation (non-mock): FAILS CLOSED — `raw_dcap_handler` proves it
@@ -576,27 +576,27 @@ pub fn dstack_zk_handle(
     ensures
         match r {
             Ok(_) => {
-                // Either the vkey was unset (skipped) or the vkey was set AND
-                // the verifier said yes AND recency passed AND report_data is
-                // bound (ALWAYS) AND — when an image register is pinned — rtmr3
-                // is bound to it, AND (secure-by-default) an image register WAS
-                // pinned OR allow_any_image was explicitly set. The last conjunct
-                // is the require-one rule: you cannot verify a proof while
-                // leaving the image unbound unless you opt in.
-                &&& old(storage).config matches Some(raw)
-                &&& (raw.zkdcap_vkey == 0
-                     || (zk_query_verify_succeeded(msg.zkdcap_proof, msg.zkdcap_public_inputs, raw.zkdcap_vkey)
-                         && recency_ok(msg.zkdcap_public_inputs, now_packed, raw.min_tcb_eval_num)
-                         && proof_binds_report_data(msg.zkdcap_proof, msg.zkdcap_public_inputs, msg.user_data)
-                         && (raw.expected_rtmr3 matches Some(e)
-                             ==> proof_binds_rtmr3(msg.zkdcap_proof, msg.zkdcap_public_inputs, e))
-                         && (raw.expected_rtmr3 is Some || raw.allow_any_image)))
-            }
-            Err(Error::ZkdcapVerificationFailed) => {
-                // Vkey was set AND (verifier said no OR recency failed OR
-                // encode/decode failed OR a binding check failed).
+                // The vkey was set (FAIL-CLOSED on unset: an unset vkey returns
+                // Err, never Ok) AND the verifier said yes AND recency passed AND
+                // report_data is bound (ALWAYS) AND — when an image register is
+                // pinned — rtmr3 is bound to it, AND (secure-by-default) an image
+                // register WAS pinned OR allow_any_image was explicitly set. The
+                // last conjunct is the require-one rule: you cannot verify a
+                // proof while leaving the image unbound unless you opt in.
                 &&& old(storage).config matches Some(raw)
                 &&& raw.zkdcap_vkey != 0
+                &&& zk_query_verify_succeeded(msg.zkdcap_proof, msg.zkdcap_public_inputs, raw.zkdcap_vkey)
+                &&& recency_ok(msg.zkdcap_public_inputs, now_packed, raw.min_tcb_eval_num)
+                &&& proof_binds_report_data(msg.zkdcap_proof, msg.zkdcap_public_inputs, msg.user_data)
+                &&& (raw.expected_rtmr3 matches Some(e)
+                     ==> proof_binds_rtmr3(msg.zkdcap_proof, msg.zkdcap_public_inputs, e))
+                &&& (raw.expected_rtmr3 is Some || raw.allow_any_image)
+            }
+            Err(Error::ZkdcapVerificationFailed) => {
+                // Config was loaded; then EITHER no vkey was configured (fail
+                // closed) OR the vkey was set and verification/recency/binding
+                // failed. Either way the attestation is NOT accepted.
+                &&& old(storage).config matches Some(raw)
             }
             Err(_) => true,
         },
@@ -607,9 +607,12 @@ pub fn dstack_zk_handle(
         Err(e) => return Err(e),
     };
 
+    // FAIL CLOSED: no vkey configured means the proof cannot be verified, so the
+    // attestation must NOT be accepted (mirrors the raw-quote path). The old
+    // skip-on-None returned Ok, leaving only the wrapper's host-supplied checks.
     let vkey = match config.zkdcap_vkey() {
         Some(v) => v,
-        None => return Ok(Response::new().add_attribute("action", "zkdcap_verify_skipped")),
+        None => return Err(Error::ZkdcapVerificationFailed),
     };
 
     // Gate 1: the UltraHonk verifier accepts the proof against the supplied

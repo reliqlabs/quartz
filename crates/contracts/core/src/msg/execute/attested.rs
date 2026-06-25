@@ -195,6 +195,7 @@ pub struct RawDstackAttestation {
     pub user_data: HexBinary,
     pub compose_hash: HexBinary,
     pub quote: HexBinary,
+    #[serde(default)]
     pub event_log: Option<String>,
 }
 

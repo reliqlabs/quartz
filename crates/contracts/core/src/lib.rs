@@ -15,6 +15,13 @@
 )]
 #![forbid(unsafe_code)]
 
+// A production wasm contract must never accept unverified attestations.
+// `insecure-accept-raw-quote` bypasses TDX verification (dev/test against a
+// trusted host only). Cargo features are additive across a workspace, so refuse
+// to compile it into a wasm artifact — it cannot ship by accident.
+#[cfg(all(target_arch = "wasm32", feature = "insecure-accept-raw-quote"))]
+compile_error!("`insecure-accept-raw-quote` must not be enabled in a wasm build");
+
 pub mod error;
 pub mod handler;
 pub mod msg;

@@ -108,7 +108,8 @@ module attestation {
     | RejectedVKeyNotFound
     | RejectedStaleOrFuture     // chain time outside window, or an eval below floor
     | RejectedBindingMismatch   // report_data != user_data, or rtmr3 != expected_rtmr3
-    | SkippedNoVKey
+    | RejectedNoVKey            // no vkey configured: cannot verify, so fail closed
+    | SkippedNoVKey             // neutral init marker only (never produced by a verify)
 
   /// Action provenance tag. Recorded as `last_action` so temporal properties
   /// can predicate on which action fired into a given result, rather than
@@ -308,11 +309,12 @@ module attestation {
         last_action' = ActVerifyZk,
       }
     } else if (config.zkdcap_vkey == "") {
-      // No vkey configured — skip ZK verification
+      // No vkey configured — FAIL CLOSED. Cannot verify the proof, so the
+      // attestation must not be accepted (mirrors the raw-quote path).
       all {
-        last_result' = SkippedNoVKey,
-        messages_accepted' = messages_accepted + 1,
-        messages_rejected' = messages_rejected,
+        last_result' = RejectedNoVKey,
+        messages_rejected' = messages_rejected + 1,
+        messages_accepted' = messages_accepted,
         config' = config,
         zk_module' = zk_module,
         last_input' = msg,
@@ -415,7 +417,8 @@ module attestation {
     last_action' = ActEnableMock,
   }
 
-  /// Remove vkey configuration (skip ZK verification for Zk variant)
+  /// Remove vkey configuration. A Zk verify then FAILS CLOSED (RejectedNoVKey),
+  /// since the contract can no longer verify the proof.
   action clear_vkey: bool = all {
     config' = { ...config, zkdcap_vkey: "" },
     zk_module' = zk_module,
@@ -498,7 +501,7 @@ module attestation {
   /// Real check: whenever last_result is an acceptance, last_input's
   /// msg_hash and attestation.user_data must have matched.
   val inv_user_data_mismatch_rejected: bool = {
-    if (last_result == Accepted or last_result == SkippedNoVKey)
+    if (last_result == Accepted)
       last_input.msg_hash == last_input.attestation.user_data
     else true
   }
@@ -506,8 +509,7 @@ module attestation {
   /// A message with wrong compose_hash is never accepted (after the
   /// dummy init state, which we exclude via the input being non-empty).
   val inv_compose_hash_mismatch_rejected: bool = {
-    if ((last_result == Accepted or last_result == SkippedNoVKey)
-        and last_input.msg_hash != "")
+    if (last_result == Accepted and last_input.msg_hash != "")
       last_input.attestation.compose_hash == config.compose_hash
     else true
   }
@@ -538,9 +540,10 @@ module attestation {
         or last_result == RejectedUserDataMismatch
         or last_result == RejectedComposeHashMismatch
     else if (last_action == ActVerifyZk)
-      // Zk path produces Accepted / SkippedNoVKey / Zk-specific rejections
+      // Zk path produces Accepted / Zk-specific rejections (incl. RejectedNoVKey;
+      // no-vkey now fails closed). It never produces SkippedNoVKey.
       last_result == Accepted
-        or last_result == SkippedNoVKey
+        or last_result == RejectedNoVKey
         or last_result == RejectedUserDataMismatch
         or last_result == RejectedComposeHashMismatch
         or last_result == RejectedVKeyNotFound
@@ -567,7 +570,8 @@ module attestation {
   /// after the verify and `last_result` is a frozen past decision.
   /// The check `config.zkdcap_vkey != "" && registered_vkeys.contains(...)`
   /// is enforced action-locally inside `verify_zk` (the else-if chain
-  /// short-circuits to RejectedVKeyNotFound or SkippedNoVKey otherwise).
+  /// short-circuits to RejectedNoVKey (no vkey, fail closed) or
+  /// RejectedVKeyNotFound otherwise).
   ///
   /// State-only stub kept as `true` — the real obligation is captured
   /// by the temporal property `temporal_zk_accept_requires_vkey` below.

@@ -107,6 +107,13 @@ fn check_compose_hash(
     event_log: Option<&str>,
     expected: &[u8],
 ) -> Result<(), Error> {
+    // An empty pin would bind nothing (an empty event payload would match it),
+    // yet still satisfy the require-one rule. Reject it as a misconfiguration.
+    if expected.is_empty() {
+        return Err(Error::ZkdcapVerificationFailed(
+            "config.expected_compose_hash is empty".to_string(),
+        ));
+    }
     let log_json = event_log.ok_or_else(|| {
         Error::ZkdcapVerificationFailed(
             "expected_compose_hash is set but the attestation carries no event_log".to_string(),
@@ -174,8 +181,9 @@ impl Handler for DstackAttestation {
 /// range-check chain time against the proven `[valid_from, valid_until]` window,
 /// reject `tcb_eval_num` below `config.min_tcb_eval_num`, then verify the proof
 /// via `/xion.zk.v1.Query/ProofVerifyUltraHonk`. Finally bind the decoded
-/// report_data/rtmr3 to the wrapper. If no `zkdcap_vkey` is configured,
-/// verification is skipped.
+/// report_data/rtmr3 to the wrapper. If no `zkdcap_vkey` is configured the
+/// handler FAILS CLOSED (it cannot verify, so it must not accept); use a `mock`
+/// build for verification-free dev/test.
 #[cfg(not(feature = "mock"))]
 impl Handler for DstackZkAttestation {
     fn handle(
@@ -193,8 +201,17 @@ impl Handler for DstackZkAttestation {
         // unrelated reason).
         let config = CONFIG.load(deps.storage).map_err(Error::Std)?;
 
+        // Secure-by-default: a non-mock contract with no vkey configured cannot
+        // verify the proof, so it must NOT accept. Failing closed here mirrors
+        // the raw-quote path; otherwise the wrapper's host-supplied user_data /
+        // compose_hash checks would be the only gates and a forged
+        // DstackZkAttestation would be accepted. Use the `mock` build for
+        // verification-free dev/test.
         let Some(vkey_name) = config.zkdcap_vkey() else {
-            return Ok(Response::new().add_attribute("action", "zkdcap_verify_skipped"));
+            return Err(Error::ZkdcapVerificationFailed(
+                "no zkdcap_vkey configured: refusing to accept an unverified attestation"
+                    .to_string(),
+            ));
         };
 
         let backend = XionUltraHonkBackend::by_name(deps.querier, vkey_name.to_string());
@@ -526,5 +543,40 @@ mod tests {
         let att = DstackAttestation::new([0u8; 64], [0u8; 32], vec![1, 2, 3], None);
         let err = Handler::handle(att, deps.as_mut(), &env, &info).unwrap_err();
         assert!(matches!(err, Error::RawDcapUnsupported));
+    }
+
+    // ── DstackZkAttestation handler fails closed when no vkey is configured ──
+
+    // A non-mock contract with zkdcap_vkey=None cannot verify the proof; it must
+    // reject rather than skip (the old fail-open path accepted any forged
+    // DstackZkAttestation because the only other gates compare host-supplied
+    // fields).
+    #[test]
+    fn zk_handler_no_vkey_fails_closed() {
+        use crate::state::{Config, LightClientOpts, RawConfig, CONFIG};
+        use cosmwasm_std::testing::{message_info, mock_dependencies, mock_env};
+
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let sender = deps.api.addr_make("sender");
+        let info = message_info(&sender, &[]);
+
+        let lco = LightClientOpts::new(
+            "testing".to_string(),
+            1,
+            [0u8; 32],
+            (2, 3),
+            1209600,
+            300,
+            600,
+        )
+        .unwrap();
+        // zkdcap_vkey = None
+        let cfg: RawConfig = Config::new([0u8; 32], lco, None).into();
+        CONFIG.save(deps.as_mut().storage, &cfg).unwrap();
+
+        let att = DstackZkAttestation::new([0u8; 64], [0u8; 32], vec![1, 2, 3], vec![0u8; 672], None);
+        let err = Handler::handle(att, deps.as_mut(), &env, &info).unwrap_err();
+        assert!(matches!(err, Error::ZkdcapVerificationFailed(_)));
     }
 }

@@ -100,12 +100,24 @@ pub fn verify_compose_hash(
     if &replay_rtmr3(events) != rtmr3 {
         return Err(EventLogError::Rtmr3Mismatch);
     }
+    // SECURITY: only a dstack RUNTIME event's payload is cryptographically bound
+    // into RTMR3 (entry_digest recomputes its digest from the payload). A
+    // non-runtime event extends its host-supplied `digest` verbatim, with the
+    // `event`/`event_payload` fields NOT covered by that digest. So we must
+    // require `event_type == DSTACK_RUNTIME_EVENT_TYPE` here: otherwise a host
+    // could replace the genuine runtime compose-hash event with a non-runtime
+    // one carrying the SAME stored digest (replay still matches rtmr3) but an
+    // arbitrary `event_payload`, forging the bound compose-hash. Matching only
+    // runtime events guarantees the payload we compare is the one the replay
+    // actually hashed.
     let ch = events
         .iter()
-        .find(|e| e.imr == RTMR3_IMR && e.event == COMPOSE_HASH_EVENT)
+        .find(|e| {
+            e.imr == RTMR3_IMR
+                && e.event_type == DSTACK_RUNTIME_EVENT_TYPE
+                && e.event == COMPOSE_HASH_EVENT
+        })
         .ok_or(EventLogError::ComposeHashAbsent)?;
-    // payload is bound to rtmr3 by the replay above (runtime-event digest covers
-    // it), so comparing it to `expected` binds the app identity.
     if ch.event_payload.as_slice() != expected {
         return Err(EventLogError::ComposeHashMismatch);
     }
@@ -166,6 +178,38 @@ mod tests {
         assert_eq!(
             verify_compose_hash(&log_bad, &rtmr3, &[0x11u8; 32]),
             Err(EventLogError::Rtmr3Mismatch)
+        );
+    }
+
+    #[test]
+    fn forged_non_runtime_compose_hash_rejected() {
+        // Attack: a host with a genuine proof for image C_evil replaces the
+        // genuine RUNTIME compose-hash event with a NON-runtime event carrying
+        // the same stored digest (so the RTMR3 replay is unchanged and still
+        // matches the proof-bound rtmr3) but event="compose-hash" and a forged
+        // payload (the victim's expected compose-hash). The fix must reject this.
+        let c_evil = [0xEEu8; 32];
+        let genuine = sample_log(&c_evil);
+        let rtmr3 = replay_rtmr3(&genuine); // proof-bound rtmr3 reflects C_evil
+        let preserved_digest = entry_digest(&genuine[0]); // runtime compose-hash digest
+
+        let c_forged = [0x11u8; 32];
+        let mut forged = genuine.clone();
+        forged[0] = TdxEvent {
+            imr: RTMR3_IMR,
+            event_type: 0, // NON-runtime: digest used verbatim, payload unbound
+            digest: preserved_digest,
+            event: "compose-hash".into(),
+            event_payload: c_forged.to_vec(),
+        };
+
+        // Replay still matches (the stored digest preserves the chain) ...
+        assert_eq!(replay_rtmr3(&forged), rtmr3);
+        // ... but binding the forged compose-hash is rejected: no RUNTIME
+        // compose-hash event remains, so the lookup finds nothing.
+        assert_eq!(
+            verify_compose_hash(&forged, &rtmr3, &c_forged),
+            Err(EventLogError::ComposeHashAbsent)
         );
     }
 
