@@ -1256,7 +1256,9 @@ name = "quartz-zkdcap"
 version = "0.5.1"
 dependencies = [
  "cosmwasm-std",
+ "hex",
  "prost 0.13.5",
+ "serde",
  "sha2",
 ]
 

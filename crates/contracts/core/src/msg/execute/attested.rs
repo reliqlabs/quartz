@@ -263,6 +263,11 @@ pub struct DstackZkAttestation {
     /// Packed UltraHonk public inputs: 672 bytes / 21 BE BN254 field elements
     /// (the dcap-noir layout; see `quartz_zkdcap::layout`).
     pub zkdcap_public_inputs: Vec<u8>,
+    /// dstack RTMR3 event log (JSON array of `TdxEvent`). Used only when the
+    /// config pins `expected_compose_hash`: the handler replays it against the
+    /// proof-bound RTMR3 and binds the compose-hash. Host-supplied but
+    /// non-load-bearing — the replay anchors on the proof's RTMR3.
+    pub event_log: Option<String>,
 }
 
 impl DstackZkAttestation {
@@ -271,12 +276,14 @@ impl DstackZkAttestation {
         compose_hash: MrEnclave,
         zkdcap_proof: Vec<u8>,
         zkdcap_public_inputs: Vec<u8>,
+        event_log: Option<String>,
     ) -> Self {
         Self {
             user_data,
             compose_hash,
             zkdcap_proof,
             zkdcap_public_inputs,
+            event_log,
         }
     }
 }
@@ -287,6 +294,8 @@ pub struct RawDstackZkAttestation {
     pub compose_hash: HexBinary,
     pub zkdcap_proof: HexBinary,
     pub zkdcap_public_inputs: HexBinary,
+    #[serde(default)]
+    pub event_log: Option<String>,
 }
 
 impl TryFrom<RawDstackZkAttestation> for DstackZkAttestation {
@@ -298,6 +307,7 @@ impl TryFrom<RawDstackZkAttestation> for DstackZkAttestation {
             compose_hash: value.compose_hash.to_array()?,
             zkdcap_proof: value.zkdcap_proof.into(),
             zkdcap_public_inputs: value.zkdcap_public_inputs.into(),
+            event_log: value.event_log,
         })
     }
 }
@@ -309,6 +319,7 @@ impl From<DstackZkAttestation> for RawDstackZkAttestation {
             compose_hash: value.compose_hash.into(),
             zkdcap_proof: value.zkdcap_proof.into(),
             zkdcap_public_inputs: value.zkdcap_public_inputs.into(),
+            event_log: value.event_log,
         }
     }
 }

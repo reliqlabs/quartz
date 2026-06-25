@@ -81,6 +81,13 @@ pub struct Config {
     expected_rtmr2: Option<[u8; 48]>,
     #[serde(default, with = "rtmr_opt_serde")]
     expected_rtmr3: Option<[u8; 48]>,
+    /// Expected dstack compose-hash (the stable, instance-independent app
+    /// identity). When set, the handler replays the attestation's RTMR3 event
+    /// log against the proof-bound RTMR3 and binds the compose-hash to this
+    /// value — the recommended app pin (RTMR3-as-constant only binds one
+    /// instance). Counts toward the require-one rule.
+    #[serde(default)]
+    expected_compose_hash: Option<Vec<u8>>,
     /// Escape hatch: allow verification with NO register pinned (trust any
     /// genuine TDX enclave). Default `false` = secure-by-default.
     #[serde(default)]
@@ -109,6 +116,7 @@ impl Config {
             expected_rtmr1: None,
             expected_rtmr2: None,
             expected_rtmr3: None,
+            expected_compose_hash: None,
             allow_any_image: false,
             min_tcb_eval_num: 0,
         }
@@ -145,6 +153,13 @@ impl Config {
     /// Builder: pin RTMR3 only.
     pub fn with_expected_rtmr3(mut self, rtmr3: [u8; 48]) -> Self {
         self.expected_rtmr3 = Some(rtmr3);
+        self
+    }
+
+    /// Builder: pin the dstack compose-hash (stable app identity, via RTMR3
+    /// event-log replay). The recommended app pin.
+    pub fn with_expected_compose_hash(mut self, compose_hash: Vec<u8>) -> Self {
+        self.expected_compose_hash = Some(compose_hash);
         self
     }
 
@@ -188,6 +203,9 @@ impl Config {
     pub fn expected_rtmr3(&self) -> Option<&[u8; 48]> {
         self.expected_rtmr3.as_ref()
     }
+    pub fn expected_compose_hash(&self) -> Option<&[u8]> {
+        self.expected_compose_hash.as_deref()
+    }
     pub fn allow_any_image(&self) -> bool {
         self.allow_any_image
     }
@@ -213,6 +231,9 @@ pub struct RawConfig {
     expected_rtmr2: Option<HexBinary>,
     #[serde(default)]
     expected_rtmr3: Option<HexBinary>,
+    /// Hex-encoded expected dstack compose-hash. See `Config::expected_compose_hash`.
+    #[serde(default)]
+    expected_compose_hash: Option<HexBinary>,
     #[serde(default)]
     allow_any_image: bool,
     /// Monotonic TCB-recency floor. See `Config::min_tcb_eval_num`.
@@ -244,6 +265,9 @@ impl RawConfig {
     pub fn expected_rtmr3(&self) -> Option<&[u8]> {
         self.expected_rtmr3.as_ref().map(|h| h.as_slice())
     }
+    pub fn expected_compose_hash(&self) -> Option<&[u8]> {
+        self.expected_compose_hash.as_ref().map(|h| h.as_slice())
+    }
     pub fn allow_any_image(&self) -> bool {
         self.allow_any_image
     }
@@ -274,6 +298,7 @@ impl TryFrom<RawConfig> for Config {
             expected_rtmr1: reg(value.expected_rtmr1, "expected_rtmr1")?,
             expected_rtmr2: reg(value.expected_rtmr2, "expected_rtmr2")?,
             expected_rtmr3: reg(value.expected_rtmr3, "expected_rtmr3")?,
+            expected_compose_hash: value.expected_compose_hash.map(|h| h.to_vec()),
             allow_any_image: value.allow_any_image,
             min_tcb_eval_num: value.min_tcb_eval_num,
         })
@@ -291,6 +316,7 @@ impl From<Config> for RawConfig {
             expected_rtmr1: value.expected_rtmr1.map(HexBinary::from),
             expected_rtmr2: value.expected_rtmr2.map(HexBinary::from),
             expected_rtmr3: value.expected_rtmr3.map(HexBinary::from),
+            expected_compose_hash: value.expected_compose_hash.map(HexBinary::from),
             allow_any_image: value.allow_any_image,
             min_tcb_eval_num: value.min_tcb_eval_num,
         }

@@ -79,9 +79,11 @@ pub struct RawConfig {
     pub mr_enclave: MrEnclave,
     pub zkdcap_vkey: u64,  // 0 ⇒ "no vkey configured" (empty string in prod)
     pub min_tcb_eval_num: u64, // monotonic TCB-recency floor (0 ⇒ no floor)
-    // expected_rtmr3 here abstracts the per-register image pin set
-    // (production: expected_mrtd/rtmr0/rtmr1/rtmr2/rtmr3). Some ⇒ an image
-    // register is pinned and bound; None ⇒ no register pinned.
+    // expected_rtmr3 here abstracts the WHOLE image-pin set — production's
+    // per-register pins (expected_mrtd/rtmr0/rtmr1/rtmr2/rtmr3) AND the
+    // expected_compose_hash pin (bound via RTMR3 event-log replay). Some ⇒ at
+    // least one image binding is configured and enforced; None ⇒ none pinned.
+    // The require-one rule + the binding gate below are mechanism-agnostic.
     pub expected_rtmr3: Option<MrEnclave>,
     pub allow_any_image: bool, // escape hatch: verify with no image pin
 }

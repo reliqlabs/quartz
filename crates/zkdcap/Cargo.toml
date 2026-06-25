@@ -28,11 +28,16 @@ std = ["sha2/std"]
 
 [dependencies]
 sha2.workspace = true
+serde = { workspace = true, features = ["derive"] }
+hex = { workspace = true, features = ["alloc"] }
 cosmwasm-std = { workspace = true, optional = true, features = [
     "stargate",
     "cosmwasm_2_0",
 ] }
 prost = { workspace = true, optional = true, features = ["derive"] }
+
+[dev-dependencies]
+serde_json.workspace = true
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(kani_slow)'] }

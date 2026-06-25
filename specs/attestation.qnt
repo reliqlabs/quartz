@@ -81,9 +81,11 @@ module attestation {
     compose_hash: ComposeHash,
     zkdcap_vkey: str,        // "" if not configured
     min_tcb_eval: int,       // monotonic TCB-recency floor (0 ⇒ no floor)
-    expected_rtmr3: ComposeHash, // "" ⇒ no register pinned (abstracts the
-                                 // production mrtd/rtmr0-3 pin set)
-    allow_any_image: bool,   // escape hatch: verify with no register pinned
+    expected_rtmr3: ComposeHash, // "" ⇒ no image pin. Abstracts the WHOLE
+                                 // image-pin set: production's mrtd/rtmr0-3
+                                 // register pins AND the compose-hash pin
+                                 // (bound via RTMR3 event-log replay).
+    allow_any_image: bool,   // escape hatch: verify with no image pin
   }
 
   type ZkModuleState = {

@@ -4073,7 +4073,10 @@ name = "quartz-zkdcap"
 version = "0.5.1"
 dependencies = [
  "cosmwasm-std",
+ "hex",
  "prost",
+ "serde",
+ "serde_json",
  "sha2 0.10.9",
 ]
 

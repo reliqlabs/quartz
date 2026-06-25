@@ -69,12 +69,15 @@ fn check_reg(actual: &[u8; 48], expected: Option<&[u8]>, name: &str) -> Result<b
     }
 }
 
+// report_data binding (always) + per-register image pins (enforce-if-set).
+// Returns whether at least one register was pinned (feeds the require-one rule,
+// which also counts the compose-hash binding done in the handler).
 #[cfg(not(feature = "mock"))]
-fn check_zk_bindings(
+fn check_register_bindings(
     decoded: &quartz_zkdcap::DecodedQuote,
     expected_user_data: &[u8; 64],
     pins: &ImagePins<'_>,
-) -> Result<(), Error> {
+) -> Result<bool, Error> {
     // report_data binding (always enforced)
     if &decoded.report_data != expected_user_data {
         return Err(Error::ZkdcapVerificationFailed(
@@ -90,16 +93,29 @@ fn check_zk_bindings(
     any_pinned |= check_reg(&m[2], pins.rtmr1, "rtmr1")?;
     any_pinned |= check_reg(&m[3], pins.rtmr2, "rtmr2")?;
     any_pinned |= check_reg(&m[4], pins.rtmr3, "rtmr3")?;
+    Ok(any_pinned)
+}
 
-    // Secure-by-default: verifying without any image pin requires an explicit
-    // opt-in (the image is then unbound — trust any genuine TDX enclave).
-    if !any_pinned && !pins.allow_any_image {
-        return Err(Error::ZkdcapVerificationFailed(
-            "no image register pinned: set expected_mrtd/rtmr0/rtmr1/rtmr2/rtmr3 or allow_any_image".to_string(),
-        ));
-    }
-
-    Ok(())
+// Bind the dstack compose-hash via RTMR3 event-log replay: parse the
+// host-supplied event log, replay it against the PROOF-BOUND RTMR3, and
+// verify-equal the compose-hash event payload to `expected`. Sound because the
+// replay anchors on `decoded.rtmr3()` (from the verified proof) — a forged log
+// can't replay to the same RTMR3.
+#[cfg(not(feature = "mock"))]
+fn check_compose_hash(
+    decoded: &quartz_zkdcap::DecodedQuote,
+    event_log: Option<&str>,
+    expected: &[u8],
+) -> Result<(), Error> {
+    let log_json = event_log.ok_or_else(|| {
+        Error::ZkdcapVerificationFailed(
+            "expected_compose_hash is set but the attestation carries no event_log".to_string(),
+        )
+    })?;
+    let events: Vec<quartz_zkdcap::eventlog::TdxEvent> = serde_json::from_str(log_json)
+        .map_err(|e| Error::ZkdcapVerificationFailed(format!("event_log parse: {e}")))?;
+    quartz_zkdcap::eventlog::verify_compose_hash(&events, decoded.rtmr3(), expected)
+        .map_err(|e| Error::ZkdcapVerificationFailed(format!("compose-hash binding: {e:?}")))
 }
 
 // ── DstackAttestation handler (raw quote) ──────────────────────────
@@ -201,7 +217,24 @@ impl Handler for DstackZkAttestation {
             rtmr3: config.expected_rtmr3(),
             allow_any_image: config.allow_any_image(),
         };
-        check_zk_bindings(&decoded, &self.user_data, &pins)?;
+        // report_data (always) + per-register pins.
+        let mut any_pinned = check_register_bindings(&decoded, &self.user_data, &pins)?;
+
+        // compose-hash binding (preferred app pin) via RTMR3 event-log replay.
+        if let Some(expected) = config.expected_compose_hash() {
+            check_compose_hash(&decoded, self.event_log.as_deref(), expected)?;
+            any_pinned = true;
+        }
+
+        // Secure-by-default: verifying without ANY image binding (no register
+        // and no compose-hash) requires an explicit opt-in.
+        if !any_pinned && !pins.allow_any_image {
+            return Err(Error::ZkdcapVerificationFailed(
+                "no image binding configured: set expected_compose_hash / expected_mrtd / \
+                 expected_rtmr0..3, or allow_any_image"
+                    .to_string(),
+            ));
+        }
 
         Ok(Response::new().add_attribute("action", "zkdcap_verified"))
     }
@@ -336,14 +369,14 @@ mod tests {
         let user_data = [0xAAu8; 64];
         let d = decoded_with(user_data, [0xBBu8; 48]);
         // allow_any_image so the require-one rule doesn't fire for this case.
-        check_zk_bindings(&d, &user_data, &no_pins(true)).unwrap();
+        check_register_bindings(&d, &user_data, &no_pins(true)).unwrap();
     }
 
     #[test]
     fn report_data_binding_rejects_mismatch() {
         let user_data = [0xAAu8; 64];
         let d = decoded_with([0xCCu8; 64], [0xBBu8; 48]);
-        let err = check_zk_bindings(&d, &user_data, &no_pins(true)).unwrap_err();
+        let err = check_register_bindings(&d, &user_data, &no_pins(true)).unwrap_err();
         assert!(format!("{err}").contains("report_data"));
     }
 
@@ -354,7 +387,7 @@ mod tests {
         let d = decoded_with(user_data, rtmr3);
         let mut p = no_pins(false);
         p.rtmr3 = Some(&rtmr3);
-        check_zk_bindings(&d, &user_data, &p).unwrap();
+        check_register_bindings(&d, &user_data, &p).unwrap();
     }
 
     #[test]
@@ -364,7 +397,7 @@ mod tests {
         let want = [0xBBu8; 48];
         let mut p = no_pins(false);
         p.rtmr3 = Some(&want);
-        let err = check_zk_bindings(&d, &user_data, &p).unwrap_err();
+        let err = check_register_bindings(&d, &user_data, &p).unwrap_err();
         assert!(format!("{err}").contains("rtmr3"));
     }
 
@@ -381,28 +414,26 @@ mod tests {
         let mut p = no_pins(false);
         p.mrtd = Some(&mrtd);
         p.rtmr1 = Some(&rtmr1);
-        check_zk_bindings(&d, &user_data, &p).unwrap();
+        check_register_bindings(&d, &user_data, &p).unwrap();
         // mrtd mismatch -> err naming mrtd
         let bad = [0x99u8; 48];
         let mut p2 = no_pins(false);
         p2.mrtd = Some(&bad);
-        let err = check_zk_bindings(&d, &user_data, &p2).unwrap_err();
+        let err = check_register_bindings(&d, &user_data, &p2).unwrap_err();
         assert!(format!("{err}").contains("mrtd"));
     }
 
     #[test]
-    fn secure_by_default_rejects_when_no_pin_and_not_allowed() {
+    fn any_pinned_flag_reflects_register_pins() {
+        // The require-one rule is applied in the handler off this bool; here we
+        // verify the bool: false when nothing is pinned, true when a register is.
         let user_data = [0xAAu8; 64];
-        let d = decoded_with(user_data, [0xCCu8; 48]);
-        let err = check_zk_bindings(&d, &user_data, &no_pins(false)).unwrap_err();
-        assert!(format!("{err}").contains("no image register pinned"));
-    }
-
-    #[test]
-    fn allow_any_image_permits_no_pin() {
-        let user_data = [0xAAu8; 64];
-        let d = decoded_with(user_data, [0xCCu8; 48]);
-        check_zk_bindings(&d, &user_data, &no_pins(true)).unwrap();
+        let d = decoded_with(user_data, [0xBBu8; 48]);
+        assert!(!check_register_bindings(&d, &user_data, &no_pins(false)).unwrap());
+        let rtmr3 = [0xBBu8; 48];
+        let mut p = no_pins(false);
+        p.rtmr3 = Some(&rtmr3);
+        assert!(check_register_bindings(&d, &user_data, &p).unwrap());
     }
 
     #[test]
@@ -413,7 +444,57 @@ mod tests {
         let short = [0u8; 32];
         let mut p = no_pins(false);
         p.rtmr3 = Some(&short);
-        let err = check_zk_bindings(&d, &user_data, &p).unwrap_err();
+        let err = check_register_bindings(&d, &user_data, &p).unwrap_err();
         assert!(format!("{err}").contains("wrong length"));
+    }
+
+    // ── compose-hash binding (RTMR3 event-log replay) ──────────────────
+
+    // Build a dstack-shaped event log JSON + the RTMR3 it replays to.
+    fn compose_log_and_rtmr3(compose_hex: &str) -> (String, [u8; 48]) {
+        use quartz_zkdcap::eventlog::{replay_rtmr3, TdxEvent, DSTACK_RUNTIME_EVENT_TYPE};
+        let json = format!(
+            r#"[{{"imr":3,"event_type":{t},"digest":"","event":"compose-hash","event_payload":"{c}"}},
+                {{"imr":3,"event_type":{t},"digest":"","event":"app-id","event_payload":"00"}}]"#,
+            t = DSTACK_RUNTIME_EVENT_TYPE,
+            c = compose_hex
+        );
+        let events: Vec<TdxEvent> = serde_json::from_str(&json).unwrap();
+        (json, replay_rtmr3(&events))
+    }
+
+    fn decoded_rtmr3(rtmr3: [u8; 48]) -> DecodedQuote {
+        decoded_with([0xAAu8; 64], rtmr3)
+    }
+
+    #[test]
+    fn compose_hash_binding_accepts_matching() {
+        let (log, rtmr3) = compose_log_and_rtmr3("abcd");
+        let d = decoded_rtmr3(rtmr3);
+        check_compose_hash(&d, Some(&log), &[0xAB, 0xCD]).unwrap();
+    }
+
+    #[test]
+    fn compose_hash_binding_rejects_wrong_expected() {
+        let (log, rtmr3) = compose_log_and_rtmr3("abcd");
+        let d = decoded_rtmr3(rtmr3);
+        let err = check_compose_hash(&d, Some(&log), &[0x00, 0x11]).unwrap_err();
+        assert!(format!("{err}").contains("compose-hash"));
+    }
+
+    #[test]
+    fn compose_hash_binding_rejects_log_not_matching_rtmr3() {
+        // event log replays to a different RTMR3 than the (proof-bound) one.
+        let (log, _rtmr3) = compose_log_and_rtmr3("abcd");
+        let d = decoded_rtmr3([0x77u8; 48]); // wrong anchor
+        let err = check_compose_hash(&d, Some(&log), &[0xAB, 0xCD]).unwrap_err();
+        assert!(format!("{err}").contains("Rtmr3Mismatch") || format!("{err}").contains("compose-hash"));
+    }
+
+    #[test]
+    fn compose_hash_binding_requires_event_log() {
+        let d = decoded_rtmr3([0u8; 48]);
+        let err = check_compose_hash(&d, None, &[0xAB]).unwrap_err();
+        assert!(format!("{err}").contains("event_log"));
     }
 }

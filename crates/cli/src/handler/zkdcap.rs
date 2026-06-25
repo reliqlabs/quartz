@@ -102,15 +102,19 @@ pub fn inject_zkdcap_proof(mut response: Value, mock: bool) -> Result<Value> {
     let pi_hex = b64_field_to_hex(proof_result.get("public_inputs"), "public_inputs")?;
 
     // Transform DstackAttestation → DstackZkAttestation:
-    // keep user_data and compose_hash, replace quote/event_log with proof fields.
+    // keep user_data, compose_hash, and event_log; replace quote with proof
+    // fields. The contract uses event_log only when it pins expected_compose_hash
+    // (RTMR3 event-log replay); carrying it through keeps that path available.
     let user_data = attestation.get("user_data").cloned().unwrap_or(Value::Null);
     let compose_hash = attestation.get("compose_hash").cloned().unwrap_or(Value::Null);
+    let event_log = attestation.get("event_log").cloned().unwrap_or(Value::Null);
 
     let zk_attestation = serde_json::json!({
         "user_data": user_data,
         "compose_hash": compose_hash,
         "zkdcap_proof": proof_hex,
         "zkdcap_public_inputs": pi_hex,
+        "event_log": event_log,
     });
 
     *attestation = zk_attestation;

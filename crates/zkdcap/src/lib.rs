@@ -28,6 +28,7 @@
 /// 32-byte hash (SHA-256 digest / measurement register low half, etc.).
 pub type Hash32 = [u8; 32];
 
+pub mod eventlog;
 mod layout;
 mod verifier;
 
