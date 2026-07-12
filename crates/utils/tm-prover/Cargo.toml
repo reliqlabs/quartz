@@ -31,7 +31,10 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 # cosmos
 cosmrs.workspace = true
 tendermint.workspace = true
-tendermint-rpc.workspace = true
+# Needs the HTTP transport (HttpClient); opt in explicitly, because the workspace
+# default no longer carries `http-client` (it dragged a vulnerable TLS stack into
+# type-only consumers like cw-proof).
+tendermint-rpc = { workspace = true, features = ["http-client"] }
 tendermint-light-client.workspace = true
 tendermint-light-client-detector.workspace = true
 
