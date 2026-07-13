@@ -110,9 +110,11 @@ tendermint-light-client = { version = "=0.40.4", default-features = false, featu
     "rust-crypto",
 ] }
 tendermint-light-client-detector = { version = "=0.40.4", default-features = false }
-tendermint-rpc = { version = "=0.40.4", default-features = false, features = [
-    "http-client",
-] }
+# cw-proof needs only the `AbciQuery` TYPE (proof/cw.rs: TryFrom<AbciQuery>), not the
+# HTTP transport. The `http-client` feature pulled reqwest 0.11 -> rustls 0.21 ->
+# rustls-webpki 0.101.7 (RUSTSEC-2026-0104/-0098/-0099) into every consumer,
+# including TEE enclave images that never construct an HTTP client.
+tendermint-rpc = { version = "=0.40.4", default-features = false }
 
 # quartz
 quartz-cw-proof = { version = "0.5.1", path = "crates/enclave/cw-proof", default-features = false }
