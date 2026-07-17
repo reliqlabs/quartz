@@ -49,7 +49,7 @@ Three things the Colosseum agent here may not be aware of yet. If a fresh spec-a
 
 - **zkdcap verifier migration → DONE (Noir/UltraHonk)**: attestation verifies via `/xion.zk.v1.Query/ProofVerifyUltraHonk`, built on the shared `quartz-zkdcap` crate. The packed 672-byte / 21-field `public_inputs` replace the old gnark journal. See `crates/zkdcap/`, `crates/contracts/core/src/handler/execute/attested.rs`, `crates/cli/src/handler/zkdcap.rs`, `tests/integration/src/zk_mock.rs`.
 - **UltraHonk vkey on testnet**: `dcap-ultrahonk-v1` (registered; shared with dossier/verified-rcv). Circuit + prover live in `zkdcap/circuits/dcap-noir` + `zkdcap/noir-prove-server`.
-- **Set `config.min_tcb_eval_num` + `config.expected_rtmr3` on new deployments**: the `DstackZkAttestation` handler range-checks chain time against the proof's proven `[valid_from, valid_until]` window and rejects `tcb_eval_num` below `min_tcb_eval_num` (default 0 = no floor; raise as Intel publishes new TCB evals). It also enforces `public_inputs.rtmr3 == config.expected_rtmr3` when that field is populated — without it the contract is vulnerable to a "wrong-image-attestation" substitution (attacker submits a valid proof for image Y with `self.compose_hash` of image X). Compute `expected_rtmr3` once from a known-good quote of the intended dstack image and set it on instantiate. Existing deployments keep working without the field (binding skipped); new deployments should populate both.
+- **Set independent collateral floors + `config.expected_rtmr3` on new deployments**: the `DstackZkAttestation` handler range-checks chain time against the proof's proven `[valid_from, valid_until]` window and independently rejects `tcb_eval_num < min_tcb_eval_num` or `qe_eval_num < min_qe_eval_num`. Legacy state without the QE field inherits the old TCB floor. The current TCB floor is still global; production needs a governed FMSPC-keyed map and fail-closed unknown-FMSPC behavior before this is complete. The handler also enforces `public_inputs.rtmr3 == config.expected_rtmr3` when that field is populated — without it the contract is vulnerable to a "wrong-image-attestation" substitution. Compute `expected_rtmr3` from a known-good quote of the intended dstack image and set it on instantiate.
 - **Anti-sniping for BidBoard auction contract** (separate repo at `/Users/mvid/Development/reliq/bidboard`, but the integration touches Quartz).
 - **IBE-based key management**: commonware `feat/threshold-ibe` branch. Blocked on chain signature support in xiond.
 
@@ -75,7 +75,7 @@ cd tests/integration && cargo test testnet -- --ignored  # live testnet
 - **TEE**: dstack CVM (Intel TDX). No SGX, no Gramine.
 - **Attestation**: DstackAttestor → TDX quote → zkdcap Noir/UltraHonk proof → Xion ZK module (`/xion.zk.v1.Query/ProofVerifyUltraHonk` via `query_grpc()`), built on `quartz-zkdcap`
 - **Chain**: Xion (xiond v28+, uxion, CosmWasm 3)
-- **Config**: `zkdcap_vkey` (UltraHonk vkey name in Xion's ZK module), `expected_rtmr3` (optional pinned RTMR3), `min_tcb_eval_num` (monotonic TCB-recency floor)
+- **Config**: `zkdcap_vkey` (UltraHonk vkey name in Xion's ZK module), `expected_rtmr3` (optional pinned RTMR3), `min_tcb_eval_num` and `min_qe_eval_num` (independent collateral floors; TCB storage is not yet FMSPC-keyed)
 - **Key management**: DstackKeyManager (dstack KMS) is default. DstackAttestor for TEE quotes.
 - **Encryption**: ECIES in `quartz-enclave-core::encryption`
 - **Mock mode**: `--mock` CLI flag, `mock` feature flag. Swaps DstackAttestor→MockAttestor, DstackAttestation→MockAttestation, skips ZK verification.
@@ -83,9 +83,9 @@ cd tests/integration && cargo test testnet -- --ignored  # live testnet
 
 ## Key files
 
-- `crates/zkdcap/` — `quartz-zkdcap`: canonical UltraHonk layout/decoders + `verify_quote`/`verify_quote_parts` (recency/validity + tcb-eval) + Xion `ProofVerifyUltraHonk` backend. Shared with dossier + verified-rcv.
+- `crates/zkdcap/` — `quartz-zkdcap`: canonical UltraHonk layout/decoders + `verify_quote`/`verify_quote_parts` (recency/validity + independent TCB/QE floors) + Xion `ProofVerifyUltraHonk` backend. Shared with dossier + verified-rcv.
 - `crates/contracts/core/src/handler/execute/attested.rs` — DstackZkAttestation handler (verify_quote_parts + check_zk_bindings), ZK module query
-- `crates/contracts/core/src/state.rs` — Config with zkdcap_vkey + expected_rtmr3 + min_tcb_eval_num
+- `crates/contracts/core/src/state.rs` — Config with zkdcap_vkey + expected_rtmr3 + independent scalar TCB/QE floors; per-FMSPC governance remains open
 - `crates/enclave/core/src/attestor.rs` — DstackAttestor + MockAttestor
 - `crates/enclave/core/src/key_manager/dstack.rs` — DstackKeyManager
 - `crates/enclave/core/src/encryption.rs` — ECIES helpers

@@ -17,16 +17,11 @@ pub type TrustThreshold = (u64, u64);
 pub(crate) mod rtmr_opt_serde {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-    pub fn serialize<S: Serializer>(
-        val: &Option<[u8; 48]>,
-        ser: S,
-    ) -> Result<S::Ok, S::Error> {
+    pub fn serialize<S: Serializer>(val: &Option<[u8; 48]>, ser: S) -> Result<S::Ok, S::Error> {
         val.as_ref().map(|a| a.as_slice()).serialize(ser)
     }
 
-    pub fn deserialize<'de, D: Deserializer<'de>>(
-        de: D,
-    ) -> Result<Option<[u8; 48]>, D::Error> {
+    pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<Option<[u8; 48]>, D::Error> {
         let opt = <Option<Vec<u8>>>::deserialize(de)?;
         match opt {
             None => Ok(None),
@@ -92,13 +87,16 @@ pub struct Config {
     /// genuine TDX enclave). Default `false` = secure-by-default.
     #[serde(default)]
     allow_any_image: bool,
-    /// Monotonic TCB-recency floor: the `DstackZkAttestation` handler rejects
-    /// any proof whose `tcb_eval_num`/`qe_eval_num` is below this (floor is on
-    /// the smaller). The circuit has no counter, so the staleness decision is
-    /// the consumer's; raise this over time as Intel publishes new TCB
-    /// evaluations. `0` (the default) means no floor.
+    /// Monotonic TCB-Info recency floor. The circuit has no counter, so the
+    /// staleness decision is the consumer's. `0` (the default) means no floor.
+    /// A production policy should select this floor using the proof-bound FMSPC.
     #[serde(default)]
     min_tcb_eval_num: u64,
+    /// Monotonic QE-Identity recency floor. This is independent from the
+    /// TCB-Info floor because Intel advances the two collateral streams
+    /// separately. `0` (the default) means no floor.
+    #[serde(default)]
+    min_qe_eval_num: u64,
     /// Maximum acceptable TCB-status severity (lower = better; see
     /// `quartz_zkdcap::tcb_status`). The `DstackZkAttestation` handler rejects a
     /// proof whose decoded `tcb_status` exceeds this. SECURE-BY-DEFAULT: `0`
@@ -129,6 +127,7 @@ impl Config {
             expected_compose_hash: None,
             allow_any_image: false,
             min_tcb_eval_num: 0,
+            min_qe_eval_num: 0,
             max_tcb_status: 0, // UP_TO_DATE only (secure-by-default)
         }
     }
@@ -181,9 +180,19 @@ impl Config {
         self
     }
 
-    /// Builder: pin the monotonic TCB-recency floor. See the field docstring.
+    /// Backward-compatible builder for the former shared recency floor. Sets
+    /// both independent floors to the same value. Use
+    /// [`Self::with_eval_num_floors`] when the streams have different floors.
     pub fn with_min_tcb_eval_num(mut self, min_tcb_eval_num: u64) -> Self {
         self.min_tcb_eval_num = min_tcb_eval_num;
+        self.min_qe_eval_num = min_tcb_eval_num;
+        self
+    }
+
+    /// Builder: set independent TCB-Info and QE-Identity recency floors.
+    pub fn with_eval_num_floors(mut self, min_tcb_eval_num: u64, min_qe_eval_num: u64) -> Self {
+        self.min_tcb_eval_num = min_tcb_eval_num;
+        self.min_qe_eval_num = min_qe_eval_num;
         self
     }
 
@@ -232,6 +241,10 @@ impl Config {
         self.min_tcb_eval_num
     }
 
+    pub fn min_qe_eval_num(&self) -> u64 {
+        self.min_qe_eval_num
+    }
+
     pub fn max_tcb_status(&self) -> u8 {
         self.max_tcb_status
     }
@@ -261,6 +274,11 @@ pub struct RawConfig {
     /// Monotonic TCB-recency floor. See `Config::min_tcb_eval_num`.
     #[serde(default)]
     min_tcb_eval_num: u64,
+    /// Independent QE-Identity floor. `None` identifies state written before
+    /// the split and falls back to `min_tcb_eval_num`, preserving the old
+    /// shared-floor policy during deserialization.
+    #[serde(default)]
+    min_qe_eval_num: Option<u64>,
     /// Maximum acceptable TCB-status severity. See `Config::max_tcb_status`.
     /// Default `0` = UP_TO_DATE only (secure-by-default).
     #[serde(default)]
@@ -302,6 +320,10 @@ impl RawConfig {
         self.min_tcb_eval_num
     }
 
+    pub fn min_qe_eval_num(&self) -> u64 {
+        self.min_qe_eval_num.unwrap_or(self.min_tcb_eval_num)
+    }
+
     pub fn max_tcb_status(&self) -> u8 {
         self.max_tcb_status
     }
@@ -316,6 +338,7 @@ impl TryFrom<RawConfig> for Config {
                 .transpose()
                 .map_err(|e| StdError::msg(format!("{name}: {e}")))
         }
+        let min_qe_eval_num = value.min_qe_eval_num.unwrap_or(value.min_tcb_eval_num);
         Ok(Self {
             mr_enclave: value.mr_enclave.to_array()?,
             light_client_opts: value
@@ -331,6 +354,7 @@ impl TryFrom<RawConfig> for Config {
             expected_compose_hash: value.expected_compose_hash.map(|h| h.to_vec()),
             allow_any_image: value.allow_any_image,
             min_tcb_eval_num: value.min_tcb_eval_num,
+            min_qe_eval_num,
             max_tcb_status: value.max_tcb_status,
         })
     }
@@ -350,6 +374,7 @@ impl From<Config> for RawConfig {
             expected_compose_hash: value.expected_compose_hash.map(HexBinary::from),
             allow_any_image: value.allow_any_image,
             min_tcb_eval_num: value.min_tcb_eval_num,
+            min_qe_eval_num: Some(value.min_qe_eval_num),
             max_tcb_status: value.max_tcb_status,
         }
     }
@@ -398,7 +423,9 @@ impl LightClientOpts {
             return Err("trust_threshold_too_small");
         }
         // i64 fit check on trusted_height
-        let _: i64 = trusted_height.try_into().map_err(|_| "trusted_height too large")?;
+        let _: i64 = trusted_height
+            .try_into()
+            .map_err(|_| "trusted_height too large")?;
         Ok(())
     }
 
@@ -495,6 +522,50 @@ impl From<LightClientOpts> for RawLightClientOpts {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn light_client_opts() -> LightClientOpts {
+        LightClientOpts::new(
+            "testing".to_string(),
+            1,
+            [0u8; 32],
+            (2, 3),
+            1_209_600,
+            300,
+            600,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn independent_eval_floor_builder_preserves_both_values() {
+        let config = Config::new([0u8; 32], light_client_opts(), None).with_eval_num_floors(19, 17);
+        assert_eq!(config.min_tcb_eval_num(), 19);
+        assert_eq!(config.min_qe_eval_num(), 17);
+    }
+
+    #[test]
+    fn legacy_shared_floor_builder_sets_both_values() {
+        let config = Config::new([0u8; 32], light_client_opts(), None).with_min_tcb_eval_num(15);
+        assert_eq!(config.min_tcb_eval_num(), 15);
+        assert_eq!(config.min_qe_eval_num(), 15);
+    }
+
+    #[test]
+    fn legacy_raw_config_without_qe_floor_inherits_tcb_floor() {
+        let config = Config::new([0u8; 32], light_client_opts(), None).with_min_tcb_eval_num(15);
+        let raw: RawConfig = config.into();
+        let mut json = serde_json::to_value(raw).unwrap();
+        json.as_object_mut().unwrap().remove("min_qe_eval_num");
+
+        let legacy: RawConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(legacy.min_tcb_eval_num(), 15);
+        assert_eq!(legacy.min_qe_eval_num(), 15);
+    }
+}
+
 #[cw_serde]
 pub struct Session {
     nonce: HexBinary,
@@ -562,7 +633,10 @@ mod verification {
 
         if create_nonce == check_nonce {
             // Nonce matches, pub_key was None → must be Some
-            assert!(result.is_some(), "matching nonce with None pubkey must succeed");
+            assert!(
+                result.is_some(),
+                "matching nonce with None pubkey must succeed"
+            );
         } else {
             // Nonce mismatch → must be None
             assert!(result.is_none(), "mismatched nonce must fail");

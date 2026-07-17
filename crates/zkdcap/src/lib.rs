@@ -5,11 +5,13 @@
 //!
 //! - the packed 672-byte / 21-field `public_inputs` layout and its decoders
 //!   ([`layout`]): `extract_report_data`, `extract_measurements`,
-//!   `extract_timestamp`, `extract_tcb_eval_num`, `extract_valid_from`,
+//!   `extract_cert_serial`, `extract_fmspc`, `extract_timestamp`,
+//!   `extract_tcb_eval_num`, `extract_qe_eval_num`, `extract_valid_from`,
 //!   `extract_valid_until`, `measurement_digest`, `build_public_inputs`,
 //!   `split_attestation`/`frame_attestation`, `unix_to_packed_datetime`;
 //! - the [`ProofBackend`] seam and the generic [`verify_quote`] primitive that
-//!   decodes, range-checks recency/validity + the tcb-eval floor, and verifies
+//!   decodes, range-checks recency/validity + independent TCB-Info and
+//!   QE-Identity floors, and verifies
 //!   the proof;
 //! - the CosmWasm [`xion`] backend (feature `xion-backend`) that calls
 //!   `/xion.zk.v1.Query/ProofVerifyUltraHonk`.

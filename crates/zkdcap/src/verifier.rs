@@ -1,20 +1,22 @@
 //! The [`ProofBackend`] seam and the generic [`verify_quote`] primitive: decode
-//! the packed `public_inputs`, range-check recency/validity + the tcb-eval
-//! floor, and verify the proof. Application-INDEPENDENT — it returns the
+//! the packed `public_inputs`, range-check recency/validity + independent
+//! TCB-Info/QE-Identity floors, and verify the proof. Application-INDEPENDENT — it returns the
 //! decoded fields and leaves the `report_data` / measurement comparison to the
 //! caller's domain logic.
 
 use crate::layout::{
-    extract_measurements, extract_qe_eval_num, extract_report_data, extract_tcb_eval_num,
-    extract_tcb_status, extract_timestamp, extract_valid_from, extract_valid_until,
-    measurement_digest, split_attestation, MEASUREMENT_REGS,
+    extract_cert_serial, extract_fmspc, extract_measurements, extract_qe_eval_num,
+    extract_report_data, extract_tcb_eval_num, extract_tcb_status, extract_timestamp,
+    extract_valid_from, extract_valid_until, measurement_digest, split_attestation,
+    MEASUREMENT_REGS,
 };
 use crate::Hash32;
 
 /// TCB status severity codes carried in packed `public_inputs` field 13 (lower is
 /// better), mirroring the dcap-noir circuit (`crates/dcap/src/tcb.nr`,
-/// `merge_status` = max(platform, qe)). The circuit asserts the merged status is
-/// not `REVOKED` in-circuit, so a valid proof carries `0..=5`; the
+/// whose current working tree directionally converges platform and QE status).
+/// The circuit asserts the merged status is not `REVOKED` in-circuit, so a valid
+/// proof carries `0..=5`; the
 /// `max_tcb_status` policy passed to [`verify_quote_parts`] gates the rest.
 pub mod tcb_status {
     /// All TCB components at the latest secure level.
@@ -40,6 +42,29 @@ pub trait ProofBackend {
     fn verify(&self, proof: &[u8], public_inputs: &[u8]) -> bool;
 }
 
+/// Independent freshness floors for Intel's two evaluation-data-number
+/// namespaces.
+///
+/// A production caller must select `min_tcb_info` from policy keyed by the
+/// proof-bound FMSPC; this value object does not itself own or resolve that map.
+/// `min_qe_identity` tracks QE-Identity collateral in its separate policy
+/// domain. The two streams advance independently and therefore must not be
+/// collapsed into one `min(tcb, qe)` value.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EvalNumberPolicy {
+    pub min_tcb_info: u64,
+    pub min_qe_identity: u64,
+}
+
+impl EvalNumberPolicy {
+    pub const fn new(min_tcb_info: u64, min_qe_identity: u64) -> Self {
+        Self {
+            min_tcb_info,
+            min_qe_identity,
+        }
+    }
+}
+
 /// Backend that accepts any proof. For seam/integration tests and devnet only:
 /// it exercises the FULL decode + recency/binding path while stubbing only the
 /// ZK crypto a real CVM + zkdcap fills in. Gated behind `accepting` so it can
@@ -62,7 +87,7 @@ pub enum QuoteError {
     /// pack_be high-bytes-zero invariant violated.
     Malformed,
     /// Chain time outside the proven `[valid_from, valid_until]` window, or
-    /// `min(tcb_eval_num, qe_eval_num)` below the monotonic floor.
+    /// either evaluation-data number below its independent monotonic floor.
     StaleOrFuture,
     /// The proof's TCB status severity exceeds the configured `max_tcb_status`
     /// (e.g. the platform is `OUT_OF_DATE`, or needs config / SW hardening beyond
@@ -82,6 +107,11 @@ pub struct DecodedQuote {
     pub measurement_digest: Hash32,
     pub tcb_status: u8,
     pub timestamp: u64,
+    /// PCK certificate serial number.
+    pub cert_serial: [u8; 20],
+    /// Proof-bound platform FMSPC, used by the caller to select the applicable
+    /// TCB-Info recency policy.
+    pub fmspc: [u8; 6],
     /// TCB-Info tcbEvaluationDataNumber.
     pub tcb_eval_num: u64,
     /// QE-Identity tcbEvaluationDataNumber (split from tcb_eval_num by issue #4).
@@ -99,11 +129,6 @@ impl DecodedQuote {
     pub fn rtmr3(&self) -> &[u8; 48] {
         &self.measurements[4]
     }
-    /// The recency counter the floor is applied to: the smaller of the TCB-Info
-    /// and QE-Identity evaluation-data numbers.
-    pub fn min_eval_num(&self) -> u64 {
-        self.tcb_eval_num.min(self.qe_eval_num)
-    }
 }
 
 /// Verify an UltraHonk attestation framed as `u32_BE(len) || proof || u32_BE(len)
@@ -116,17 +141,18 @@ pub fn verify_quote<B: ProofBackend>(
     backend: &B,
     attestation: &[u8],
     now_packed: u64,
-    min_tcb_eval_num: u64,
+    eval_policy: EvalNumberPolicy,
     max_tcb_status: u8,
 ) -> Result<DecodedQuote, QuoteError> {
     let (proof, pi) = split_attestation(attestation).ok_or(QuoteError::Malformed)?;
-    verify_quote_parts(backend, proof, pi, now_packed, min_tcb_eval_num, max_tcb_status)
+    verify_quote_parts(backend, proof, pi, now_packed, eval_policy, max_tcb_status)
 }
 
 /// Verify an UltraHonk proof produced by the dcap-noir circuit:
 /// 1. decode the packed `public_inputs` (report_data, measurements, recency),
 /// 2. range-check chain time against the proven `[valid_from, valid_until]`
-///    window, reject `tcb_eval_num` below the monotonic floor, and reject a
+///    window, reject either evaluation-data number below its own monotonic
+///    floor, and reject a
 ///    `tcb_status` severity above `max_tcb_status` (see [`tcb_status`]),
 /// 3. verify the proof via `backend`.
 ///
@@ -141,7 +167,7 @@ pub fn verify_quote_parts<B: ProofBackend>(
     proof: &[u8],
     pi: &[u8],
     now_packed: u64,
-    min_tcb_eval_num: u64,
+    eval_policy: EvalNumberPolicy,
     max_tcb_status: u8,
 ) -> Result<DecodedQuote, QuoteError> {
     let report_data = extract_report_data(pi).ok_or(QuoteError::Malformed)?;
@@ -149,16 +175,17 @@ pub fn verify_quote_parts<B: ProofBackend>(
     let measurement_digest = measurement_digest(pi).ok_or(QuoteError::Malformed)?;
     let tcb_status = extract_tcb_status(pi).ok_or(QuoteError::Malformed)?;
     let timestamp = extract_timestamp(pi).ok_or(QuoteError::Malformed)?;
+    let cert_serial = extract_cert_serial(pi).ok_or(QuoteError::Malformed)?;
+    let fmspc = extract_fmspc(pi).ok_or(QuoteError::Malformed)?;
     let tcb_eval_num = extract_tcb_eval_num(pi).ok_or(QuoteError::Malformed)?;
     let qe_eval_num = extract_qe_eval_num(pi).ok_or(QuoteError::Malformed)?;
     let valid_from = extract_valid_from(pi).ok_or(QuoteError::Malformed)?;
     let valid_until = extract_valid_until(pi).ok_or(QuoteError::Malformed)?;
 
-    // Floor on the smaller of the two evaluation-data numbers (preserves the
-    // pre-issue-#4 single-counter semantics, where the circuit emitted the min).
     if !(valid_from <= now_packed
         && now_packed <= valid_until
-        && tcb_eval_num.min(qe_eval_num) >= min_tcb_eval_num)
+        && tcb_eval_num >= eval_policy.min_tcb_info
+        && qe_eval_num >= eval_policy.min_qe_identity)
     {
         return Err(QuoteError::StaleOrFuture);
     }
@@ -181,6 +208,8 @@ pub fn verify_quote_parts<B: ProofBackend>(
         measurement_digest,
         tcb_status,
         timestamp,
+        cert_serial,
+        fmspc,
         tcb_eval_num,
         qe_eval_num,
         valid_from,

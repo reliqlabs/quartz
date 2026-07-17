@@ -179,21 +179,18 @@ impl Handler for DstackAttestation {
 /// Verifies the dcap-noir UltraHonk proof through
 /// `quartz_zkdcap::verify_quote_parts`: decode the packed public inputs,
 /// range-check chain time against the proven `[valid_from, valid_until]` window,
-/// reject `tcb_eval_num` below `config.min_tcb_eval_num`, then verify the proof
+/// reject either collateral evaluation-data number below its independent
+/// configured floor, then verify the proof
 /// via `/xion.zk.v1.Query/ProofVerifyUltraHonk`. Finally bind the decoded
 /// report_data/rtmr3 to the wrapper. If no `zkdcap_vkey` is configured the
 /// handler FAILS CLOSED (it cannot verify, so it must not accept); use a `mock`
 /// build for verification-free dev/test.
 #[cfg(not(feature = "mock"))]
 impl Handler for DstackZkAttestation {
-    fn handle(
-        self,
-        deps: DepsMut<'_>,
-        env: &Env,
-        _info: &MessageInfo,
-    ) -> Result<Response, Error> {
+    fn handle(self, deps: DepsMut<'_>, env: &Env, _info: &MessageInfo) -> Result<Response, Error> {
         use quartz_zkdcap::{
-            unix_to_packed_datetime, verify_quote_parts, QuoteError, XionUltraHonkBackend,
+            unix_to_packed_datetime, verify_quote_parts, EvalNumberPolicy, QuoteError,
+            XionUltraHonkBackend,
         };
 
         // Read directly from the stored RawConfig — avoids a Config round-trip
@@ -222,7 +219,7 @@ impl Handler for DstackZkAttestation {
             &self.zkdcap_proof,
             &self.zkdcap_public_inputs,
             now_packed,
-            config.min_tcb_eval_num(),
+            EvalNumberPolicy::new(config.min_tcb_eval_num(), config.min_qe_eval_num()),
             config.max_tcb_status(),
         )
         .map_err(|e| {
@@ -230,7 +227,7 @@ impl Handler for DstackZkAttestation {
                 match e {
                     QuoteError::Malformed => "malformed public_inputs",
                     QuoteError::StaleOrFuture => {
-                        "attestation outside validity window or tcb_eval below floor"
+                        "attestation outside validity window or collateral eval below floor"
                     }
                     QuoteError::TcbStatusUnacceptable => {
                         "tcb_status severity exceeds config.max_tcb_status"
@@ -287,12 +284,7 @@ impl Handler for DstackZkAttestation {
 // ── DstackAnyAttestation handler (delegates to inner variant) ──────
 
 impl Handler for DstackAnyAttestation {
-    fn handle(
-        self,
-        deps: DepsMut<'_>,
-        env: &Env,
-        info: &MessageInfo,
-    ) -> Result<Response, Error> {
+    fn handle(self, deps: DepsMut<'_>, env: &Env, info: &MessageInfo) -> Result<Response, Error> {
         match self {
             Self::Quote(a) => a.handle(deps, env, info),
             Self::Zk(a) => a.handle(deps, env, info),
@@ -370,6 +362,8 @@ mod tests {
             measurement_digest: [0u8; 32],
             tcb_status: 0,
             timestamp: 0,
+            cert_serial: [0u8; 20],
+            fmspc: [0u8; 6],
             tcb_eval_num: 0,
             qe_eval_num: 0,
             valid_from: 0,
@@ -378,13 +372,18 @@ mod tests {
     }
 
     // Full DecodedQuote with explicit per-register measurements.
-    fn decoded_full(report_data: [u8; 64], measurements: [[u8; 48]; MEASUREMENT_REGS]) -> DecodedQuote {
+    fn decoded_full(
+        report_data: [u8; 64],
+        measurements: [[u8; 48]; MEASUREMENT_REGS],
+    ) -> DecodedQuote {
         DecodedQuote {
             report_data,
             measurements,
             measurement_digest: [0u8; 32],
             tcb_status: 0,
             timestamp: 0,
+            cert_serial: [0u8; 20],
+            fmspc: [0u8; 6],
             tcb_eval_num: 0,
             qe_eval_num: 0,
             valid_from: 0,
@@ -393,7 +392,14 @@ mod tests {
     }
 
     fn no_pins(allow_any_image: bool) -> ImagePins<'static> {
-        ImagePins { mrtd: None, rtmr0: None, rtmr1: None, rtmr2: None, rtmr3: None, allow_any_image }
+        ImagePins {
+            mrtd: None,
+            rtmr0: None,
+            rtmr1: None,
+            rtmr2: None,
+            rtmr3: None,
+            allow_any_image,
+        }
     }
 
     #[test]
@@ -520,7 +526,9 @@ mod tests {
         let (log, _rtmr3) = compose_log_and_rtmr3("abcd");
         let d = decoded_rtmr3([0x77u8; 48]); // wrong anchor
         let err = check_compose_hash(&d, Some(&log), &[0xAB, 0xCD]).unwrap_err();
-        assert!(format!("{err}").contains("Rtmr3Mismatch") || format!("{err}").contains("compose-hash"));
+        assert!(
+            format!("{err}").contains("Rtmr3Mismatch") || format!("{err}").contains("compose-hash")
+        );
     }
 
     #[test]
@@ -579,7 +587,8 @@ mod tests {
         let cfg: RawConfig = Config::new([0u8; 32], lco, None).into();
         CONFIG.save(deps.as_mut().storage, &cfg).unwrap();
 
-        let att = DstackZkAttestation::new([0u8; 64], [0u8; 32], vec![1, 2, 3], vec![0u8; 672], None);
+        let att =
+            DstackZkAttestation::new([0u8; 64], [0u8; 32], vec![1, 2, 3], vec![0u8; 672], None);
         let err = Handler::handle(att, deps.as_mut(), &env, &info).unwrap_err();
         assert!(matches!(err, Error::ZkdcapVerificationFailed(_)));
     }

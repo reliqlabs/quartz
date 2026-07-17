@@ -11,8 +11,8 @@ categories = ["cryptography::cryptocurrencies", "wasm"]
 keywords = ["cosmos", "cosmwasm", "tee", "dstack", "zkdcap"]
 description = """
 Canonical Noir/UltraHonk TDX attestation verification primitives for Quartz:
-the packed public_inputs layout + decoders, the recency/validity + tcb-eval
-checks, and the Xion ProofVerifyUltraHonk backend. Application-independent;
+the packed public_inputs layout + decoders, independent collateral recency
+floors, validity checks, and the Xion ProofVerifyUltraHonk backend. Application-independent;
 shared by quartz-contract-core, dossier, and verified-rcv so the proof checks
 live in one place.
 """

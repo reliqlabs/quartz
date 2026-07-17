@@ -20,8 +20,27 @@ fn measurements() -> [u8; MEASUREMENT_BYTES] {
     m
 }
 
+const CERT_SERIAL: [u8; 20] = [0xA5; 20];
+const FMSPC: [u8; 6] = [0xB6; 6];
+
+fn floors(min_tcb_info: u64, min_qe_identity: u64) -> EvalNumberPolicy {
+    EvalNumberPolicy::new(min_tcb_info, min_qe_identity)
+}
+
 fn pi_with(rd: [u8; 64], tcb_eval: u64, qe_eval: u64, from: u64, until: u64) -> Vec<u8> {
-    build_public_inputs(&measurements(), &rd, 7, 1_234, tcb_eval, qe_eval, from, until)
+    let mut pi = build_public_inputs(
+        &measurements(),
+        &rd,
+        7,
+        1_234,
+        tcb_eval,
+        qe_eval,
+        from,
+        until,
+    );
+    pi[15 * 32 + 12..16 * 32].copy_from_slice(&CERT_SERIAL);
+    pi[16 * 32 + 26..17 * 32].copy_from_slice(&FMSPC);
+    pi
 }
 
 fn att(rd: [u8; 64], tcb_eval: u64, qe_eval: u64, from: u64, until: u64) -> Vec<u8> {
@@ -37,10 +56,25 @@ fn pi_is_672_bytes_and_round_trips() {
     assert_eq!(extract_report_data(&pi), Some([7u8; 64]));
     assert_eq!(extract_tcb_status(&pi), Some(7));
     assert_eq!(extract_timestamp(&pi), Some(1_234));
+    assert_eq!(extract_cert_serial(&pi), Some(CERT_SERIAL));
+    assert_eq!(extract_fmspc(&pi), Some(FMSPC));
     assert_eq!(extract_tcb_eval_num(&pi), Some(17));
     assert_eq!(extract_qe_eval_num(&pi), Some(23));
     assert_eq!(extract_valid_from(&pi), Some(100));
     assert_eq!(extract_valid_until(&pi), Some(999));
+}
+
+#[test]
+fn identity_extractors_reject_noncanonical_high_bytes() {
+    let pi = pi_with([0u8; 64], 1, 1, 0, u64::MAX);
+
+    let mut bad_serial = pi.clone();
+    bad_serial[15 * 32] = 1;
+    assert_eq!(extract_cert_serial(&bad_serial), None);
+
+    let mut bad_fmspc = pi;
+    bad_fmspc[16 * 32] = 1;
+    assert_eq!(extract_fmspc(&bad_fmspc), None);
 }
 
 #[test]
@@ -56,11 +90,19 @@ fn measurement_registers_round_trip() {
 #[test]
 fn verify_quote_happy_path_returns_decoded() {
     let b = FakeBackend { accept: true };
-    let d = verify_quote(&b, &att([9u8; 64], 5, 8, 100, 200), 150, 0, u8::MAX).unwrap();
+    let d = verify_quote(
+        &b,
+        &att([9u8; 64], 5, 8, 100, 200),
+        150,
+        floors(5, 8),
+        u8::MAX,
+    )
+    .unwrap();
     assert_eq!(d.report_data, [9u8; 64]);
+    assert_eq!(d.cert_serial, CERT_SERIAL);
+    assert_eq!(d.fmspc, FMSPC);
     assert_eq!(d.tcb_eval_num, 5);
     assert_eq!(d.qe_eval_num, 8);
-    assert_eq!(d.min_eval_num(), 5);
     assert_eq!(d.valid_from, 100);
     assert_eq!(d.valid_until, 200);
     assert_eq!(d.rtmr3(), &[0x14u8; 48]);
@@ -70,7 +112,13 @@ fn verify_quote_happy_path_returns_decoded() {
 fn verify_quote_rejects_bad_proof() {
     let b = FakeBackend { accept: false };
     assert_eq!(
-        verify_quote(&b, &att([0u8; 64], 99, 99, 0, u64::MAX), 150, 0, u8::MAX),
+        verify_quote(
+            &b,
+            &att([0u8; 64], 99, 99, 0, u64::MAX),
+            150,
+            floors(0, 0),
+            u8::MAX,
+        ),
         Err(QuoteError::ProofInvalid)
     );
 }
@@ -79,28 +127,62 @@ fn verify_quote_rejects_bad_proof() {
 fn verify_quote_validity_window_is_inclusive() {
     let b = FakeBackend { accept: true };
     let a = att([0u8; 64], 99, 99, 100, 200);
-    assert_eq!(verify_quote(&b, &a, 50, 0, u8::MAX).map(|_| ()), Err(QuoteError::StaleOrFuture));
-    assert_eq!(verify_quote(&b, &a, 300, 0, u8::MAX).map(|_| ()), Err(QuoteError::StaleOrFuture));
-    assert!(verify_quote(&b, &a, 100, 0, u8::MAX).is_ok()); // lower boundary inclusive
-    assert!(verify_quote(&b, &a, 200, 0, u8::MAX).is_ok()); // upper boundary inclusive
-    assert!(verify_quote(&b, &a, 150, 0, u8::MAX).is_ok());
+    assert_eq!(
+        verify_quote(&b, &a, 50, floors(0, 0), u8::MAX).map(|_| ()),
+        Err(QuoteError::StaleOrFuture)
+    );
+    assert_eq!(
+        verify_quote(&b, &a, 300, floors(0, 0), u8::MAX).map(|_| ()),
+        Err(QuoteError::StaleOrFuture)
+    );
+    assert!(verify_quote(&b, &a, 100, floors(0, 0), u8::MAX).is_ok()); // lower boundary inclusive
+    assert!(verify_quote(&b, &a, 200, floors(0, 0), u8::MAX).is_ok()); // upper boundary inclusive
+    assert!(verify_quote(&b, &a, 150, floors(0, 0), u8::MAX).is_ok());
 }
 
 #[test]
-fn verify_quote_floor_is_on_min_of_both_evals() {
+fn verify_quote_enforces_independent_eval_floors() {
     let b = FakeBackend { accept: true };
-    // floor applies to min(tcb_eval, qe_eval): either being below the floor rejects.
+    // The collateral streams advance independently. A lower-but-current QE
+    // number must not force the TCB floor down (or the QE floor up).
     assert_eq!(
-        verify_quote(&b, &att([0u8; 64], 5, 20, 0, u64::MAX), 1, 10, u8::MAX).map(|_| ()),
+        verify_quote(
+            &b,
+            &att([0u8; 64], 9, 100, 0, u64::MAX),
+            1,
+            floors(10, 3),
+            u8::MAX,
+        )
+        .map(|_| ()),
         Err(QuoteError::StaleOrFuture)
-    ); // tcb=5 < 10
+    ); // TCB-Info is below its own floor.
     assert_eq!(
-        verify_quote(&b, &att([0u8; 64], 20, 5, 0, u64::MAX), 1, 10, u8::MAX).map(|_| ()),
+        verify_quote(
+            &b,
+            &att([0u8; 64], 100, 2, 0, u64::MAX),
+            1,
+            floors(10, 3),
+            u8::MAX,
+        )
+        .map(|_| ()),
         Err(QuoteError::StaleOrFuture)
-    ); // qe=5 < 10
-    assert!(verify_quote(&b, &att([0u8; 64], 20, 20, 0, u64::MAX), 1, 10, u8::MAX).is_ok()); // both >= 10
-    assert!(verify_quote(&b, &att([0u8; 64], 10, 10, 0, u64::MAX), 1, 10, u8::MAX).is_ok()); // both == floor
-    assert!(verify_quote(&b, &att([0u8; 64], 5, 5, 0, u64::MAX), 1, 0, u8::MAX).is_ok()); // no floor
+    ); // QE-Identity is below its own floor.
+    assert!(verify_quote(
+        &b,
+        &att([0u8; 64], 10, 3, 0, u64::MAX),
+        1,
+        floors(10, 3),
+        u8::MAX,
+    )
+    .is_ok());
+    assert!(verify_quote(
+        &b,
+        &att([0u8; 64], 5, 5, 0, u64::MAX),
+        1,
+        floors(0, 0),
+        u8::MAX,
+    )
+    .is_ok());
 }
 
 #[test]
@@ -112,7 +194,7 @@ fn high_byte_invariant_rejects_poisoned_limb() {
     a[pi_off + 10 * 32] = 1;
     let b = FakeBackend { accept: true };
     assert_eq!(
-        verify_quote(&b, &a, 1, 0, u8::MAX).map(|_| ()),
+        verify_quote(&b, &a, 1, floors(0, 0), u8::MAX).map(|_| ()),
         Err(QuoteError::Malformed)
     );
 }
@@ -129,11 +211,25 @@ fn verify_quote_enforces_tcb_status_policy() {
     };
 
     // UpToDate (0) is accepted under the strictest policy.
-    assert!(verify_quote(&b, &with_status(tcb_status::UP_TO_DATE), 1, 0, tcb_status::UP_TO_DATE).is_ok());
+    assert!(verify_quote(
+        &b,
+        &with_status(tcb_status::UP_TO_DATE),
+        1,
+        floors(0, 0),
+        tcb_status::UP_TO_DATE,
+    )
+    .is_ok());
 
     // OutOfDate (4) is rejected under UpToDate-only AND under a mid policy.
     assert_eq!(
-        verify_quote(&b, &with_status(tcb_status::OUT_OF_DATE), 1, 0, tcb_status::UP_TO_DATE).map(|_| ()),
+        verify_quote(
+            &b,
+            &with_status(tcb_status::OUT_OF_DATE),
+            1,
+            floors(0, 0),
+            tcb_status::UP_TO_DATE,
+        )
+        .map(|_| ()),
         Err(QuoteError::TcbStatusUnacceptable)
     );
     assert_eq!(
@@ -141,7 +237,7 @@ fn verify_quote_enforces_tcb_status_policy() {
             &b,
             &with_status(tcb_status::OUT_OF_DATE),
             1,
-            0,
+            floors(0, 0),
             tcb_status::CONFIG_AND_SW_HARDENING_NEEDED,
         )
         .map(|_| ()),
@@ -151,15 +247,21 @@ fn verify_quote_enforces_tcb_status_policy() {
     // SWHardeningNeeded (1) is rejected by default (UpToDate-only) but accepted
     // when the policy is raised to allow it. Threshold is inclusive.
     assert_eq!(
-        verify_quote(&b, &with_status(tcb_status::SW_HARDENING_NEEDED), 1, 0, tcb_status::UP_TO_DATE)
-            .map(|_| ()),
+        verify_quote(
+            &b,
+            &with_status(tcb_status::SW_HARDENING_NEEDED),
+            1,
+            floors(0, 0),
+            tcb_status::UP_TO_DATE,
+        )
+        .map(|_| ()),
         Err(QuoteError::TcbStatusUnacceptable)
     );
     assert!(verify_quote(
         &b,
         &with_status(tcb_status::SW_HARDENING_NEEDED),
         1,
-        0,
+        floors(0, 0),
         tcb_status::SW_HARDENING_NEEDED,
     )
     .is_ok());

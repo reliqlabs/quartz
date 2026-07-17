@@ -14,21 +14,33 @@ the shared `quartz-zkdcap` crate so the proof checks live in one place.
   `GNARK_SOCKET` still read as a fallback).
 - **New mandatory recency/validity checks.** The `DstackZkAttestation` handler
   now range-checks chain time against the proof's proven `[valid_from,
-  valid_until]` window and rejects `tcb_eval_num` below `Config.min_tcb_eval_num`
-  (new config field; defaults to 0 = no floor). The circuit has no clock/counter,
-  so this is the consumer's decision.
+  valid_until]` window and rejects either collateral stream below its independent
+  floor: `Config.min_tcb_eval_num` for TCB Info and `Config.min_qe_eval_num` for
+  QE Identity. Legacy stored state with no QE field inherits the former shared
+  TCB floor. Both default to 0 for new default configuration. The circuit has no
+  clock/counter, so this is the consumer's decision.
+- **`quartz-zkdcap` verifier API changed.** `verify_quote` and
+  `verify_quote_parts` now take `EvalNumberPolicy`; `DecodedQuote` exposes the
+  proof-bound PCK serial and FMSPC; the old `min_eval_num()` helper is removed.
 
 ### Features
 
 - **`quartz-zkdcap` crate** -- canonical UltraHonk attestation primitives (packed
   `public_inputs` layout + decoders, `verify_quote`/`verify_quote_parts` with the
-  recency/validity + tcb-eval checks, the Xion `ProofVerifyUltraHonk` backend).
+  recency/validity + independent TCB/QE checks, the Xion
+  `ProofVerifyUltraHonk` backend).
   Application-independent; shared by `quartz-contract-core`, dossier, and
   verified-rcv so circuit/layout changes are a one-place edit.
 - Noir/bb UltraHonk prover integration (`zkdcap/noir-prove-server`) via Unix socket
-- Verus prototype + Quint spec updated to the UltraHonk proof shape, incl. the
-  recency/eval-floor gate (Verus: 15 verified/0 errors; Quint: typecheck + run +
-  Apalache verify clean)
+- Verus prototype + Quint spec were updated to the initial UltraHonk proof shape.
+  Their single-floor recency model has not yet been reconciled with the independent
+  TCB/QE API and must be re-verified before release.
+
+### Remaining policy work
+
+- Core storage still has one global TCB-Info floor. Production policy needs a
+  governed, raise-only FMSPC-to-floor map, fail-closed unknown-FMSPC behavior, an
+  independently governed QE floor, and downstream Dossier/verified-rcv migration.
 
 ## Earlier: dstack/TDX Modernization
 

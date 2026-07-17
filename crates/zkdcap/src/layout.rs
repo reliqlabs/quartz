@@ -23,9 +23,9 @@
 //!
 //! Fields 17-20 are the circuit's recency/freshness outputs: a consumer MUST
 //! range-check chain time against `[valid_from, valid_until]` and reject when
-//! the TCB-recency counters fall below a monotonic on-chain floor (the circuit
-//! has no clock/counter, so the recency decision is the consumer's).
-//! [`verify_quote`] floors on `min(tcb_eval_num, qe_eval_num)`.
+//! either collateral counter falls below its independent monotonic on-chain
+//! floor (the circuit has no clock/counter, so the recency decision is the
+//! consumer's).
 
 use sha2::{Digest, Sha256};
 
@@ -47,6 +47,8 @@ const F_MEASUREMENTS_START: usize = 0; // 5 regs * 2 limbs => fields 0..=9
 const F_REPORTDATA: usize = 10; // 3 limbs => fields 10..=12
 const F_TCBSTATUS: usize = 13;
 const F_TIMESTAMP: usize = 14;
+const F_CERT_SERIAL: usize = 15;
+const F_FMSPC: usize = 16;
 const F_TCB_EVAL: usize = 17;
 const F_QE_EVAL: usize = 18;
 const F_VALID_FROM: usize = 19;
@@ -123,8 +125,16 @@ pub fn build_public_inputs(
     // 5 measurement regs (48 bytes each) -> 2 limbs (31 + 17), fields 0..=9.
     for reg in 0..MEASUREMENT_REGS {
         let b = reg * 48;
-        put_limb(&mut out, F_MEASUREMENTS_START + reg * 2, &measurements[b..b + 31]);
-        put_limb(&mut out, F_MEASUREMENTS_START + reg * 2 + 1, &measurements[b + 31..b + 48]);
+        put_limb(
+            &mut out,
+            F_MEASUREMENTS_START + reg * 2,
+            &measurements[b..b + 31],
+        );
+        put_limb(
+            &mut out,
+            F_MEASUREMENTS_START + reg * 2 + 1,
+            &measurements[b + 31..b + 48],
+        );
     }
     // report_data (64 bytes) -> 3 limbs (31 + 31 + 2), fields 10..=12.
     put_limb(&mut out, F_REPORTDATA, &report_data[0..31]);
@@ -221,6 +231,26 @@ fn scalar_u64(pi: &[u8], f: usize) -> Option<u64> {
 /// In-circuit verification time (u64 BE in the low 8 bytes of field 14).
 pub fn extract_timestamp(pi: &[u8]) -> Option<u64> {
     scalar_u64(pi, F_TIMESTAMP)
+}
+
+/// PCK certificate serial number (20 bytes, field 15).
+pub fn extract_cert_serial(pi: &[u8]) -> Option<[u8; 20]> {
+    if pi.len() != ULTRAHONK_PUBLIC_INPUTS_LEN {
+        return None;
+    }
+    read_limb(pi, F_CERT_SERIAL, 20)?.try_into().ok()
+}
+
+/// Platform FMSPC (6 bytes, field 16).
+///
+/// Consumers use this to select the TCB-Info evaluation-data-number policy for
+/// the attested platform family. It must not be confused with the independent
+/// QE-Identity evaluation-data-number namespace.
+pub fn extract_fmspc(pi: &[u8]) -> Option<[u8; 6]> {
+    if pi.len() != ULTRAHONK_PUBLIC_INPUTS_LEN {
+        return None;
+    }
+    read_limb(pi, F_FMSPC, 6)?.try_into().ok()
 }
 
 /// TCB-Info evaluation-data number (recency counter, field 17). A consumer

@@ -1,6 +1,12 @@
 // Verus prototype: attested handler family.
 // Mirrors src/handler/execute/attested.rs at the spec level.
 //
+// NOTE (2026-07-17): the production handler now checks independent TCB-Info and
+// QE-Identity floors and exposes proof-bound FMSPC. This prototype still models
+// the former single-floor recency gate. It is retained as historical proof
+// evidence and MUST be reconciled and re-verified before it is cited for the
+// current handler.
+//
 // Six handler impls in the production file:
 //   1. impl Handler for DstackAttestation        — non-mock: FAILS CLOSED
 //                                                  (Err(RawDcapUnsupported);
