@@ -47,7 +47,7 @@ Three things the Colosseum agent here may not be aware of yet. If a fresh spec-a
 
 **Open product blockers (in approximate order of urgency):**
 
-- **zkdcap verifier migration → DONE (Noir/UltraHonk)**: attestation verifies via `/xion.zk.v1.Query/ProofVerifyUltraHonk`, built on the shared `quartz-zkdcap` crate. The packed 672-byte / 21-field `public_inputs` replace the old gnark journal. The request pins `expected_vkey_sha256`; acceptance requires the response's `vkey_sha256` to match exactly. See `crates/zkdcap/`, `crates/contracts/core/src/handler/execute/attested.rs`, `crates/cli/src/handler/zkdcap.rs`, `tests/integration/src/zk_mock.rs`.
+- **zkdcap verifier migration → IMPLEMENTED, NETWORK ACTIVATION BLOCKED (Noir/UltraHonk)**: attestation uses `/xion.zk.v1.Query/ProofVerifyUltraHonk`, built on the shared `quartz-zkdcap` crate. The packed 672-byte / 21-field `public_inputs` replace the old gnark journal. The consumer sends `expected_vkey_sha256` and requires the response's `vkey_sha256` to match exactly; the target Xion network must deploy the matching additive query fields before this path can succeed live. See `crates/zkdcap/`, `crates/contracts/core/src/handler/execute/attested.rs`, `crates/cli/src/handler/zkdcap.rs`, `tests/integration/src/zk_mock.rs`.
 - **UltraHonk vkey on testnet**: `dcap-ultrahonk-v1` (registered; shared with dossier/verified-rcv). Circuit + prover live in `zkdcap/circuits/dcap-noir` + `zkdcap/noir-prove-server`.
 - **Set independent collateral floors + `config.expected_rtmr3` on new deployments**: the `DstackZkAttestation` handler range-checks chain time against the proof's proven `[valid_from, valid_until]` window and independently rejects `tcb_eval_num < min_tcb_eval_num` or `qe_eval_num < min_qe_eval_num`. Legacy state without the QE field inherits the old TCB floor. The current TCB floor is still global; production needs a governed FMSPC-keyed map and fail-closed unknown-FMSPC behavior before this is complete. The handler also enforces `public_inputs.rtmr3 == config.expected_rtmr3` when that field is populated — without it the contract is vulnerable to a "wrong-image-attestation" substitution. Compute `expected_rtmr3` from a known-good quote of the intended dstack image and set it on instantiate.
 - **Anti-sniping for BidBoard auction contract** (separate repo at `/Users/mvid/Development/reliq/bidboard`, but the integration touches Quartz).
@@ -73,7 +73,7 @@ cd tests/integration && cargo test testnet -- --ignored  # live testnet
 ## Architecture
 
 - **TEE**: dstack CVM (Intel TDX). No SGX, no Gramine.
-- **Attestation**: DstackAttestor → TDX quote → zkdcap Noir/UltraHonk proof → Xion ZK module (`/xion.zk.v1.Query/ProofVerifyUltraHonk` via `query_grpc()`), with request/response SHA-256 binding to the exact vkey bytes, built on `quartz-zkdcap`
+- **Attestation**: DstackAttestor → TDX quote → zkdcap Noir/UltraHonk proof → Xion ZK module (`/xion.zk.v1.Query/ProofVerifyUltraHonk` via `query_grpc()`), with consumer-enforced request/response SHA-256 binding to the exact vkey bytes; live use requires the matching Xion network upgrade
 - **Chain**: Xion (xiond v28+, uxion, CosmWasm 3)
 - **Config**: `zkdcap_vkey` (UltraHonk vkey name) plus required-for-verification `expected_zkdcap_vkey_sha256` (exact stored-key pin), `expected_rtmr3` (optional pinned RTMR3), `min_tcb_eval_num` and `min_qe_eval_num` (independent collateral floors; TCB storage is not yet FMSPC-keyed)
 - **Key management**: DstackKeyManager (dstack KMS) is default. DstackAttestor for TEE quotes.

@@ -9,7 +9,7 @@ CosmWasm contract library for building attestation-aware smart contracts with Qu
 - **`MockAttestation`** -- For development/testing without real TDX hardware.
 - **Session management** -- Secure session between contract and enclave (see [`specs/handshake.qnt`](../../../specs/handshake.qnt)).
 - **Pinned UltraHonk config** -- `zkdcap_vkey` selects the Xion-stored key and `expected_zkdcap_vkey_sha256` pins its exact bytes. A non-mock attestation fails closed if either is absent.
-- **ZK module query** -- Attestation verification via direct gRPC query to Xion's ZK module. Quartz sends the expected key digest and requires the response digest to match, including across server downgrade attempts.
+- **ZK module query** -- Attestation verification via direct gRPC query to Xion's ZK module. Quartz sends the expected key digest and requires the response digest to match, including across server downgrade attempts. The target chain must deploy those additive query fields before this path can succeed live.
 
 ## Key Differences from Upstream
 

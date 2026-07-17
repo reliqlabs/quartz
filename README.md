@@ -21,7 +21,7 @@ WARNING: Quartz is under heavy development and not ready for production use.
 ## Architecture
 
 - **TEE**: dstack CVM (Intel TDX). Enclaves run as standard Docker containers.
-- **Attestation**: TDX quotes verified on-chain via zkdcap Noir/UltraHonk proofs through Xion's native ZK module (`ProofVerifyUltraHonk`), pinned to the SHA-256 digest of the exact stored verification key.
+- **Attestation**: TDX quotes verified on-chain via zkdcap Noir/UltraHonk proofs through Xion's native ZK module (`ProofVerifyUltraHonk`), pinned to the SHA-256 digest of the exact stored verification key. The consumer binding is implemented; live use requires the target Xion network to deploy the matching query fields.
 - **Chain**: Xion (`xiond`, `uxion`, CosmWasm 3).
 - **Prover**: Noir/bb UltraHonk via Unix socket (`zkdcap/noir-prove-server`).
 - **Key management**: dstack KMS deterministic key derivation.
