@@ -8,8 +8,8 @@ CosmWasm contract library for building attestation-aware smart contracts with Qu
 - **`DstackAttestation`** -- TDX attestation type verified via the Xion ZK module. Replaces on-chain DCAP verification (no separate verifier/tcbinfo contracts needed).
 - **`MockAttestation`** -- For development/testing without real TDX hardware.
 - **Session management** -- Secure session between contract and enclave (see [`specs/handshake.qnt`](../../../specs/handshake.qnt)).
-- **`zkdcap_vkey` config** -- Stores the Groth16 verification key for zkdcap proof verification.
-- **ZK module query** -- Attestation verification via direct gRPC query to Xion's ZK module (~1M gas, down from ~5M with on-chain DCAP).
+- **Pinned UltraHonk config** -- `zkdcap_vkey` selects the Xion-stored key and `expected_zkdcap_vkey_sha256` pins its exact bytes. A non-mock attestation fails closed if either is absent.
+- **ZK module query** -- Attestation verification via direct gRPC query to Xion's ZK module. Quartz sends the expected key digest and requires the response digest to match, including across server downgrade attempts.
 
 ## Key Differences from Upstream
 

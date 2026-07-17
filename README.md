@@ -21,7 +21,7 @@ WARNING: Quartz is under heavy development and not ready for production use.
 ## Architecture
 
 - **TEE**: dstack CVM (Intel TDX). Enclaves run as standard Docker containers.
-- **Attestation**: TDX quotes verified on-chain via zkdcap Noir/UltraHonk proofs through Xion's native ZK module (`ProofVerifyUltraHonk`).
+- **Attestation**: TDX quotes verified on-chain via zkdcap Noir/UltraHonk proofs through Xion's native ZK module (`ProofVerifyUltraHonk`), pinned to the SHA-256 digest of the exact stored verification key.
 - **Chain**: Xion (`xiond`, `uxion`, CosmWasm 3).
 - **Prover**: Noir/bb UltraHonk via Unix socket (`zkdcap/noir-prove-server`).
 - **Key management**: dstack KMS deterministic key derivation.
@@ -29,8 +29,8 @@ WARNING: Quartz is under heavy development and not ready for production use.
 
 ## Crates
 
-- **`quartz-zkdcap`** -- Canonical UltraHonk attestation primitives: the packed `public_inputs` layout + decoders, the recency/validity + tcb-eval checks, and the Xion `ProofVerifyUltraHonk` backend. Application-independent; shared so the proof checks live in one place (also consumed by dossier and verified-rcv).
-- **`quartz-contract-core`** -- CosmWasm contract library. Session management, `DstackZkAttestation` verification (built on `quartz-zkdcap`), `zkdcap_vkey` config.
+- **`quartz-zkdcap`** -- Canonical UltraHonk attestation primitives: the packed `public_inputs` layout + decoders, the recency/validity + tcb-eval checks, and the fail-closed, vkey-hash-pinned Xion `ProofVerifyUltraHonk` backend. Application-independent; shared so the proof checks live in one place (also consumed by dossier and verified-rcv).
+- **`quartz-contract-core`** -- CosmWasm contract library. Session management, `DstackZkAttestation` verification (built on `quartz-zkdcap`), and paired `zkdcap_vkey` / `expected_zkdcap_vkey_sha256` config.
 - **`quartz-enclave-core`** -- Enclave-side library. `DstackAttestor`, `DstackKeyManager`, ECIES encryption, light-client proof verification.
 - **`quartz` (CLI)** -- Build, deploy, handshake. Integrates `xiond` and the Noir prover.
 

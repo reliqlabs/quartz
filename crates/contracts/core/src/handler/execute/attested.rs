@@ -182,8 +182,9 @@ impl Handler for DstackAttestation {
 /// reject either collateral evaluation-data number below its independent
 /// configured floor, then verify the proof
 /// via `/xion.zk.v1.Query/ProofVerifyUltraHonk`. Finally bind the decoded
-/// report_data/rtmr3 to the wrapper. If no `zkdcap_vkey` is configured the
-/// handler FAILS CLOSED (it cannot verify, so it must not accept); use a `mock`
+/// report_data/rtmr3 to the wrapper. If either `zkdcap_vkey` or its
+/// `expected_zkdcap_vkey_sha256` pin is absent, the handler FAILS CLOSED (it
+/// cannot identify the exact key used, so it must not accept); use a `mock`
 /// build for verification-free dev/test.
 #[cfg(not(feature = "mock"))]
 impl Handler for DstackZkAttestation {
@@ -210,8 +211,23 @@ impl Handler for DstackZkAttestation {
                     .to_string(),
             ));
         };
+        let Some(expected_vkey_sha256) = config.expected_zkdcap_vkey_sha256() else {
+            return Err(Error::ZkdcapVerificationFailed(
+                "no expected_zkdcap_vkey_sha256 configured: refusing mutable-name-only verification"
+                    .to_string(),
+            ));
+        };
+        let expected_vkey_sha256: [u8; 32] = expected_vkey_sha256.try_into().map_err(|_| {
+            Error::ZkdcapVerificationFailed(
+                "expected_zkdcap_vkey_sha256 must be exactly 32 bytes".to_string(),
+            )
+        })?;
 
-        let backend = XionUltraHonkBackend::by_name(deps.querier, vkey_name.to_string());
+        let backend = XionUltraHonkBackend::by_name(
+            deps.querier,
+            vkey_name.to_string(),
+            expected_vkey_sha256,
+        );
         let now_packed = unix_to_packed_datetime(env.block.time.seconds());
 
         let decoded = verify_quote_parts(
@@ -591,5 +607,37 @@ mod tests {
             DstackZkAttestation::new([0u8; 64], [0u8; 32], vec![1, 2, 3], vec![0u8; 672], None);
         let err = Handler::handle(att, deps.as_mut(), &env, &info).unwrap_err();
         assert!(matches!(err, Error::ZkdcapVerificationFailed(_)));
+    }
+
+    #[test]
+    fn zk_handler_vkey_without_expected_hash_fails_closed() {
+        use cosmwasm_std::testing::{message_info, mock_dependencies, mock_env};
+
+        use crate::state::{Config, LightClientOpts, RawConfig, CONFIG};
+
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let sender = deps.api.addr_make("sender");
+        let info = message_info(&sender, &[]);
+
+        let lco = LightClientOpts::new(
+            "testing".to_string(),
+            1,
+            [0u8; 32],
+            (2, 3),
+            1209600,
+            300,
+            600,
+        )
+        .unwrap();
+        let cfg: RawConfig =
+            Config::new([0u8; 32], lco, Some("dcap-ultrahonk-v1".to_string())).into();
+        CONFIG.save(deps.as_mut().storage, &cfg).unwrap();
+
+        let att =
+            DstackZkAttestation::new([0u8; 64], [0u8; 32], vec![1, 2, 3], vec![0u8; 672], None);
+        let err = Handler::handle(att, deps.as_mut(), &env, &info).unwrap_err();
+        assert!(matches!(err, Error::ZkdcapVerificationFailed(_)));
+        assert!(format!("{err}").contains("expected_zkdcap_vkey_sha256"));
     }
 }

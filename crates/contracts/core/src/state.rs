@@ -55,6 +55,11 @@ pub struct Config {
     /// UltraHonk proof. When set, the `DstackZkAttestation` handler queries
     /// `/xion.zk.v1.Query/ProofVerifyUltraHonk` directly.
     zkdcap_vkey: Option<String>,
+    /// SHA-256 digest of the exact Xion-stored verification-key bytes named by
+    /// `zkdcap_vkey`. Required at verification time whenever `zkdcap_vkey` is
+    /// set; legacy configs deserialize as `None` but attestations fail closed.
+    #[serde(default)]
+    expected_zkdcap_vkey_sha256: Option<[u8; 32]>,
     /// Per-register TDX measurement pins for the image binding. Each register
     /// that is `Some` is ENFORCED (the proof's decoded value must equal it);
     /// `None` is SKIPPED. dstack mapping (see attestation.md): MRTD = virtual
@@ -119,6 +124,7 @@ impl Config {
             mr_enclave,
             light_client_opts,
             zkdcap_vkey,
+            expected_zkdcap_vkey_sha256: None,
             expected_mrtd: None,
             expected_rtmr0: None,
             expected_rtmr1: None,
@@ -163,6 +169,13 @@ impl Config {
     /// Builder: pin RTMR3 only.
     pub fn with_expected_rtmr3(mut self, rtmr3: [u8; 48]) -> Self {
         self.expected_rtmr3 = Some(rtmr3);
+        self
+    }
+
+    /// Builder: pin the exact Xion-stored UltraHonk verification-key bytes by
+    /// their SHA-256 digest.
+    pub fn with_expected_zkdcap_vkey_sha256(mut self, sha256: [u8; 32]) -> Self {
+        self.expected_zkdcap_vkey_sha256 = Some(sha256);
         self
     }
 
@@ -215,6 +228,10 @@ impl Config {
         self.zkdcap_vkey.as_deref()
     }
 
+    pub fn expected_zkdcap_vkey_sha256(&self) -> Option<&[u8; 32]> {
+        self.expected_zkdcap_vkey_sha256.as_ref()
+    }
+
     pub fn expected_mrtd(&self) -> Option<&[u8; 48]> {
         self.expected_mrtd.as_ref()
     }
@@ -255,6 +272,11 @@ pub struct RawConfig {
     mr_enclave: HexBinary,
     light_client_opts: RawLightClientOpts,
     zkdcap_vkey: Option<String>,
+    /// Hex-encoded SHA-256 digest of the exact Xion-stored verification key.
+    /// Missing legacy state remains deserializable but cannot verify a zkdcap
+    /// attestation when `zkdcap_vkey` is configured.
+    #[serde(default)]
+    expected_zkdcap_vkey_sha256: Option<HexBinary>,
     /// Hex-encoded 48-byte expected TDX measurement registers. See `Config`.
     #[serde(default)]
     expected_mrtd: Option<HexBinary>,
@@ -292,6 +314,12 @@ impl RawConfig {
 
     pub fn zkdcap_vkey(&self) -> Option<&str> {
         self.zkdcap_vkey.as_deref()
+    }
+
+    pub fn expected_zkdcap_vkey_sha256(&self) -> Option<&[u8]> {
+        self.expected_zkdcap_vkey_sha256
+            .as_ref()
+            .map(HexBinary::as_slice)
     }
 
     pub fn expected_mrtd(&self) -> Option<&[u8]> {
@@ -339,6 +367,11 @@ impl TryFrom<RawConfig> for Config {
                 .map_err(|e| StdError::msg(format!("{name}: {e}")))
         }
         let min_qe_eval_num = value.min_qe_eval_num.unwrap_or(value.min_tcb_eval_num);
+        let expected_zkdcap_vkey_sha256 = value
+            .expected_zkdcap_vkey_sha256
+            .map(|hash| hash.to_array::<32>())
+            .transpose()
+            .map_err(|e| StdError::msg(format!("expected_zkdcap_vkey_sha256: {e}")))?;
         Ok(Self {
             mr_enclave: value.mr_enclave.to_array()?,
             light_client_opts: value
@@ -346,6 +379,7 @@ impl TryFrom<RawConfig> for Config {
                 .try_into()
                 .map_err(|e| StdError::msg(format!("light_client_opts: {e}")))?,
             zkdcap_vkey: value.zkdcap_vkey,
+            expected_zkdcap_vkey_sha256,
             expected_mrtd: reg(value.expected_mrtd, "expected_mrtd")?,
             expected_rtmr0: reg(value.expected_rtmr0, "expected_rtmr0")?,
             expected_rtmr1: reg(value.expected_rtmr1, "expected_rtmr1")?,
@@ -366,6 +400,7 @@ impl From<Config> for RawConfig {
             mr_enclave: value.mr_enclave.into(),
             light_client_opts: value.light_client_opts.into(),
             zkdcap_vkey: value.zkdcap_vkey,
+            expected_zkdcap_vkey_sha256: value.expected_zkdcap_vkey_sha256.map(HexBinary::from),
             expected_mrtd: value.expected_mrtd.map(HexBinary::from),
             expected_rtmr0: value.expected_rtmr0.map(HexBinary::from),
             expected_rtmr1: value.expected_rtmr1.map(HexBinary::from),
@@ -563,6 +598,63 @@ mod tests {
         let legacy: RawConfig = serde_json::from_value(json).unwrap();
         assert_eq!(legacy.min_tcb_eval_num(), 15);
         assert_eq!(legacy.min_qe_eval_num(), 15);
+    }
+
+    #[test]
+    fn expected_zkdcap_vkey_sha256_builder_and_raw_round_trip() {
+        let expected = [0x42; 32];
+        let config = Config::new(
+            [0u8; 32],
+            light_client_opts(),
+            Some("dcap-ultrahonk-v1".to_string()),
+        )
+        .with_expected_zkdcap_vkey_sha256(expected);
+        assert_eq!(config.expected_zkdcap_vkey_sha256(), Some(&expected));
+
+        let raw: RawConfig = config.into();
+        assert_eq!(raw.expected_zkdcap_vkey_sha256(), Some(expected.as_slice()));
+
+        let decoded = Config::try_from(raw).unwrap();
+        assert_eq!(decoded.expected_zkdcap_vkey_sha256(), Some(&expected));
+    }
+
+    #[test]
+    fn legacy_raw_config_without_vkey_hash_deserializes_unpinned() {
+        let config = Config::new(
+            [0u8; 32],
+            light_client_opts(),
+            Some("dcap-ultrahonk-v1".to_string()),
+        )
+        .with_expected_zkdcap_vkey_sha256([0x42; 32]);
+        let raw: RawConfig = config.into();
+        let mut json = serde_json::to_value(raw).unwrap();
+        json.as_object_mut()
+            .unwrap()
+            .remove("expected_zkdcap_vkey_sha256");
+
+        let legacy: RawConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(legacy.zkdcap_vkey(), Some("dcap-ultrahonk-v1"));
+        assert_eq!(legacy.expected_zkdcap_vkey_sha256(), None);
+        let decoded = Config::try_from(legacy).unwrap();
+        assert_eq!(decoded.expected_zkdcap_vkey_sha256(), None);
+    }
+
+    #[test]
+    fn malformed_zkdcap_vkey_hash_length_is_rejected() {
+        let config = Config::new(
+            [0u8; 32],
+            light_client_opts(),
+            Some("dcap-ultrahonk-v1".to_string()),
+        )
+        .with_expected_zkdcap_vkey_sha256([0x42; 32]);
+        let raw: RawConfig = config.into();
+        let mut json = serde_json::to_value(raw).unwrap();
+        json["expected_zkdcap_vkey_sha256"] = serde_json::Value::String("42".repeat(31));
+
+        let malformed: RawConfig = serde_json::from_value(json).unwrap();
+        let err = Config::try_from(malformed).unwrap_err();
+        assert!(err.to_string().contains("expected_zkdcap_vkey_sha256"));
+        assert!(err.to_string().contains("32"));
     }
 }
 

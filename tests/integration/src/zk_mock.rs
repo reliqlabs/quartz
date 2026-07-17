@@ -49,6 +49,8 @@ pub struct QueryVerifyUltraHonkRequest {
     pub vkey_name: String,
     #[prost(uint64, tag = "4")]
     pub vkey_id: u64,
+    #[prost(bytes = "vec", tag = "5")]
+    pub expected_vkey_sha256: Vec<u8>,
 }
 
 /// xion.zk.v1.ProofVerifyUltraHonkResponse
@@ -56,18 +58,22 @@ pub struct QueryVerifyUltraHonkRequest {
 pub struct ProofVerifyUltraHonkResponse {
     #[prost(bool, tag = "1")]
     pub verified: bool,
+    #[prost(bytes = "vec", tag = "2")]
+    pub vkey_sha256: Vec<u8>,
 }
 
 // ── Mock handler ───────────────────────────────────────────────────
 
 const ZK_VERIFY_PATH: &str = "/xion.zk.v1.Query/ProofVerify";
 const ZK_VERIFY_ULTRAHONK_PATH: &str = "/xion.zk.v1.Query/ProofVerifyUltraHonk";
+pub const TEST_ULTRAHONK_VKEY_SHA256: [u8; 32] = [0x42; 32];
 
 /// Mock Stargate handler that intercepts Xion ZK module queries.
 #[derive(Clone)]
 pub struct ZkMockStargate {
     pub always_verify: bool,
     pub validate_structure: bool,
+    ultrahonk_response_vkey_sha256: Option<[u8; 32]>,
 }
 
 impl ZkMockStargate {
@@ -76,6 +82,7 @@ impl ZkMockStargate {
         Self {
             always_verify: true,
             validate_structure: false,
+            ultrahonk_response_vkey_sha256: Some(TEST_ULTRAHONK_VKEY_SHA256),
         }
     }
 
@@ -85,6 +92,7 @@ impl ZkMockStargate {
         Self {
             always_verify: false,
             validate_structure: false,
+            ultrahonk_response_vkey_sha256: Some(TEST_ULTRAHONK_VKEY_SHA256),
         }
     }
 
@@ -93,7 +101,15 @@ impl ZkMockStargate {
         Self {
             always_verify: true,
             validate_structure: true,
+            ultrahonk_response_vkey_sha256: Some(TEST_ULTRAHONK_VKEY_SHA256),
         }
+    }
+
+    /// Override response tag 2. `None` models an older Xion server that omits
+    /// `vkey_sha256`; a different digest models a mismatched response.
+    pub fn with_ultrahonk_response_vkey_sha256(mut self, sha256: Option<[u8; 32]>) -> Self {
+        self.ultrahonk_response_vkey_sha256 = sha256;
+        self
     }
 
     /// Handle circom/SnarkJS ProofVerify
@@ -139,32 +155,54 @@ impl ZkMockStargate {
         let req = QueryVerifyUltraHonkRequest::decode(data)
             .map_err(|e| StdError::msg(format!("decode QueryVerifyUltraHonkRequest: {e}")))?;
 
+        if req.expected_vkey_sha256 != TEST_ULTRAHONK_VKEY_SHA256 {
+            return Err(StdError::msg("verification key hash mismatch"));
+        }
+
         if req.proof.is_empty() {
-            return Ok(Binary::from(encode_ultrahonk_response(false)));
+            return Ok(Binary::from(encode_ultrahonk_response(
+                false,
+                self.ultrahonk_response_vkey_sha256,
+            )));
         }
 
         if !self.always_verify {
-            return Ok(Binary::from(encode_ultrahonk_response(false)));
+            return Ok(Binary::from(encode_ultrahonk_response(
+                false,
+                self.ultrahonk_response_vkey_sha256,
+            )));
         }
 
         if self.validate_structure {
             // UltraHonk proofs are large; a real bb proof is multiple KB. Just
             // sanity-check it's not a stub.
             if req.proof.len() < 64 {
-                return Ok(Binary::from(encode_ultrahonk_response(false)));
+                return Ok(Binary::from(encode_ultrahonk_response(
+                    false,
+                    self.ultrahonk_response_vkey_sha256,
+                )));
             }
 
             // public_inputs MUST be the packed 672-byte / 21-field dcap-noir blob.
             if req.public_inputs.len() != quartz_zkdcap::ULTRAHONK_PUBLIC_INPUTS_LEN {
-                return Ok(Binary::from(encode_ultrahonk_response(false)));
+                return Ok(Binary::from(encode_ultrahonk_response(
+                    false,
+                    self.ultrahonk_response_vkey_sha256,
+                )));
             }
 
             if req.vkey_name.is_empty() && req.vkey_id == 0 {
-                return Ok(Binary::from(encode_ultrahonk_response(false)));
+                return Ok(Binary::from(encode_ultrahonk_response(
+                    false,
+                    self.ultrahonk_response_vkey_sha256,
+                )));
             }
         }
 
-        Ok(Binary::from(encode_ultrahonk_response(true)))
+        Ok(Binary::from(encode_ultrahonk_response(
+            true,
+            self.ultrahonk_response_vkey_sha256,
+        )))
     }
 
     pub fn dispatch(&self, path: &str, data: &[u8]) -> StdResult<Binary> {
@@ -183,8 +221,11 @@ fn encode_response(verified: bool) -> Vec<u8> {
     buf
 }
 
-fn encode_ultrahonk_response(verified: bool) -> Vec<u8> {
-    let resp = ProofVerifyUltraHonkResponse { verified };
+fn encode_ultrahonk_response(verified: bool, vkey_sha256: Option<[u8; 32]>) -> Vec<u8> {
+    let resp = ProofVerifyUltraHonkResponse {
+        verified,
+        vkey_sha256: vkey_sha256.map(Vec::from).unwrap_or_default(),
+    };
     let mut buf = Vec::new();
     resp.encode(&mut buf).expect("prost encode");
     buf

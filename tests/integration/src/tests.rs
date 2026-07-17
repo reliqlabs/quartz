@@ -384,9 +384,14 @@ const ZK_VERIFY_ULTRAHONK_PATH: &str = "/xion.zk.v1.Query/ProofVerifyUltraHonk";
 
 #[test]
 fn test_ultrahonk_mock_accepts_valid_proof() {
-    use crate::fixtures::UltraHonkFixture;
-    use crate::zk_mock::{ProofVerifyUltraHonkResponse, QueryVerifyUltraHonkRequest};
     use prost::Message;
+
+    use crate::{
+        fixtures::UltraHonkFixture,
+        zk_mock::{
+            ProofVerifyUltraHonkResponse, QueryVerifyUltraHonkRequest, TEST_ULTRAHONK_VKEY_SHA256,
+        },
+    };
 
     let mock = crate::zk_mock::ZkMockStargate::validating();
     let fixture = UltraHonkFixture::generate();
@@ -396,6 +401,7 @@ fn test_ultrahonk_mock_accepts_valid_proof() {
         public_inputs: fixture.public_inputs_bytes,
         vkey_name: "dcap-ultrahonk-v1".to_string(),
         vkey_id: 0,
+        expected_vkey_sha256: TEST_ULTRAHONK_VKEY_SHA256.to_vec(),
     };
     let mut req_bytes = Vec::new();
     req.encode(&mut req_bytes).unwrap();
@@ -404,12 +410,16 @@ fn test_ultrahonk_mock_accepts_valid_proof() {
 
     let resp = ProofVerifyUltraHonkResponse::decode(resp_bytes.as_slice()).unwrap();
     assert!(resp.verified, "valid UltraHonk proof should verify");
+    assert_eq!(resp.vkey_sha256, TEST_ULTRAHONK_VKEY_SHA256);
 }
 
 #[test]
 fn test_ultrahonk_mock_rejects_empty_proof() {
-    use crate::zk_mock::{ProofVerifyUltraHonkResponse, QueryVerifyUltraHonkRequest};
     use prost::Message;
+
+    use crate::zk_mock::{
+        ProofVerifyUltraHonkResponse, QueryVerifyUltraHonkRequest, TEST_ULTRAHONK_VKEY_SHA256,
+    };
 
     let mock = crate::zk_mock::ZkMockStargate::validating();
 
@@ -418,6 +428,7 @@ fn test_ultrahonk_mock_rejects_empty_proof() {
         public_inputs: vec![0u8; quartz_zkdcap::ULTRAHONK_PUBLIC_INPUTS_LEN],
         vkey_name: "dcap-ultrahonk-v1".to_string(),
         vkey_id: 0,
+        expected_vkey_sha256: TEST_ULTRAHONK_VKEY_SHA256.to_vec(),
     };
     let mut req_bytes = Vec::new();
     req.encode(&mut req_bytes).unwrap();
@@ -430,8 +441,11 @@ fn test_ultrahonk_mock_rejects_empty_proof() {
 
 #[test]
 fn test_ultrahonk_mock_rejects_wrong_public_inputs_len() {
-    use crate::zk_mock::{ProofVerifyUltraHonkResponse, QueryVerifyUltraHonkRequest};
     use prost::Message;
+
+    use crate::zk_mock::{
+        ProofVerifyUltraHonkResponse, QueryVerifyUltraHonkRequest, TEST_ULTRAHONK_VKEY_SHA256,
+    };
 
     let mock = crate::zk_mock::ZkMockStargate::validating();
 
@@ -440,6 +454,7 @@ fn test_ultrahonk_mock_rejects_wrong_public_inputs_len() {
         public_inputs: vec![0u8; 512], // not the packed 672-byte blob
         vkey_name: "dcap-ultrahonk-v1".to_string(),
         vkey_id: 0,
+        expected_vkey_sha256: TEST_ULTRAHONK_VKEY_SHA256.to_vec(),
     };
     let mut req_bytes = Vec::new();
     req.encode(&mut req_bytes).unwrap();
@@ -447,13 +462,19 @@ fn test_ultrahonk_mock_rejects_wrong_public_inputs_len() {
     let resp_bytes = mock.dispatch(ZK_VERIFY_ULTRAHONK_PATH, &req_bytes).unwrap();
 
     let resp = ProofVerifyUltraHonkResponse::decode(resp_bytes.as_slice()).unwrap();
-    assert!(!resp.verified, "wrong-length public inputs should not verify");
+    assert!(
+        !resp.verified,
+        "wrong-length public inputs should not verify"
+    );
 }
 
 #[test]
 fn test_ultrahonk_mock_rejects_short_proof() {
-    use crate::zk_mock::{ProofVerifyUltraHonkResponse, QueryVerifyUltraHonkRequest};
     use prost::Message;
+
+    use crate::zk_mock::{
+        ProofVerifyUltraHonkResponse, QueryVerifyUltraHonkRequest, TEST_ULTRAHONK_VKEY_SHA256,
+    };
 
     let mock = crate::zk_mock::ZkMockStargate::validating();
 
@@ -462,6 +483,7 @@ fn test_ultrahonk_mock_rejects_short_proof() {
         public_inputs: vec![0u8; quartz_zkdcap::ULTRAHONK_PUBLIC_INPUTS_LEN],
         vkey_name: "dcap-ultrahonk-v1".to_string(),
         vkey_id: 0,
+        expected_vkey_sha256: TEST_ULTRAHONK_VKEY_SHA256.to_vec(),
     };
     let mut req_bytes = Vec::new();
     req.encode(&mut req_bytes).unwrap();
@@ -470,4 +492,65 @@ fn test_ultrahonk_mock_rejects_short_proof() {
 
     let resp = ProofVerifyUltraHonkResponse::decode(resp_bytes.as_slice()).unwrap();
     assert!(!resp.verified, "short proof should not verify");
+}
+
+#[test]
+fn test_ultrahonk_mock_can_model_missing_response_hash() {
+    use prost::Message;
+
+    use crate::{
+        fixtures::UltraHonkFixture,
+        zk_mock::{
+            ProofVerifyUltraHonkResponse, QueryVerifyUltraHonkRequest, TEST_ULTRAHONK_VKEY_SHA256,
+        },
+    };
+
+    let mock =
+        crate::zk_mock::ZkMockStargate::validating().with_ultrahonk_response_vkey_sha256(None);
+    let fixture = UltraHonkFixture::generate();
+    let req = QueryVerifyUltraHonkRequest {
+        proof: fixture.proof_bytes,
+        public_inputs: fixture.public_inputs_bytes,
+        vkey_name: "dcap-ultrahonk-v1".to_string(),
+        vkey_id: 0,
+        expected_vkey_sha256: TEST_ULTRAHONK_VKEY_SHA256.to_vec(),
+    };
+    let mut req_bytes = Vec::new();
+    req.encode(&mut req_bytes).unwrap();
+
+    let resp_bytes = mock.dispatch(ZK_VERIFY_ULTRAHONK_PATH, &req_bytes).unwrap();
+    let resp = ProofVerifyUltraHonkResponse::decode(resp_bytes.as_slice()).unwrap();
+    assert!(resp.verified);
+    assert!(resp.vkey_sha256.is_empty(), "old-server tag 2 is absent");
+}
+
+#[test]
+fn test_ultrahonk_mock_can_model_mismatched_response_hash() {
+    use prost::Message;
+
+    use crate::{
+        fixtures::UltraHonkFixture,
+        zk_mock::{
+            ProofVerifyUltraHonkResponse, QueryVerifyUltraHonkRequest, TEST_ULTRAHONK_VKEY_SHA256,
+        },
+    };
+
+    let mismatched = [0x24; 32];
+    let mock = crate::zk_mock::ZkMockStargate::validating()
+        .with_ultrahonk_response_vkey_sha256(Some(mismatched));
+    let fixture = UltraHonkFixture::generate();
+    let req = QueryVerifyUltraHonkRequest {
+        proof: fixture.proof_bytes,
+        public_inputs: fixture.public_inputs_bytes,
+        vkey_name: "dcap-ultrahonk-v1".to_string(),
+        vkey_id: 0,
+        expected_vkey_sha256: TEST_ULTRAHONK_VKEY_SHA256.to_vec(),
+    };
+    let mut req_bytes = Vec::new();
+    req.encode(&mut req_bytes).unwrap();
+
+    let resp_bytes = mock.dispatch(ZK_VERIFY_ULTRAHONK_PATH, &req_bytes).unwrap();
+    let resp = ProofVerifyUltraHonkResponse::decode(resp_bytes.as_slice()).unwrap();
+    assert!(resp.verified);
+    assert_eq!(resp.vkey_sha256, mismatched);
 }
