@@ -6,7 +6,7 @@
     * `Specs.Quartz.Crypto.Ecies`           (enclave key custody)
     * `Specs.Quartz.Crypto.UserDataCommit`  (user_data → ECIES pubkey)
     * `Specs.Quartz.Attestation.Dstack`     (TDX quote → user_data)
-    * `Specs.Quartz.Attestation.Zkdcap`     (Groth16 → quote)
+    * `Specs.Quartz.Attestation.Zkdcap`     (ZK proof → quote)
 
   The goal at this layer is to establish that, given the four
   trust-boundary axioms, an on-chain `DstackZkAttestation` accepted
@@ -16,7 +16,7 @@
   The handler's contract-side checks (in
   `crates/contracts/core/src/handler/execute/attested.rs`):
 
-    1. ZK module accepts the proof  (`verifyGroth16 ... = true`).
+    1. ZK module accepts the proof  (`verifyZk ... = true`).
     2. `msg.user_data() == attestation.user_data()`.
     3. `config.mr_enclave() == attestation.mr_enclave()`.
 

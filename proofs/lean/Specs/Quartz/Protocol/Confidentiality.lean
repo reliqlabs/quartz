@@ -14,7 +14,7 @@
     * commitHash_inj            – SHA-256 collision resistance
     * verifyTdxQuote_sound      – DCAP soundness
     * verifyTdxQuote_complete   – DCAP completeness
-    * verifyGroth16_sound       – zkdcap circuit soundness
+    * verifyZk_sound           – zkdcap ZK verifier soundness (UltraHonk)
 
   No additional axioms are introduced at this layer.
 -/

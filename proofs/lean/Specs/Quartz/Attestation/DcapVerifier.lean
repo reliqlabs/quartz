@@ -155,7 +155,7 @@ The decomposition is structural naming, not semantic narrowing.
 **External-module dependencies (1)**
 | Name | Source |
 |---|---|
-| `Zkdcap.groth16Verifier` | Groth16 verifier trust assumption (cycle 5 bundle) |
+| `Zkdcap.zkVerifier` | ZK verifier trust assumption (cycle 5 bundle; live path UltraHonk, K1) |
 
 **Lean standard axioms (3)**: `propext`, `Classical.choice`, `Quot.sound`.
 

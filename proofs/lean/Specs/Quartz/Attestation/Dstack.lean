@@ -3,8 +3,9 @@
 
   Quartz uses Intel TDX quotes produced by the dstack CVM (see
   `crates/enclave/core/src/attestor.rs`). On-chain, these quotes are
-  consumed either directly (`DstackAttestation`) or via a Groth16
-  proof of correct DCAP verification (`DstackZkAttestation`, handled
+  consumed either directly (`DstackAttestation`) or via a
+  zero-knowledge (Noir/Barretenberg UltraHonk) proof of correct DCAP
+  verification (`DstackZkAttestation`, handled
   in `crates/contracts/core/src/handler/execute/attested.rs`).
 
   We axiomatize the soundness of TDX quote verification: a quote

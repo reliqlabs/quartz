@@ -57,11 +57,11 @@
   separate cryptographic-assumption budgets.
 
   The lift therefore follows **Decision (β)** from the Step 6.3
-  brief: decompose `groth16Verifier` into two summands rather than
+  brief: decompose `zkVerifier` into two summands rather than
   inheriting Step 6.2's monolithic framing. The bound becomes:
 
-      protocolFailAdv ≤ groth16KSAdv          -- Groth16 KS
-                      + circuitEqAdv          -- zkdcap circuit ≡ ref DCAP
+      protocolFailAdv ≤ zkKnowledgeSoundnessAdv  -- UltraHonk KS (K1)
+                      + circuitEqAdv R_v1        -- zkdcap circuit ≡ R_v1
                       + tdxAdv                -- DCAP / PCK unforgeability
                       + hashAdv               -- commitHashE collision
                       + hashBAdv              -- commitHashBytesE collision
@@ -118,24 +118,28 @@
   --------------------------------------------------------------------
 
   Two new adversary types are introduced to model the Step 5
-  decomposition of `groth16Verifier`:
+  decomposition of `zkVerifier`:
 
-  * `Groth16KSAdv : Type` — outputs a candidate
-    `(VKey × Groth16Proof × PublicInputs)` that verifies under the
-    trusted vkey but for which no satisfying R1CS witness exists.
-    The "win" condition is a Groth16 knowledge-soundness break.
+  * `ZkKnowledgeSoundnessAdv : Type` (historical alias
+    `Groth16KSAdv`) — outputs a candidate
+    `(VKey × ZkProof × PublicInputs)` that verifies under the
+    trusted vkey but for which no satisfying witness exists.
+    The "win" condition is a knowledge-soundness break (boundary K1,
+    live path UltraHonk).
 
-  * `CircuitEqAdv : Type` — outputs a candidate `PublicInputs` for
-    which the zkdcap R1CS encoding disagrees with the reference
-    DCAP verifier semantics. The "win" condition is a circuit-
-    correctness break.
+  * `CircuitEqAdv (R : CircuitRelation) : Type` — outputs a candidate
+    `PublicInputs` for which the zkdcap circuit disagrees with the
+    relation `R`. The v1 instantiation is `CircuitEqAdv R_v1`: it may
+    target the exact versioned relation R_v1 ONLY (equivalence to the
+    full Intel-QVL relation R_target is known false). The "win"
+    condition is a circuit-vs-R_v1 correctness break.
 
   These two are the truthful decomposition of the Step 5 monolithic
   `Groth16SoundAdv`: the latter is observationally equivalent to
-  the disjunction of these two events (a Groth16 forgery occurs
-  iff *either* knowledge soundness breaks *or* the circuit is
-  inequivalent to the reference). The triple-bundle lifts collapsed
-  the disjunction; the quadruple lift expands it.
+  the disjunction of these two events (a ZK forgery occurs iff
+  *either* knowledge soundness breaks *or* the circuit is
+  inequivalent to R_v1). The triple-bundle lifts collapsed the
+  disjunction; the quadruple lift expands it.
 
   Plus one composite adversary:
 
@@ -174,66 +178,94 @@ open Specs.Quartz.Protocol.ProtocolVCVioTriple
 
 /-! ## Doubled-negligibility adversaries for the Step 5 decomposition
 
-The Step 5 honesty finding established that `groth16Verifier`'s
+The Step 5 honesty finding established that `zkVerifier`'s
 soundness rests on **two** independent computational assumptions:
 
-  1. Groth16 knowledge soundness over BN254 (cryptographic).
-  2. zkdcap R1CS circuit ≡ reference DCAP verifier (software-
-     verification).
+  1. UltraHonk knowledge soundness (boundary K1, cryptographic).
+  2. zkdcap circuit ≡ exact versioned relation R_v1 (software-
+     verification; NOT the full Intel-QVL relation R_target).
 
 The triple-bundle lifts of Step 6.2 inherited the Step 6.0
 monolithic `Groth16SoundAdv` because the doubled assumption was
 methodologically invisible at the three-summand level. Step 6.3
 makes it visible: the quadruple lift's union bound has FIVE
 summands, with the `Groth16SoundAdv` decomposing into
-`Groth16KSAdv + CircuitEqAdv`.
+`ZkKnowledgeSoundnessAdv + CircuitEqAdv R_v1`.
 
 The two summands have independent justifications and independent
 discharge paths. Surfacing them separately is the entire point of
 the Step 5 (d)-bucket "doubled-negligibility" finding.
 -/
 
-/-- A Groth16 knowledge-soundness adversary: at each security
-    parameter `n`, outputs a candidate
-    `(VKey × Groth16Proof × PublicInputs)`. The "win" condition is
-    that the proof verifies under the canonical vkey but no
-    satisfying R1CS witness exists for the public inputs.
+/-- The public-schema circuit relation targeted by an equivalence
+    claim. A relation picks out the public inputs (the 21-field v1
+    journal) that the compiled circuit is claimed to satisfy. Kept
+    abstract: no DCAP semantics are modelled here. -/
+abbrev CircuitRelation : Type := PublicInputs → Prop
 
-    Mirrors the Step 6.0 `Groth16SoundAdv` shape but specialised to
-    the KS half of the doubled-negligibility decomposition. When
-    ArkLib lands a Groth16 KS theorem, this adversary's negligibility
-    becomes provable from a reduction to BN254 generic-group-model
-    bounds. -/
-def Groth16KSAdv : Type :=
-  (n : ℕ) → OracleComp (ProtocolSpec n) (VKey × Groth16Proof × PublicInputs)
+/-- A **proof-system-neutral knowledge-soundness adversary**: at each
+    security parameter `n`, outputs a candidate
+    `(VKey × ZkProof × PublicInputs)`. The "win" condition is that the
+    proof verifies under the canonical vkey but no satisfying witness
+    exists for the public inputs (a knowledge-soundness break).
 
-/-- The advantage of a Groth16 knowledge-soundness adversary. -/
-abbrev Groth16KSAdvantage : Type := Groth16KSAdv → ℕ → ℝ≥0∞
+    Neutral (obligation O6): names no proving system. The live path is
+    UltraHonk (boundary K1). Mirrors the `Groth16SoundAdv` shape but
+    specialised to the KS half of the doubled-negligibility
+    decomposition. When an UltraHonk knowledge-soundness theorem
+    lands, this adversary's negligibility becomes provable from a
+    reduction to the proof system's soundness bound. -/
+def ZkKnowledgeSoundnessAdv : Type :=
+  (n : ℕ) → OracleComp (ProtocolSpec n) (VKey × ZkProof × PublicInputs)
 
-/-- The Groth16 knowledge-soundness security game. -/
-def groth16KSGame (adv : Groth16KSAdvantage) :
-    SecurityGame Groth16KSAdv where
+/-- Back-compat alias for the historical `Groth16KSAdv`. The neutral
+    name is `ZkKnowledgeSoundnessAdv`. -/
+abbrev Groth16KSAdv : Type := ZkKnowledgeSoundnessAdv
+
+/-- The advantage of a knowledge-soundness adversary. -/
+abbrev ZkKnowledgeSoundnessAdvantage : Type := ZkKnowledgeSoundnessAdv → ℕ → ℝ≥0∞
+
+/-- Back-compat alias for the historical `Groth16KSAdvantage`. -/
+abbrev Groth16KSAdvantage : Type := ZkKnowledgeSoundnessAdvantage
+
+/-- The knowledge-soundness security game. -/
+def zkKnowledgeSoundnessGame (adv : ZkKnowledgeSoundnessAdvantage) :
+    SecurityGame ZkKnowledgeSoundnessAdv where
   advantage := adv
 
-/-- A zkdcap circuit-equivalence adversary: at each security
-    parameter `n`, outputs a candidate `PublicInputs` for which the
-    zkdcap R1CS circuit and the reference DCAP verifier disagree.
+/-- Back-compat alias for the historical `groth16KSGame`. -/
+abbrev groth16KSGame (adv : Groth16KSAdvantage) :
+    SecurityGame Groth16KSAdv :=
+  zkKnowledgeSoundnessGame adv
 
-    The "win" condition is a witness to circuit-vs-reference-DCAP
-    inequivalence. This is the software-verification half of the
-    doubled-negligibility decomposition. When a Lean reference DCAP
-    verifier is formalised AND the zkdcap R1CS circuit is given a
-    matching formal model, this adversary's negligibility becomes
-    provable from a circuit-equivalence theorem. -/
-def CircuitEqAdv : Type :=
+/-- A **circuit-equivalence adversary against relation `R`**: at each
+    security parameter `n`, outputs a candidate `PublicInputs` for
+    which the compiled zkdcap circuit and `R` disagree. The relation
+    parameter makes the target explicit at the type level.
+
+    Per the boundary (v0.3.0): the v1 adversary may target the exact
+    versioned relation **R_v1 only** — `CircuitEqAdv R_v1`. There is
+    NO sound claim of equivalence to `CircuitEqAdv R_target`;
+    equivalence of the v1 circuit to the full Intel-QVL relation
+    R_target is known false. `R` is kept an abstract relation
+    parameter (no DCAP semantics modelled here; the underlying
+    adversary is a bare `ProtocolSpec`-querying computation, matching
+    the sibling adversary types so the shared `IsPPT_proper` filter
+    applies). The "win" condition is a witness to circuit-vs-`R`
+    inequivalence. When a Lean reference model of R_v1 is formalised
+    AND the circuit is given a matching formal model, the negligibility
+    of `CircuitEqAdv R_v1` becomes provable from a circuit-vs-R_v1
+    equivalence theorem. -/
+def CircuitEqAdv (_R : CircuitRelation) : Type :=
   (n : ℕ) → OracleComp (ProtocolSpec n) PublicInputs
 
-/-- The advantage of a zkdcap circuit-equivalence adversary. -/
-abbrev CircuitEqAdvantage : Type := CircuitEqAdv → ℕ → ℝ≥0∞
+/-- The advantage of a circuit-equivalence adversary against `R`. -/
+abbrev CircuitEqAdvantage (R : CircuitRelation) : Type :=
+  CircuitEqAdv R → ℕ → ℝ≥0∞
 
-/-- The zkdcap circuit-equivalence security game. -/
-def circuitEqGame (adv : CircuitEqAdvantage) :
-    SecurityGame CircuitEqAdv where
+/-- The circuit-equivalence security game against relation `R`. -/
+def circuitEqGame {R : CircuitRelation} (adv : CircuitEqAdvantage R) :
+    SecurityGame (CircuitEqAdv R) where
   advantage := adv
 
 /-! ## Composite quadruple-bundle adversary -/
@@ -500,14 +532,15 @@ theorem crossSessionBindFail_secure_of_quad_bundle_secure
     five `secure A` invocations, then closes via `negligible_of_le`.
     Same shape as the Step 6.1 / 6.2 game-form packagings, scaled. -/
 theorem crossSessionBindGame_secure_of_quad_bundle_secure_AGAINST_UNBOUNDED_ADVERSARIES
+    {R_v1 : CircuitRelation}
     {bindGame    : SecurityGame CrossSessionBindAdv}
     {groth16KSGame' : SecurityGame Groth16KSAdv}
-    {circuitEqGame' : SecurityGame CircuitEqAdv}
+    {circuitEqGame' : SecurityGame (CircuitEqAdv R_v1)}
     {tdxGame     : SecurityGame TdxVerifierSoundAdv}
     {hashGame    : SecurityGame CommitHashCollisionAdv}
     {hashBGame   : SecurityGame CommitHashBytesCollisionAdv}
     (reduce : CrossSessionBindAdv →
-      Groth16KSAdv × CircuitEqAdv × TdxVerifierSoundAdv ×
+      Groth16KSAdv × CircuitEqAdv R_v1 × TdxVerifierSoundAdv ×
       CommitHashCollisionAdv × CommitHashBytesCollisionAdv)
     (h_bound : ∀ A n,
       bindGame.advantage A n ≤
@@ -538,14 +571,15 @@ theorem crossSessionBindGame_secure_of_quad_bundle_secure_AGAINST_UNBOUNDED_ADVE
     hypothesis bundles the five-way preservation claim into one
     conjunction. -/
 theorem crossSessionBindGame_secure_of_quad_bundle_secure_AGAINST_PPT_ADVERSARIES
+    {R_v1 : CircuitRelation}
     {bindGame    : SecurityGame CrossSessionBindAdv}
     {groth16KSGame' : SecurityGame Groth16KSAdv}
-    {circuitEqGame' : SecurityGame CircuitEqAdv}
+    {circuitEqGame' : SecurityGame (CircuitEqAdv R_v1)}
     {tdxGame     : SecurityGame TdxVerifierSoundAdv}
     {hashGame    : SecurityGame CommitHashCollisionAdv}
     {hashBGame   : SecurityGame CommitHashBytesCollisionAdv}
     (reduce : CrossSessionBindAdv →
-      Groth16KSAdv × CircuitEqAdv × TdxVerifierSoundAdv ×
+      Groth16KSAdv × CircuitEqAdv R_v1 × TdxVerifierSoundAdv ×
       CommitHashCollisionAdv × CommitHashBytesCollisionAdv)
     (reduce_preserves_ppt : ∀ A, IsPPT_proper A →
       IsPPT_proper (reduce A).1 ∧ IsPPT_proper (reduce A).2.1 ∧
