@@ -1,6 +1,6 @@
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{HexBinary, StdError, Uint64};
-use cw_storage_plus::Item;
+use cosmwasm_std::{Addr, HexBinary, StdError, Uint64};
+use cw_storage_plus::{Item, Map};
 use serde::{Deserialize, Serialize};
 
 pub type MrEnclave = [u8; 32];
@@ -47,10 +47,26 @@ pub const CONFIG: Item<RawConfig> = Item::new(CONFIG_KEY);
 pub const SESSION: Item<Session> = Item::new(SESSION_KEY);
 pub const SEQUENCE_NUM: Item<Uint64> = Item::new(SEQUENCE_NUM_KEY);
 
+/// Per-FMSPC raise-only TCB-Info recency floors (O3 state). Keyed by the 6-byte
+/// platform FMSPC, value is the minimum acceptable TCB-Info
+/// tcbEvaluationDataNumber for that platform. A registered entry takes
+/// precedence over the global-default `Config::min_tcb_eval_num`; both are only
+/// ever raised (see the `SetTcbEvalFloor` handler). QE-Identity keeps its own
+/// independent floor on `Config` — the two collateral streams never collapse.
+pub const TCB_FLOORS_KEY: &str = "quartz_tcb_floors";
+pub const TCB_FLOORS: Map<&[u8], u64> = Map::new(TCB_FLOORS_KEY);
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Config {
     mr_enclave: MrEnclave,
     light_client_opts: LightClientOpts,
+    /// Governance authority permitted to raise per-FMSPC TCB floors via the
+    /// `SetTcbEvalFloor` execute message. `None` (legacy / unset state) means
+    /// no one is authorized: floor updates FAIL CLOSED. Mirrors the app-level
+    /// `config.admin` authority pattern (examples/sealed-auction,
+    /// examples/ranked-choice).
+    #[serde(default)]
+    admin: Option<Addr>,
     /// Verification key name registered in Xion's ZK module for the dcap-noir
     /// UltraHonk proof. When set, the `DstackZkAttestation` handler queries
     /// `/xion.zk.v1.Query/ProofVerifyUltraHonk` directly.
@@ -135,6 +151,7 @@ impl Config {
             min_tcb_eval_num: 0,
             min_qe_eval_num: 0,
             max_tcb_status: 0, // UP_TO_DATE only (secure-by-default)
+            admin: None,
         }
     }
 
@@ -215,6 +232,16 @@ impl Config {
         self.max_tcb_status = max_tcb_status;
         self
     }
+    /// Builder: set the governance admin permitted to raise per-FMSPC TCB
+    /// floors. Reuses the repo's `config.admin` authority pattern.
+    pub fn with_admin(mut self, admin: Addr) -> Self {
+        self.admin = Some(admin);
+        self
+    }
+
+    pub fn admin(&self) -> Option<&Addr> {
+        self.admin.as_ref()
+    }
 
     pub fn light_client_opts(&self) -> &LightClientOpts {
         &self.light_client_opts
@@ -271,6 +298,10 @@ impl Config {
 pub struct RawConfig {
     mr_enclave: HexBinary,
     light_client_opts: RawLightClientOpts,
+    /// Governance admin (bech32). `None` = legacy / unset; floor updates fail
+    /// closed. See `Config::admin`.
+    #[serde(default)]
+    admin: Option<String>,
     zkdcap_vkey: Option<String>,
     /// Hex-encoded SHA-256 digest of the exact Xion-stored verification key.
     /// Missing legacy state remains deserializable but cannot verify a zkdcap
@@ -314,6 +345,10 @@ impl RawConfig {
 
     pub fn zkdcap_vkey(&self) -> Option<&str> {
         self.zkdcap_vkey.as_deref()
+    }
+
+    pub fn admin(&self) -> Option<&str> {
+        self.admin.as_deref()
     }
 
     pub fn expected_zkdcap_vkey_sha256(&self) -> Option<&[u8]> {
@@ -379,6 +414,7 @@ impl TryFrom<RawConfig> for Config {
                 .try_into()
                 .map_err(|e| StdError::msg(format!("light_client_opts: {e}")))?,
             zkdcap_vkey: value.zkdcap_vkey,
+            admin: value.admin.map(Addr::unchecked),
             expected_zkdcap_vkey_sha256,
             expected_mrtd: reg(value.expected_mrtd, "expected_mrtd")?,
             expected_rtmr0: reg(value.expected_rtmr0, "expected_rtmr0")?,
@@ -400,6 +436,7 @@ impl From<Config> for RawConfig {
             mr_enclave: value.mr_enclave.into(),
             light_client_opts: value.light_client_opts.into(),
             zkdcap_vkey: value.zkdcap_vkey,
+            admin: value.admin.map(String::from),
             expected_zkdcap_vkey_sha256: value.expected_zkdcap_vkey_sha256.map(HexBinary::from),
             expected_mrtd: value.expected_mrtd.map(HexBinary::from),
             expected_rtmr0: value.expected_rtmr0.map(HexBinary::from),
@@ -655,6 +692,31 @@ mod tests {
         let err = Config::try_from(malformed).unwrap_err();
         assert!(err.to_string().contains("expected_zkdcap_vkey_sha256"));
         assert!(err.to_string().contains("32"));
+    }
+
+    #[test]
+    fn admin_round_trips_through_raw_config() {
+        let admin = Addr::unchecked("cosmos1adminaddr");
+        let config = Config::new([0u8; 32], light_client_opts(), None).with_admin(admin.clone());
+        assert_eq!(config.admin(), Some(&admin));
+
+        let raw: RawConfig = config.into();
+        assert_eq!(raw.admin(), Some("cosmos1adminaddr"));
+
+        let decoded = Config::try_from(raw).unwrap();
+        assert_eq!(decoded.admin(), Some(&admin));
+    }
+
+    #[test]
+    fn legacy_raw_config_without_admin_deserializes_as_none() {
+        let config = Config::new([0u8; 32], light_client_opts(), None);
+        let raw: RawConfig = config.into();
+        let mut json = serde_json::to_value(raw).unwrap();
+        json.as_object_mut().unwrap().remove("admin");
+
+        let legacy: RawConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(legacy.admin(), None);
+        assert_eq!(Config::try_from(legacy).unwrap().admin(), None);
     }
 }
 

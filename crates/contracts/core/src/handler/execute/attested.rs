@@ -9,6 +9,8 @@ use crate::{
     },
     state::CONFIG,
 };
+#[cfg(not(feature = "mock"))]
+use crate::state::TCB_FLOORS;
 
 // ── DstackZkAttestation binding check (Round D Critical 4 production hook) ─────
 //
@@ -230,12 +232,29 @@ impl Handler for DstackZkAttestation {
         );
         let now_packed = unix_to_packed_datetime(env.block.time.seconds());
 
+        // O3: select the TCB-Info floor by the proof-bound FMSPC. A per-FMSPC
+        // entry (raised via `SetTcbEvalFloor`) takes precedence; otherwise fall
+        // back to the config's global-default `min_tcb_eval_num`. This follows
+        // the existing explicit global-default policy rather than failing closed
+        // on an unregistered FMSPC, preserving instantiated state that relied on
+        // the former scalar floor. QE-Identity keeps its own independent floor —
+        // the two collateral streams never collapse into a `min()`.
+        let fmspc = quartz_zkdcap::extract_fmspc(&self.zkdcap_public_inputs).ok_or_else(|| {
+            Error::ZkdcapVerificationFailed(
+                "malformed public_inputs: cannot extract fmspc".to_string(),
+            )
+        })?;
+        let tcb_floor = TCB_FLOORS
+            .may_load(deps.storage, &fmspc)
+            .map_err(Error::Std)?
+            .unwrap_or_else(|| config.min_tcb_eval_num());
+
         let decoded = verify_quote_parts(
             &backend,
             &self.zkdcap_proof,
             &self.zkdcap_public_inputs,
             now_packed,
-            EvalNumberPolicy::new(config.min_tcb_eval_num(), config.min_qe_eval_num()),
+            EvalNumberPolicy::new(tcb_floor, config.min_qe_eval_num()),
             config.max_tcb_status(),
         )
         .map_err(|e| {

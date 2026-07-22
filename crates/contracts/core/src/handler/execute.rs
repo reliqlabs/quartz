@@ -2,6 +2,7 @@ pub mod attested;
 pub mod sequenced;
 pub mod session_create;
 pub mod session_set_pub_key;
+pub mod set_tcb_eval_floor;
 pub mod signed;
 
 use cosmwasm_std::{DepsMut, Env, MessageInfo, Response};
@@ -23,6 +24,7 @@ where
         match self {
             Execute::SessionCreate(msg) => msg.handle(deps, env, info),
             Execute::SessionSetPubKey(msg) => msg.handle(deps, env, info),
+            Execute::SetTcbEvalFloor(msg) => msg.handle(deps, env, info),
         }
     }
 }

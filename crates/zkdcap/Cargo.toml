@@ -28,7 +28,7 @@ std = ["sha2/std"]
 
 [dependencies]
 sha2.workspace = true
-serde = { workspace = true, features = ["derive"] }
+serde = { workspace = true, features = ["derive", "alloc"] }
 hex = { workspace = true, features = ["alloc"] }
 cosmwasm-std = { workspace = true, optional = true, features = [
     "stargate",

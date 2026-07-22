@@ -182,6 +182,15 @@ pub fn verify_quote_parts<B: ProofBackend>(
     let valid_from = extract_valid_from(pi).ok_or(QuoteError::Malformed)?;
     let valid_until = extract_valid_until(pi).ok_or(QuoteError::Malformed)?;
 
+    // O4 (CRL-lag stance): the released v1 21-field journal exposes NO separate
+    // CRL identity/recency field, so there is no independent CRL-freshness gate
+    // to enforce here. Instead, CRL-lag acceptance is bounded by the
+    // authenticated `valid_until` below: `valid_until` is the min of all signed
+    // collateral validity upper bounds (which includes the CRL's nextUpdate),
+    // proven in-circuit. Rejecting `now_packed > valid_until` therefore rejects
+    // any attestation whose underlying CRL (or other collateral) has lapsed.
+    // This is the explicit, version-neutral O4 policy: do NOT invent a CRL
+    // field; rely on the ValidUntil window. See the `o4_tests` regression.
     if !(valid_from <= now_packed
         && now_packed <= valid_until
         && tcb_eval_num >= eval_policy.min_tcb_info
@@ -215,4 +224,68 @@ pub fn verify_quote_parts<B: ProofBackend>(
         valid_from,
         valid_until,
     })
+}
+
+#[cfg(test)]
+mod o4_tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+    use crate::layout::{build_public_inputs, MEASUREMENT_BYTES};
+
+    struct AlwaysOk;
+    impl ProofBackend for AlwaysOk {
+        fn verify(&self, _proof: &[u8], _pi: &[u8]) -> bool {
+            true
+        }
+    }
+
+    fn pi(valid_from: u64, valid_until: u64) -> Vec<u8> {
+        build_public_inputs(
+            &[0u8; MEASUREMENT_BYTES],
+            &[0u8; 64],
+            0, // tcb_status
+            0, // timestamp
+            0, // tcb_eval_num
+            0, // qe_eval_num
+            valid_from,
+            valid_until,
+        )
+    }
+
+    /// O4 regression: a proof whose authenticated validity window has lapsed
+    /// (`valid_until` < chain time) is rejected. This is the CRL-lag bound —
+    /// there is no separate CRL field in v1, so ValidUntil is the recency gate.
+    #[test]
+    fn valid_until_lapsed_is_rejected() {
+        let pi = pi(100, 200);
+        let err = verify_quote_parts(&AlwaysOk, &[], &pi, 300, EvalNumberPolicy::default(), 0)
+            .unwrap_err();
+        assert_eq!(err, QuoteError::StaleOrFuture);
+    }
+
+    /// Control: inside the window the same proof is accepted, proving the
+    /// rejection above is specifically the ValidUntil bound and not some other
+    /// gate.
+    #[test]
+    fn within_window_is_accepted() {
+        let pi = pi(100, 200);
+        let decoded =
+            verify_quote_parts(&AlwaysOk, &[], &pi, 150, EvalNumberPolicy::default(), 0).unwrap();
+        assert_eq!(decoded.valid_until, 200);
+    }
+
+    /// Boundary: chain time exactly at `valid_until` is still accepted
+    /// (inclusive upper bound); one tick past is rejected.
+    #[test]
+    fn valid_until_boundary_is_inclusive() {
+        let pi = pi(100, 200);
+        assert!(
+            verify_quote_parts(&AlwaysOk, &[], &pi, 200, EvalNumberPolicy::default(), 0).is_ok()
+        );
+        assert_eq!(
+            verify_quote_parts(&AlwaysOk, &[], &pi, 201, EvalNumberPolicy::default(), 0)
+                .unwrap_err(),
+            QuoteError::StaleOrFuture
+        );
+    }
 }
