@@ -92,6 +92,26 @@ pub trait HasUserData {
     fn user_data(&self) -> UserData;
 }
 
+/// Canonical `user_data` commitment: `Sha256(serde_json(value))` in the low
+/// 32 bytes of the 64-byte report_data buffer. This is the value the enclave
+/// embeds as TDX report_data and the value the `Attested` wrapper compares
+/// against (`report_data == user_data`).
+///
+/// DOMAIN SEPARATION (deferred — coordinated protocol change, not a
+/// within-slice edit): this commitment has no domain/method prefix, so it
+/// relies solely on the structural distinctness of each message's JSON to
+/// keep digests from colliding across message types or protocols. Adding a
+/// domain prefix here is binding-safe in principle because the attesting
+/// enclave is in-repo (`crates/enclave` depends on `quartz-contract-core` and
+/// recompiles this exact code, so both sides move together). It is NOT landed
+/// because the `user_data` construction is also a load-bearing formal-model
+/// artifact modelled prefix-free in `proofs/lean` (RawMessages/TransferMessages/
+/// CrossComponent/Handshake, e.g. `userDataOfSessionCreate = commitHashBytes
+/// (serializeRawSessionCreate …)`) and in `specs/handshake.qnt`. Prefixing the
+/// hash without co-updating those artifacts would silently break their
+/// faithfulness. Landing it therefore requires a coordinated change across the
+/// enclave, the Lean model, and the Quint spec, which is out of scope for the
+/// core-contract slice.
 pub fn user_data_json<T: Serialize>(value: &T) -> UserData {
     use serde_json::to_string;
     use sha2::{Digest, Sha256};

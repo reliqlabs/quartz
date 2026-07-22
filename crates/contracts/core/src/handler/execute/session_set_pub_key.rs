@@ -11,6 +11,22 @@ impl Handler for SessionSetPubKey {
     // Add msg.pub_key to SESSION and initialize SEQUENCE_NUM.
     fn handle(self, deps: DepsMut<'_>, _env: &Env, _info: &MessageInfo) -> Result<Response, Error> {
         let session = SESSION.load(deps.storage).map_err(Error::Std)?;
+
+        // Fail closed: SEQUENCE_NUM is initialised exactly once, when a
+        // session's pub_key is first set. Its presence means a key was already
+        // installed, so refuse rather than re-install a key and reset the
+        // replay counter to 0. `Session::with_pub_key` already rejects the
+        // double-set on a live session; this is the belt-and-suspenders half
+        // that, together with the `session_create` rollback guard, closes the
+        // create->set replay-reset path even if a future refactor loosens one
+        // of the other checks.
+        if SEQUENCE_NUM
+            .may_load(deps.storage)
+            .map_err(Error::Std)?
+            .is_some()
+        {
+            return Err(Error::BadSessionTransition);
+        }
         let (nonce, pub_key) = self.into_tuple();
 
         // ASSERT SESSION.nonce == msg.nonce, SESSION.pubkey == None
