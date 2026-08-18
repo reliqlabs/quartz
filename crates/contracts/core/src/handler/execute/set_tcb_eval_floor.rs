@@ -182,4 +182,27 @@ mod tests {
             Some(12)
         );
     }
+
+    /// Reverse of `set_qe_eval_floor`'s independence test: raising a per-FMSPC
+    /// TCB floor must not move the QE-Identity floor. The two collateral
+    /// streams are governed separately and never collapse into one value.
+    #[test]
+    fn raising_tcb_floor_leaves_qe_floor_untouched() {
+        let mut deps = mock_dependencies();
+        let admin = deps.api.addr_make("admin");
+        let raw: RawConfig = Config::new([0u8; 32], light_client_opts(), None)
+            .with_eval_num_floors(15, 17)
+            .with_admin(admin.clone())
+            .into();
+        CONFIG.save(deps.as_mut().storage, &raw).unwrap();
+        let info = message_info(&admin, &[]);
+        msg(30).handle(deps.as_mut(), &mock_env(), &info).unwrap();
+        let stored = CONFIG.load(deps.as_ref().storage).unwrap();
+        assert_eq!(stored.min_qe_eval_num(), 17);
+        assert_eq!(stored.min_tcb_eval_num(), 15);
+        assert_eq!(
+            TCB_FLOORS.may_load(deps.as_ref().storage, &FMSPC).unwrap(),
+            Some(30)
+        );
+    }
 }

@@ -176,6 +176,32 @@ impl Handler for DstackAttestation {
 
 // ── DstackZkAttestation handler (zkdcap UltraHonk proof) ────────────
 
+/// Resolve the TCB-Info recency floor for a proof-bound FMSPC.
+///
+/// `registered` is that FMSPC's `TCB_FLOORS` entry. When it is absent the
+/// behaviour is an authorization decision rather than a recency one, because
+/// Intel advances `tcbEvaluationDataNumber` fleet-wide: the global default holds
+/// the same number a registered entry would. So under `require_registered` an
+/// unregistered platform family is refused outright; otherwise it is admitted
+/// against the global default, which is the legacy policy and preserves state
+/// instantiated before per-FMSPC floors existed.
+#[cfg(not(feature = "mock"))]
+fn select_tcb_floor(
+    registered: Option<u64>,
+    global_default: u64,
+    require_registered: bool,
+    fmspc: &[u8; 6],
+) -> Result<u64, Error> {
+    match registered {
+        Some(floor) => Ok(floor),
+        None if require_registered => Err(Error::ZkdcapVerificationFailed(format!(
+            "unauthorized platform: fmspc {} has no registered TCB floor",
+            hex::encode(fmspc)
+        ))),
+        None => Ok(global_default),
+    }
+}
+
 /// ZK proof verification via the Xion ZK module.
 ///
 /// Verifies the dcap-noir UltraHonk proof through
@@ -233,10 +259,15 @@ impl Handler for DstackZkAttestation {
         let now_packed = unix_to_packed_datetime(env.block.time.seconds());
 
         // O3: select the TCB-Info floor by the proof-bound FMSPC. A per-FMSPC
-        // entry (raised via `SetTcbEvalFloor`) takes precedence; otherwise fall
-        // back to the config's global-default `min_tcb_eval_num`. This follows
-        // the existing explicit global-default policy rather than failing closed
-        // on an unregistered FMSPC, preserving instantiated state that relied on
+        // entry (raised via `SetTcbEvalFloor`) takes precedence.
+        //
+        // What happens when there is no entry is an AUTHORIZATION decision, not a
+        // recency one: Intel advances `tcbEvaluationDataNumber` fleet-wide, so an
+        // unregistered platform would be measured against the same number a
+        // registered one carries. Under `require_registered_fmspc` we fail closed,
+        // so only enumerated platform families may attest and the set is widened
+        // by a governed `SetTcbEvalFloor`. Otherwise we keep the legacy
+        // global-default policy, which preserves instantiated state that relied on
         // the former scalar floor. QE-Identity keeps its own independent floor —
         // the two collateral streams never collapse into a `min()`.
         let fmspc = quartz_zkdcap::extract_fmspc(&self.zkdcap_public_inputs).ok_or_else(|| {
@@ -244,10 +275,14 @@ impl Handler for DstackZkAttestation {
                 "malformed public_inputs: cannot extract fmspc".to_string(),
             )
         })?;
-        let tcb_floor = TCB_FLOORS
-            .may_load(deps.storage, &fmspc)
-            .map_err(Error::Std)?
-            .unwrap_or_else(|| config.min_tcb_eval_num());
+        let tcb_floor = select_tcb_floor(
+            TCB_FLOORS
+                .may_load(deps.storage, &fmspc)
+                .map_err(Error::Std)?,
+            config.min_tcb_eval_num(),
+            config.require_registered_fmspc(),
+            &fmspc,
+        )?;
 
         let decoded = verify_quote_parts(
             &backend,
@@ -658,5 +693,149 @@ mod tests {
         let err = Handler::handle(att, deps.as_mut(), &env, &info).unwrap_err();
         assert!(matches!(err, Error::ZkdcapVerificationFailed(_)));
         assert!(format!("{err}").contains("expected_zkdcap_vkey_sha256"));
+    }
+
+    // ── FMSPC authorization gate: handler wiring (O3 `require_registered_fmspc`) ──
+    //
+    // `fmspc_policy_tests` below covers `select_tcb_floor`'s decision table. These
+    // two cover what a pure-helper test cannot: that the handler feeds it the
+    // stored config flag and the PROOF-BOUND fmspc, and reaches the gate before
+    // verifying anything. A wiring bug that passed a constant flag or a
+    // caller-supplied fmspc would satisfy every test in that module.
+
+    // Under the closed-platform-set policy an FMSPC with no registered TCB floor
+    // must be rejected as unauthorized, and on authorization grounds rather than
+    // incidentally by a later check. The second half registers a floor for the
+    // same FMSPC and asserts the authorization error is gone, so the test cannot
+    // pass for the wrong reason.
+    #[test]
+    fn zk_handler_unregistered_fmspc_fails_closed_when_required() {
+        use cosmwasm_std::testing::{message_info, mock_dependencies, mock_env};
+
+        use crate::state::{Config, LightClientOpts, RawConfig, CONFIG};
+
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let sender = deps.api.addr_make("sender");
+        let info = message_info(&sender, &[]);
+
+        let lco = LightClientOpts::new(
+            "testing".to_string(),
+            1,
+            [0u8; 32],
+            (2, 3),
+            1209600,
+            300,
+            600,
+        )
+        .unwrap();
+        let cfg: RawConfig = Config::new([0u8; 32], lco, Some("dcap-ultrahonk-v1".to_string()))
+            .with_expected_zkdcap_vkey_sha256([7u8; 32])
+            .with_require_registered_fmspc(true)
+            .into();
+        CONFIG.save(deps.as_mut().storage, &cfg).unwrap();
+
+        // All-zero public inputs decode to fmspc 000000000000, which no
+        // `SetTcbEvalFloor` has registered.
+        let att =
+            DstackZkAttestation::new([0u8; 64], [0u8; 32], vec![1, 2, 3], vec![0u8; 672], None);
+        let err = Handler::handle(att, deps.as_mut(), &env, &info).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("unauthorized platform"), "{msg}");
+        assert!(msg.contains("000000000000"), "{msg}");
+
+        // Registering that platform family removes the authorization failure; the
+        // attestation then fails later, on its own merits.
+        TCB_FLOORS
+            .save(deps.as_mut().storage, &[0u8; 6], &0)
+            .unwrap();
+        let att =
+            DstackZkAttestation::new([0u8; 64], [0u8; 32], vec![1, 2, 3], vec![0u8; 672], None);
+        let err = Handler::handle(att, deps.as_mut(), &env, &info).unwrap_err();
+        assert!(!format!("{err}").contains("unauthorized platform"), "{err}");
+    }
+
+    // The legacy global-default policy is the other branch of the same ruling:
+    // with the requirement off, an unregistered FMSPC inherits
+    // `config.min_tcb_eval_num` instead of being rejected.
+    #[test]
+    fn unregistered_fmspc_inherits_global_default_when_not_required() {
+        use cosmwasm_std::testing::{message_info, mock_dependencies, mock_env};
+
+        use crate::state::{Config, LightClientOpts, RawConfig, CONFIG};
+
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let sender = deps.api.addr_make("sender");
+        let info = message_info(&sender, &[]);
+
+        let lco = LightClientOpts::new(
+            "testing".to_string(),
+            1,
+            [0u8; 32],
+            (2, 3),
+            1209600,
+            300,
+            600,
+        )
+        .unwrap();
+        let cfg: RawConfig = Config::new([0u8; 32], lco, Some("dcap-ultrahonk-v1".to_string()))
+            .with_expected_zkdcap_vkey_sha256([7u8; 32])
+            .into();
+        assert!(!cfg.require_registered_fmspc());
+        CONFIG.save(deps.as_mut().storage, &cfg).unwrap();
+
+        let att =
+            DstackZkAttestation::new([0u8; 64], [0u8; 32], vec![1, 2, 3], vec![0u8; 672], None);
+        let err = Handler::handle(att, deps.as_mut(), &env, &info).unwrap_err();
+        assert!(!format!("{err}").contains("unauthorized platform"), "{err}");
+    }
+}
+
+#[cfg(all(test, not(feature = "mock")))]
+mod fmspc_policy_tests {
+    #![allow(clippy::unwrap_used)]
+    use super::select_tcb_floor;
+
+    const PHALA: [u8; 6] = [0x20, 0xA0, 0x6F, 0x00, 0x00, 0x00];
+    const OTHER: [u8; 6] = [0x00, 0x80, 0x6F, 0x05, 0x00, 0x00];
+
+    #[test]
+    fn registered_entry_wins_over_global_default_under_either_policy() {
+        for require in [false, true] {
+            assert_eq!(
+                select_tcb_floor(Some(21), 19, require, &PHALA).unwrap(),
+                21,
+                "a registered floor must be used verbatim, not merged with the default"
+            );
+        }
+    }
+
+    #[test]
+    fn unregistered_is_refused_when_policy_requires_registration() {
+        let err = select_tcb_floor(None, 19, true, &OTHER).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("unauthorized platform"), "got: {msg}");
+        // The offending platform must be named, or an operator cannot act on it.
+        assert!(msg.contains("00806f050000"), "got: {msg}");
+    }
+
+    #[test]
+    fn unregistered_falls_back_to_global_default_under_legacy_policy() {
+        assert_eq!(select_tcb_floor(None, 19, false, &OTHER).unwrap(), 19);
+    }
+
+    #[test]
+    fn requiring_registration_does_not_weaken_a_registered_platform() {
+        // Guards against a repair that made the flag bypass the per-FMSPC entry.
+        assert_eq!(select_tcb_floor(Some(0), 19, true, &PHALA).unwrap(), 0);
+    }
+
+    #[test]
+    fn zero_global_default_is_still_a_refusal_not_an_accept() {
+        // A deployment that never set a global floor must not accidentally admit
+        // every unenumerated platform at floor 0 once the policy is on.
+        assert!(select_tcb_floor(None, 0, true, &OTHER).is_err());
+        assert_eq!(select_tcb_floor(None, 0, false, &OTHER).unwrap(), 0);
     }
 }

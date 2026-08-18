@@ -52,7 +52,8 @@ pub const SEQUENCE_NUM: Item<Uint64> = Item::new(SEQUENCE_NUM_KEY);
 /// tcbEvaluationDataNumber for that platform. A registered entry takes
 /// precedence over the global-default `Config::min_tcb_eval_num`; both are only
 /// ever raised (see the `SetTcbEvalFloor` handler). QE-Identity keeps its own
-/// independent floor on `Config` — the two collateral streams never collapse.
+/// independent floor on the stored config, raised via `SetQeEvalFloor`, so the
+/// two collateral streams never collapse.
 pub const TCB_FLOORS_KEY: &str = "quartz_tcb_floors";
 pub const TCB_FLOORS: Map<&[u8], u64> = Map::new(TCB_FLOORS_KEY);
 
@@ -128,6 +129,11 @@ pub struct Config {
     /// platform must raise this consciously.
     #[serde(default)]
     max_tcb_status: u8,
+    /// Reject a proof whose FMSPC has no `TCB_FLOORS` entry, instead of falling
+    /// back to `min_tcb_eval_num`. `false` (the default) is the legacy
+    /// global-default policy; see `RawConfig::require_registered_fmspc`.
+    #[serde(default)]
+    require_registered_fmspc: bool,
 }
 
 impl Config {
@@ -151,6 +157,7 @@ impl Config {
             min_tcb_eval_num: 0,
             min_qe_eval_num: 0,
             max_tcb_status: 0, // UP_TO_DATE only (secure-by-default)
+            require_registered_fmspc: false, // legacy global-default policy
             admin: None,
         }
     }
@@ -232,6 +239,16 @@ impl Config {
         self.max_tcb_status = max_tcb_status;
         self
     }
+
+    /// Builder: authorize only platform families with a registered `TCB_FLOORS`
+    /// entry, failing closed on any other FMSPC. Off by default so an upgrade of
+    /// existing state cannot start rejecting platforms that were passing; a new
+    /// deployment that knows its platform set should turn it on. Extend the set
+    /// afterwards with `SetTcbEvalFloor` rather than a redeploy.
+    pub fn with_require_registered_fmspc(mut self, require: bool) -> Self {
+        self.require_registered_fmspc = require;
+        self
+    }
     /// Builder: set the governance admin permitted to raise per-FMSPC TCB
     /// floors. Reuses the repo's `config.admin` authority pattern.
     pub fn with_admin(mut self, admin: Addr) -> Self {
@@ -292,6 +309,10 @@ impl Config {
     pub fn max_tcb_status(&self) -> u8 {
         self.max_tcb_status
     }
+
+    pub fn require_registered_fmspc(&self) -> bool {
+        self.require_registered_fmspc
+    }
 }
 
 #[cw_serde]
@@ -336,6 +357,23 @@ pub struct RawConfig {
     /// Default `0` = UP_TO_DATE only (secure-by-default).
     #[serde(default)]
     max_tcb_status: u8,
+    /// Authorize only platform families with a registered `TCB_FLOORS` entry.
+    ///
+    /// The fallback this gates is not a weaker *recency* check: Intel advances
+    /// `tcbEvaluationDataNumber` fleet-wide (all 16 FMSPCs in the 2026-07 capture
+    /// read 19), so an unregistered platform is measured against the same number
+    /// a registered one would carry. What the fallback decides is
+    /// **authorization**: whether a platform family nobody enumerated may attest
+    /// at all.
+    ///
+    /// `false` (the default, and what legacy state deserializes to) keeps the
+    /// documented global-default policy so an upgrade cannot start rejecting
+    /// platforms that were passing before. `true` fails closed on an
+    /// unregistered FMSPC; registering one is a governed `SetTcbEvalFloor`, so
+    /// the authorized set is extended by admin transaction rather than by
+    /// redeploy.
+    #[serde(default)]
+    require_registered_fmspc: bool,
 }
 
 impl RawConfig {
@@ -387,8 +425,51 @@ impl RawConfig {
         self.min_qe_eval_num.unwrap_or(self.min_tcb_eval_num)
     }
 
+    /// Governed raise-only QE-Identity floor update (`SetQeEvalFloor`).
+    ///
+    /// `Ok(previous_effective_floor)` on success, `Err(current_effective_floor)`
+    /// when `new_floor` would lower it. Raise-only lives in the type so no
+    /// in-crate caller can express a lowering.
+    ///
+    /// Unlike the TCB floor this is a config field rather than a `Map` entry:
+    /// Intel serves one QE Identity per TEE type, not one per FMSPC, so there
+    /// is nothing to key a map on, and keeping it on the stored config means
+    /// every existing `Config` query already exposes the floor in force.
+    /// Legacy `None` state resolves through `min_qe_eval_num()` first, so the
+    /// raise is checked against the inherited TCB floor rather than zero.
+    pub fn raise_min_qe_eval_num(&mut self, new_floor: u64) -> Result<u64, u64> {
+        let current = self.min_qe_eval_num();
+        if new_floor < current {
+            return Err(current);
+        }
+        self.min_qe_eval_num = Some(new_floor);
+        Ok(current)
+    }
+
     pub fn max_tcb_status(&self) -> u8 {
         self.max_tcb_status
+    }
+
+    pub fn require_registered_fmspc(&self) -> bool {
+        self.require_registered_fmspc
+    }
+
+    /// Governed **tighten-only** FMSPC-authorization update (`SetFmspcPolicy`).
+    ///
+    /// `Ok(previous)` on success, `Err(())` when the caller asks to turn the
+    /// requirement back off. Loosening an authorization boundary is a silent
+    /// security downgrade, so, exactly as with the raise-only floors, the
+    /// restriction lives in the type and no in-crate caller can express it. A
+    /// deployment that genuinely needs to widen its platform set registers the
+    /// additional FMSPC instead, which is the reversible operation.
+    /// Mirrors `raise_min_qe_eval_num`: `Ok(previous)` on success, and on refusal
+    /// `Err(current)` carries the policy already in force.
+    pub fn tighten_require_registered_fmspc(&mut self) -> Result<bool, bool> {
+        if self.require_registered_fmspc {
+            return Err(true);
+        }
+        self.require_registered_fmspc = true;
+        Ok(false)
     }
 }
 
@@ -424,6 +505,7 @@ impl TryFrom<RawConfig> for Config {
             expected_compose_hash: value.expected_compose_hash.map(|h| h.to_vec()),
             allow_any_image: value.allow_any_image,
             min_tcb_eval_num: value.min_tcb_eval_num,
+            require_registered_fmspc: value.require_registered_fmspc,
             min_qe_eval_num,
             max_tcb_status: value.max_tcb_status,
         })
@@ -448,6 +530,7 @@ impl From<Config> for RawConfig {
             min_tcb_eval_num: value.min_tcb_eval_num,
             min_qe_eval_num: Some(value.min_qe_eval_num),
             max_tcb_status: value.max_tcb_status,
+            require_registered_fmspc: value.require_registered_fmspc,
         }
     }
 }
