@@ -32,15 +32,39 @@ the shared `quartz-zkdcap` crate so the proof checks live in one place.
   Application-independent; shared by `quartz-contract-core`, dossier, and
   verified-rcv so circuit/layout changes are a one-place edit.
 - Noir/bb UltraHonk prover integration (`zkdcap/noir-prove-server`) via Unix socket
+- **Governed raise-only collateral floors.** `SetTcbEvalFloor` raises the
+  per-FMSPC TCB-Info floor in the `TCB_FLOORS` map, where a registered entry
+  takes precedence over the global default. `SetQeEvalFloor` raises the
+  contract-wide QE-Identity floor on the stored config, since Intel serves one
+  QE Identity per TEE type and there is no platform key to shard on. Both are
+  authorized by `config.admin`, fail closed when no admin is configured, and
+  reject any decrease; raising one provably leaves the other unchanged. Legacy
+  state with no QE field has its raise checked against the inherited TCB floor
+  rather than zero.
+- **Governed platform authorization.** `SetFmspcPolicy` sets
+  `require_registered_fmspc`, which rejects any attestation whose proof-bound
+  FMSPC has no registered TCB floor. Tighten-only: turning it off would silently
+  re-admit every unenumerated platform, so the type refuses that direction and
+  the way to admit another family is `SetTcbEvalFloor` on its FMSPC. Left off,
+  the legacy global-default floor still applies.
+- **Receipt scope published.** `quartz-zkdcap` module docs now carry scope id
+  `zkdcap-tdx-v4-tdreport10-21`, what a verified proof establishes, the inherent
+  limits (which PCK certificate, no hardware clock, revocation is narrower than
+  Intel's verdict, no advisories, merged status only), and separately the
+  relation's current implementation gaps. `quartz-contract-core`'s README maps
+  zkdcap's nine consumer requirements onto this crate.
 - Verus prototype + Quint spec were updated to the initial UltraHonk proof shape.
-  Their single-floor recency model has not yet been reconciled with the independent
-  TCB/QE API and must be re-verified before release.
 
 ### Remaining policy work
 
-- Core storage still has one global TCB-Info floor. Production policy needs a
-  governed, raise-only FMSPC-to-floor map, fail-closed unknown-FMSPC behavior, an
-  independently governed QE floor, and downstream Dossier/verified-rcv migration.
+- Requirement 7 of zkdcap's consumer contract is only partially met: `user_data`
+  is `SHA256(serde_json(message))` and carries no chain id, action tag, or
+  version, so the `report_data` preimage is not domain-separated. Closing it is a
+  wire-format change to the attested-message envelope.
+- Downstream Dossier and verified-rcv still consume the pre-governance floor
+  configuration and have not migrated.
+- The Verus prototype and Quint spec model a single recency floor. Neither has
+  been reconciled with the independent, separately governed TCB and QE floors.
 
 ## Earlier: dstack/TDX Modernization
 

@@ -6,10 +6,14 @@
   verify the TDX quote on-chain directly. Instead, an off-chain prover
   (the zkdcap circuit) produces a zero-knowledge proof that *some* TDX
   quote with the claimed user-data and MR_ENCLAVE verifies under the
-  implemented DCAP relation. The live supplier artifact is the released
-  `dcap-ultrahonk-v1`: a Noir circuit proven with Barretenberg
-  UltraHonk, checked on-chain by the Xion ZK module endpoint
-  `/xion.zk.v1.Query/ProofVerifyUltraHonk`.
+  implemented DCAP relation. The supplier artifact is a monolithic Noir
+  circuit proven with Barretenberg UltraHonk, checked on-chain by the
+  Xion ZK module endpoint `/xion.zk.v1.Query/ProofVerifyUltraHonk`,
+  under scope id `zkdcap-tdx-v4-tdreport10-21`. The previously named
+  `dcap-ultrahonk-v1` registration is legacy: upstream forbids reusing
+  that name or id, and no production key is registrable yet, so this
+  module deliberately names no live key. See
+  `.colosseum/boundaries/zkdcap--quartz.md` section 4.
 
   Here we bridge from proof acceptance back to the underlying
   `was_signed_by_dstack` predicate from `Dstack.lean`. This is the
@@ -17,7 +21,8 @@
   system's knowledge soundness.
 
   --------------------------------------------------------------------
-  Proof-system neutrality (boundary v0.3.0, obligation O6):
+  Proof-system neutrality (boundary v1.1.0, "proof-system-neutral
+  verifier interface"; formerly cited as obligation O6):
   --------------------------------------------------------------------
 
   The verifier is modelled by a **proof-system-neutral** interface
@@ -25,7 +30,13 @@
   live instantiation `zkVerifier` (aliased `ultraHonkVerifier`) is
   Noir/Barretenberg UltraHonk and maps to boundary assumption
   **K1 (UltraHonk soundness)**: the release-pinned Barretenberg
-  verifier accepts only proofs of the compiled Noir relation.
+  verifier accepts only proofs of the compiled Noir relation. K1 and
+  this requirement were carried over from the upstream boundary document
+  that zkdcap deleted on 2026-08-06; both are now defined in
+  `.colosseum/boundaries/zkdcap--quartz.md` section 8, which also
+  records why these are cited by NAME: the upstream O-numbering is not
+  stable across lineages, and "O6" means something else in the last
+  upstream version of that document.
 
   The former gnark/Groth16/BN254 path is historical only — not a
   fallback, parity target, or inherited assumption. The historical

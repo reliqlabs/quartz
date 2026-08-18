@@ -62,6 +62,29 @@
 //!
 //! A `Revoked` converged status never receipts, so a caller cannot distinguish a
 //! revoked platform from a failure to attest.
+//!
+//! # Current implementation gaps, distinct from the limits above
+//!
+//! The limits above are inherent. These are not, and are scheduled to close
+//! before a production vkey is registered. As of zkdcap `97f6746` one remains:
+//! **TDX module identity is not appraised**, so the merged status carries no
+//! module-level verdict of its own and the module table's canonical ordering is
+//! unasserted. A consumer cannot compensate, because it concerns bytes the
+//! consumer never sees, so until it lands no registered vkey should be treated
+//! as production.
+//!
+//! Closed since the scope text was written, all in one vkey-changing batch: the
+//! signed quote header's version, attestation-key type, TEE type, reserved
+//! fields and Intel QE vendor ID are now asserted against the ISV-signed span
+//! (`2c416e5`); Intel's TDX component skip at `tee_tcb_svn[1] != 0` is applied,
+//! so selection matches Intel QVL rather than dcap-qvl on the live path
+//! (`2c416e5`); and the signed platform and QE tables must be strictly
+//! descending under QVL's comparator (`97f6746`).
+//!
+//! Separately, quote v5 and body types other than `TDREPORT10` are rejected.
+//! That matches this scope id, but the body version is chosen by the TD Quoting
+//! Enclave and changes after a TD-preserving TDX module update, so a platform
+//! patched that way stops attesting until a successor profile exists.
 
 #![forbid(unsafe_code)]
 
