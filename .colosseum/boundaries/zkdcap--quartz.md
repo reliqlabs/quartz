@@ -3,9 +3,10 @@
 Colosseum boundary document, Quartz side. Records what Quartz consumes from
 zkdcap, what zkdcap guarantees today, and which obligations sit on which side.
 
-**Boundary version: 1.2.0.** Written 2026-08-17, revised 2026-08-18 for upstream
-`2c416e5` and `97f6746`, which close three of the four step-5 relation defects.
-Earlier revisions tracked `f51b9eb` and `1280a96`. Replaces zkdcap's deleted
+**Boundary version: 1.3.0.** Written 2026-08-17, revised 2026-08-18 for upstream
+`e7002e4`, which completes all four step-5 relation defects and adds a live
+scratch registration. Earlier revisions tracked `f51b9eb`, `1280a96`, `2c416e5`
+and `97f6746`. Replaces zkdcap's deleted
 `.colosseum/boundaries/zkdcap--quartz.md` (v0.3.2), which pinned an intent
 lineage that no longer exists. The upstream copy and the upstream
 compose-ledger were both removed when the v0.4.0 through v0.8.10 intent lineage
@@ -21,14 +22,14 @@ transition around it. zkdcap (supplier) owns the relation and the key.
 
 | Pin | Value | Source |
 |---|---|---|
-| zkdcap revision evaluated | `97f6746` (2026-08-18) | `zkdcap` git HEAD |
+| zkdcap revision evaluated | `e7002e4` (2026-08-18) | `zkdcap` git HEAD |
 | Quartz revision evaluated | `9172b74` plus this working tree | this tree |
 | Upstream intent | `.colosseum/intent.md` v1.0.4-draft | states "authorizes no release" |
 | Upstream canonical plan | `.colosseum/panels/2026-08-13T00-37-17-project-plan/final.md` | panel-synthesized, Path A |
 | Consumed relation | monolithic `circuits/dcap-noir/crates/dcap` | `main.nr:135` returns `[Field; 21]` |
 | Consumed statement | 21 fields, 672 bytes, 31-byte big-endian packing | `crates/zkdcap/src/layout.rs:36-38` |
 | Release scope id | `zkdcap-tdx-v4-tdreport10-21` | `zkdcap/README.md:98`, `main.nr:3` |
-| Canonical claim text | upstream README scope section + circuit header | `1280a96`, gaps list since narrowed by `97f6746` |
+| Canonical claim text | upstream README scope section + circuit header | `1280a96`; its gap list is now empty, see section 3 |
 | Consumer requirements | nine, upstream README "Consumer requirements" | mapped in `crates/contracts/core/README.md` |
 | Verification key | **none registrable yet** | see section 4 |
 
@@ -55,17 +56,23 @@ Consequences Quartz can rely on:
 
 Consequences Quartz must absorb:
 
-- **The vkey has changed three times in five days and changes at least once
-  more.** The capacity resize (`aa8b2f9`, `TCB_INFO_CAP` 3,072 to 16,384), the
-  header assertions plus component skip (`2c416e5`), and the ordering asserts
-  (`97f6746`) each changed the ACIR and therefore the key; TDX-module appraisal
-  is still to come. Nothing Quartz pins should be derived from this tree until
-  step 11 registers a key on-chain, which is why section 4 admits only a
-  chain-read digest.
+- **The vkey changed four times in five days.** Capacity resize (`aa8b2f9`),
+  header assertions plus component skip (`2c416e5`), ordering asserts
+  (`97f6746`), module appraisal (`e7002e4`, ACIR 41.8 MB to 56.4 MB). Each
+  changed the ACIR and therefore the key, while the proof stayed 16,000 bytes and
+  the statement stayed 21 fields, so nothing downstream shifted. Nothing Quartz
+  pins should be derived from this tree; section 4 admits only a chain-read
+  digest from the production registration.
+- **The prover is pinned backward to the chain's verifier, not forward.**
+  `release_build.sh` builds with nargo 1.0.0-beta.19 and bb 4.0.4 because the
+  chain runs `burnt-labs/barretenberg-go` at aztec_tag v4.0.4 (xiond 29.x/30.x).
+  This retires the plan's top risk, that the chain would reject bb 5.0.0-era
+  bytes: the build targets what the chain runs, and the live scratch verify
+  confirms the format is accepted.
 - **`dcap-ultrahonk-v1` is legacy.** Plan step 11 forbids reusing that name or
   id. Quartz points at a new versioned name after step 11 registers it.
 
-## 3. Present supplier guarantee (21-field relation, as of `97f6746`)
+## 3. Present supplier guarantee (21-field relation, as of `e7002e4`)
 
 What a verified receipt establishes:
 
@@ -91,14 +98,23 @@ What a verified receipt establishes:
   thing on both sides. Verified against all 44 platform levels across the 16
   captured FMSPCs before asserting: zero violations, so the assert cannot reject
   a platform that works today.
+- **New in `8b33992`, `eabe577` and `e7002e4`:** TDX module identity is
+  appraised. A nonzero `tee_tcb_svn[1]` selects identity `TDX_` plus its
+  uppercase hex, first match wins, the level is the first with
+  `module_isvsvn >= level.isvsvn`, and a missing identity or level rejects.
+  MRSIGNERSEAM and SEAMATTRIBUTES are bound against the selected identity from
+  the ISV-signed span. The module status converges into the verdict in QVL's
+  order, platform with module first and then with QE, including the
+  fall-through that leaves an already-worse platform status unchanged rather
+  than taking the worse of the two. Every proof before this omitted a check that
+  applied, since both real captures carry `tee_tcb_svn[1] == 1`; both still
+  publish `UpToDate`, so what it closes was a latent over-favourable path.
 
-What it does **not** establish today, and which Quartz therefore must not claim:
+What it does **not** establish, and which Quartz therefore must not claim. All
+four of step 5's implementation defects are now closed, so every item below is
+inherent to DCAP or to this ABI and no implementation work removes it:
 
-1. **No TDX-module appraisal.** `tdxModuleIdentities` is still not parsed, so
-   the merged status carries no module-level verdict of its own and the module
-   table's canonical ordering is unasserted. This is the last of step 5's four
-   defects; the other three closed in `2c416e5` and `97f6746`.
-2. **PCK identity is by key, not by bytes.** The quote's embedded certification
+1. **PCK identity is by key, not by bytes.** The quote's embedded certification
    data sits outside the signed body and is private to the prover. The relation
    proves non-revocation of a supplied Intel-issued certificate whose key
    verifies the QE report. It does **not** prove byte identity with the
@@ -106,29 +122,31 @@ What it does **not** establish today, and which Quartz therefore must not claim:
    claim rather than closing it, and retains dissent on that call. A consumer
    that treats the published serial as necessarily belonging to the quote's own
    chain exceeds the verified relation.
-3. **No freshness.** The receipt carries no trusted clock. Freshness is
+2. **No freshness.** The receipt carries no trusted clock. Freshness is
    entirely Quartz's decision against `[valid_from, valid_until]` and chain
    time.
-4. **No advisory data.** The 21-field statement exposes no advisory IDs, which
+3. **No advisory data.** The 21-field statement exposes no advisory IDs, which
    is why `max_tcb_status` is a product risk decision rather than a formality.
-5. **Merged status only.** Per-component platform, module and QE statuses are
-   not published separately, so `max_tcb_status` is the only status lever.
-6. **A clean CRL result is not Intel's verdict.** Use of Intel's newest CRL is
+4. **Merged status only.** Per-component platform, module and QE statuses are
+   not published separately. The merged value is now module-aware, but a
+   consumer still cannot tell which component drove it, so `max_tcb_status` is
+   the only status lever.
+5. **A clean CRL result is not Intel's verdict.** Use of Intel's newest CRL is
    not proven and `crlNumber` monotonicity is not published. Intel states it
    "does not usually revoke platforms running software and firmware not
    mitigated against disclosed vulnerabilities" and signals TCB currency
    through status and evaluation numbers instead, so the recency floors and the
    status ceiling carry that judgement, not the revocation result. Upstream's
    source-cited basis: `zkdcap/.colosseum/research/intel-pck-revocation-scope-2026-08-13.md`.
-7. **`Revoked` never receipts.** It is rejected in-circuit, so Quartz cannot
+6. **`Revoked` never receipts.** It is rejected in-circuit, so Quartz cannot
    distinguish a revoked platform from a failure to attest, and
    `verify_quote_parts`'s status ceiling only ever sees severities 0 through 5.
    Any successor relation that publishes `Revoked` instead of rejecting it
    invalidates that assumption and its comment in `crates/zkdcap/src/verifier.rs`.
 
-Item 1 is the one remaining current implementation gap; the rest are inherent
-and no implementation work removes them. Upstream deliberately separates the two
-on all three claim surfaces, and Quartz's copies do the same.
+Upstream deliberately separates inherent limits from implementation gaps on all
+three claim surfaces. The gap list is now empty; Quartz's copies say so rather
+than keeping stale disclaimers.
 
 ## 4. Key and registration state
 
@@ -149,29 +167,71 @@ Quartz keeps the digest mandatory. The handler fails closed when `zkdcap_vkey`
 is configured and `expected_zkdcap_vkey_sha256` is absent, and the Xion backend
 rejects a missing or mismatched digest echo.
 
-**Do not pin from a commit message or a build artifact.** As of `97f6746` this
-tree can produce three different 32-byte values that all look like the pin:
-`1135db10af0fa91f4cd1b2d1f892855df8a2e290172da6a93985b4452b4f684a`, recorded in
-`2c416e5`'s message and already superseded by the next commit's circuit change;
-`5ebac8eb1c6a486bff7de5270f6e4677bc6e00b37a3e6e38e1558c6c759e34a4`, the SHA-256
-of the stale `circuits/dcap-noir/target/dcap_full.vk` left over from a 2026-08-13
-build, five days older than the current source; and the native `vk_hash` in the
-sibling `.vk_hash` file, which is a different kind of object entirely. The only
-admissible pin is the digest of the bytes actually registered on the target
-chain, read back from the chain after step 11's registration.
+**A scratch key now exists, and it still is not Quartz's pin.** `e7002e4`
+records vkey `a9a9b7c7f4bf555623adeeabb1ace8c0becc1715a50ee53ed78fb710ddb8dbc6`
+registered as scratch on `xion-testnet-2` and verified through live `x/zk` with
+`{"verified":true}`. That is real evidence for one thing only: the chain's
+verifier accepts this proof format, this vkey encoding, and 672-byte public
+inputs. It is a scratch name, not the versioned production registration, and the
+machine-checked record for that build
+(`circuits/dcap-noir/target/release-2026-08-18T10-05-06Z/release-record.json`)
+still says `"chain_verified": "not-attempted"`, so the verify was a side channel
+the record did not capture. Prefer the record over the prose when they disagree.
+
+**Do not pin from a commit message or a build artifact.** As of `e7002e4` this
+tree offers five different 32-byte values that all look like the pin:
+`a9a9b7c7…` (current `vk_sha256`, prose-verified on chain as scratch);
+`17aa121b1a7439a078b9fe75390859ffcda48dedd95d0878c4e8a035cf871cc6` (the same
+build's `bb_vk_hash`, a different kind of object, which `release_build.sh:256-257`
+labels "what bb reports" against "what Quartz pins");
+`1135db10af0fa91f4cd1b2d1f892855df8a2e290172da6a93985b4452b4f684a` (`2c416e5`'s
+message, superseded by the next commit); `774ae43ce498…` (the pre-hardening key,
+the only one with `chain_verified: true` in a record, now three circuit changes
+stale); and `5ebac8eb1c6a486bff7de5270f6e4677bc6e00b37a3e6e38e1558c6c759e34a4`
+(SHA-256 of the stale `target/dcap_full.vk` from a 2026-08-13 build). The only
+admissible pin is the digest of the bytes registered under the production name,
+read back from the chain.
+
+**The chain-side prerequisite is unmerged, so Quartz cannot use any pin yet.**
+Quartz sends `expected_vkey_sha256` and requires the response to echo
+`vkey_sha256`, failing closed otherwise. In the local `xion` checkout that
+binding exists only on branch `zk-ultrahonk-vkey-hash` (`e14a4ba`, 2026-07-17),
+contained in no tag and no other branch; the newest tag is `v30.0.0`, and
+`xiond` 29.0.0's `query zk verify-ultrahonk` has no digest flag at all. The
+upstream scratch verify used `--vkey-name` only, so it does not exercise or
+demonstrate the digest path. Until that branch merges, releases, and the target
+network upgrades, a Quartz non-mock attestation cannot succeed live no matter
+which digest is configured. The alternative, relaxing the pin to name-only
+resolution, is a downgrade the boundary does not permit: an Xion server that
+ignores the request field must fail closed, which is exactly what
+`XionUltraHonkBackend` enforces.
 
 ## 5. Obligations by side
 
 Supplier (zkdcap), plan steps 1 through 6 and 9 through 11:
 
-- deterministic current-tool release runner and drift gate;
-- capacity vector that fits live Intel collateral, with boundary pairs;
-- quote-header assertions and TDX-module appraisal (step 5, vkey-changing);
-- dual-oracle differential corpus with a real rejection set;
-- content-addressed release bundle binding source, tools, ACIR, vkey bytes,
-  raw-vkey SHA-256, field count, capacity vector and scope id;
-- scratch-then-production key registration on the target chain, never reusing
-  the legacy name or id.
+- **[DONE]** deterministic release runner, drift gate, and a toolchain pinned to
+  the chain's verifier rather than to the newest local tools;
+- **[DONE]** capacity vector that fits live Intel collateral, with boundary
+  pairs;
+- **[DONE `e7002e4`]** all four step-5 relation defects: header profile,
+  component skip, table ordering, module appraisal with convergence;
+- **[DONE, scratch only]** registration compatibility: the current key verified
+  live on `xion-testnet-2` by name. Production registration under the versioned
+  name is still ahead, and section 4 records why the recorded evidence is weaker
+  than the commit prose;
+- **[OPEN]** dual-oracle differential corpus with a real rejection set (step 6);
+- **[OPEN]** content-addressed release bundle binding source, tools, ACIR, vkey
+  bytes, raw-vkey SHA-256, field count, capacity vector and scope id (step 9),
+  and the release-day live proof (step 10);
+- **[OPEN]** production key registration, never reusing the legacy name or id
+  (step 11).
+
+Third party (Xion chain), not tracked by the plan:
+
+- **[OPEN, blocks Quartz]** merge and release the `expected_vkey_sha256` /
+  `vkey_sha256` binding, then upgrade the target network. Section 4 has the
+  evidence. Nothing on either side of this boundary can substitute for it.
 
 Customer (Quartz), plan steps 7, 8, 12 and 13:
 
@@ -197,14 +257,17 @@ Customer (Quartz), plan steps 7, 8, 12 and 13:
   and nonce, `SessionSetPubKey` covers only nonce and public key, and neither
   carries a chain id, action tag, or version. Closing it changes the attested
   message envelope, so it is a wire-format decision, not a policy toggle;
-- **[DONE 2026-08-18, partial]** the quote-profile and selection-conformance
-  gaps left section 3 as `2c416e5` and `97f6746` landed; the crate docs in
-  `crates/zkdcap/src/lib.rs` now name only TDX-module appraisal and record what
-  closed. One more pass is due when that last defect lands, at which point the
-  gap section disappears rather than becoming a permanent disclaimer;
-- **[OPEN, blocked on step 11]** re-pin the vkey name and 32-byte digest, seed
-  per-FMSPC TCB floors and the QE floor from the exact release-day signed
-  collateral, then rehearse on a disposable instance before activation.
+- **[DONE 2026-08-18]** claim surfaces track the relation. All four step-5
+  defects closed across `2c416e5`, `97f6746` and `e7002e4`, so
+  `crates/zkdcap/src/lib.rs` now states that the gap list is empty, lists what
+  closed with commits, and tells callers who disclaimed the missing module
+  appraisal to drop that disclaimer. Section 3's remaining items are inherent
+  only;
+- **[OPEN, blocked on step 11 and on the Xion merge]** re-pin the vkey name and
+  32-byte digest, seed per-FMSPC TCB floors and the QE floor from the exact
+  release-day signed collateral, then rehearse on a disposable instance before
+  activation. Blocked twice over: no production key exists, and the chain cannot
+  honour a digest pin yet.
 
 The Lean surface (`proofs/lean/Specs/Quartz/Attestation/Zkdcap.lean`) models the
 verifier abstractly and asserts nothing section 3 denies, but its header did
@@ -222,7 +285,6 @@ outlived their document. Recoverable at
 `docs/spec/` chapters; the durable answers below come from the upstream README
 and the panel record. Both scrap archives are untracked in zkdcap, so treat the
 quoted material here as the durable copy, not the tarballs.
-
 1. **Open.** Will Quartz support a mutable set of `(profile id, vkey hash,
    schema)` bindings, or does every successor profile require re-instantiation
    or migration? v1 publishes no profile id at all, so today the question
@@ -248,11 +310,14 @@ migration versus new instance.
 Re-read this boundary and re-run the affected gates when any of these move:
 
 - the field count or byte length of the consumed statement;
-- the set of in-circuit assertions listed in section 3, since each one Quartz
-  currently compensates for or disclaims;
+- the set of in-circuit assertions listed in section 3, since Quartz's claim text
+  mirrors it and callers disclaim against it;
 - the registered vkey name, id, or digest;
 - the capacity vector, since a capacity change is a vkey change;
-- upstream's choice of Path A, which would reopen the decoder question.
+- upstream's choice of Path A, which would reopen the decoder question;
+- the target chain's `x/zk` gaining the `expected_vkey_sha256` request field and
+  the `vkey_sha256` response echo, which is what currently blocks any live
+  non-mock attestation.
 
 ## 8. Identifiers the Quartz tree cites
 

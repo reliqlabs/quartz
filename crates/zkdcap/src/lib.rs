@@ -63,23 +63,32 @@
 //! A `Revoked` converged status never receipts, so a caller cannot distinguish a
 //! revoked platform from a failure to attest.
 //!
-//! # Current implementation gaps, distinct from the limits above
+//! # Relation hardening, distinct from the limits above
 //!
-//! The limits above are inherent. These are not, and are scheduled to close
-//! before a production vkey is registered. As of zkdcap `97f6746` one remains:
-//! **TDX module identity is not appraised**, so the merged status carries no
-//! module-level verdict of its own and the module table's canonical ordering is
-//! unasserted. A consumer cannot compensate, because it concerns bytes the
-//! consumer never sees, so until it lands no registered vkey should be treated
-//! as production.
+//! The limits above are inherent. The relation also had four defects that were
+//! not, and as of zkdcap `e7002e4` all four are closed:
 //!
-//! Closed since the scope text was written, all in one vkey-changing batch: the
-//! signed quote header's version, attestation-key type, TEE type, reserved
-//! fields and Intel QE vendor ID are now asserted against the ISV-signed span
-//! (`2c416e5`); Intel's TDX component skip at `tee_tcb_svn[1] != 0` is applied,
-//! so selection matches Intel QVL rather than dcap-qvl on the live path
-//! (`2c416e5`); and the signed platform and QE tables must be strictly
-//! descending under QVL's comparator (`97f6746`).
+//! - the signed quote header's version, attestation-key type, TEE type,
+//!   reserved fields and Intel QE vendor ID are asserted against the ISV-signed
+//!   span, before body parsing (`2c416e5`);
+//! - Intel's TDX component skip at `tee_tcb_svn[1] != 0` is applied, so level
+//!   selection matches Intel QVL rather than dcap-qvl on the live path
+//!   (`2c416e5`);
+//! - the signed platform and QE tables must be strictly descending under QVL's
+//!   comparator, so "first satisfiable" means the same on both sides
+//!   (`97f6746`);
+//! - TDX module identity is appraised and converged into the published verdict
+//!   in QVL's order, platform with module first and then with QE, with
+//!   MRSIGNERSEAM and SEAMATTRIBUTES bound against the selected identity out of
+//!   the ISV-signed span (`8b33992`, `eabe577`, `e7002e4`).
+//!
+//! [`extract_tcb_status`] is therefore now a module-aware verdict. Callers that
+//! disclaimed the missing module appraisal should drop that disclaimer.
+//!
+//! This does not make a key production-ready: the differential corpus, the
+//! content-addressed release bundle, the release-day live proof, and the
+//! production registration are all still ahead. See
+//! `.colosseum/boundaries/zkdcap--quartz.md`.
 //!
 //! Separately, quote v5 and body types other than `TDREPORT10` are rejected.
 //! That matches this scope id, but the body version is chosen by the TD Quoting
