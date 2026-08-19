@@ -51,8 +51,9 @@ the shared `quartz-zkdcap` crate so the proof checks live in one place.
   `zkdcap-tdx-v4-tdreport10-21`, what a verified proof establishes, the inherent
   limits (which PCK certificate, no hardware clock, revocation is narrower than
   Intel's verdict, no advisories, merged status only), and separately the
-  relation's current implementation gaps. `quartz-contract-core`'s README maps
-  zkdcap's nine consumer requirements onto this crate.
+  relation hardening, whose four defects are all closed as of zkdcap `e7002e4`.
+  `quartz-contract-core`'s README maps zkdcap's nine consumer requirements onto
+  this crate.
 - Verus prototype + Quint spec were updated to the initial UltraHonk proof shape.
 
 ### Remaining policy work
