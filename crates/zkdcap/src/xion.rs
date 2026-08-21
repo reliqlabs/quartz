@@ -214,3 +214,65 @@ mod tests {
         assert!(!accepted);
     }
 }
+
+#[cfg(test)]
+mod live_chain_schema {
+    use super::*;
+
+    /// The deployed xion-testnet-2 (app_version 30.0.0) `ProofVerifyResponse`
+    /// carries ONLY `verified` (tag 1). A successful verify is the two bytes
+    /// `08 01`. Decoding that with our response type leaves `vkey_sha256`
+    /// empty, so the digest comparison in `verify` can never hold and the
+    /// backend rejects every proof the chain accepts.
+    ///
+    /// This is fail-closed, not exploitable, but it is a total liveness
+    /// failure against every Xion release that exists today: v30.0.0's
+    /// `QueryVerifyUltraHonkRequest` has no tag 5 and its response has no
+    /// tag 2. Verified live on 2026-08-20 against vkey id 26
+    /// (`zkdcap-tdx-v4-tdreport10-21-rehearsal-e7002e4`), which returns
+    /// `{"verified":true}` for a proof this backend would reject.
+    ///
+    /// When Xion ships verify-by-hash, this test flips and is the signal to
+    /// re-enable the echo comparison.
+    #[test]
+    fn live_chain_response_defeats_the_digest_echo() {
+        let expected = [0xa9u8; 32];
+        let on_the_wire = [0x08u8, 0x01u8]; // verified = true, nothing else
+
+        let decoded = ProofVerifyUltraHonkResponse::decode(on_the_wire.as_slice()).unwrap();
+        assert!(decoded.verified, "chain said verified");
+        assert!(
+            decoded.vkey_sha256.is_empty(),
+            "v30.0.0 omits response tag 2"
+        );
+
+        // This is the exact conjunction `verify` evaluates.
+        let accepted = decoded.verified && decoded.vkey_sha256.as_slice() == expected.as_slice();
+        assert!(
+            !accepted,
+            "backend must fail closed when the chain omits the digest echo"
+        );
+    }
+
+    /// Request tag 5 is encoded and sent, but no deployed Xion release has a
+    /// field there, so a conformant server ignores it as an unknown field. The
+    /// pin never reaches the chain; it is only ever checked against an echo
+    /// that does not come back.
+    #[test]
+    fn request_carries_a_pin_no_deployed_server_reads() {
+        let req = QueryVerifyUltraHonkRequest {
+            proof: vec![1, 2, 3],
+            public_inputs: vec![4, 5, 6],
+            vkey_name: "zkdcap-tdx-v4-tdreport10-21-rehearsal-e7002e4".to_string(),
+            vkey_id: 0,
+            expected_vkey_sha256: vec![0xa9; 32],
+        };
+        let mut buf = Vec::new();
+        req.encode(&mut buf).unwrap();
+        // field 5, wire type 2 => key byte 0x2a, then length 32.
+        assert!(
+            buf.windows(2).any(|w| w == [0x2a, 0x20]),
+            "tag 5 is on the wire"
+        );
+    }
+}

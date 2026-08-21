@@ -39,5 +39,12 @@ prost = { workspace = true, optional = true, features = ["derive"] }
 [dev-dependencies]
 serde_json.workspace = true
 
+# Needs a ProofBackend to stand in for the chain query, so it only builds with
+# the dev-only accepting backend. Without this gate `cargo check --all-targets`
+# on default features fails to resolve AcceptingBackend.
+[[example]]
+name = "rehearsal_decode"
+required-features = ["accepting"]
+
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(kani_slow)'] }
