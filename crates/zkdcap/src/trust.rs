@@ -27,7 +27,14 @@ use crate::Hash32;
 /// Ordered strongest to weakest. See the module docs for why the weakest is
 /// sometimes the right choice, and [`VkeyTrust::is_enforceable_today`] for
 /// which are reachable from a CosmWasm contract against a given chain.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Serializable so a consumer may store the selection and its pin as ONE field,
+/// which is the shape that cannot disagree with itself. `quartz-contract-core`
+/// instead splits mode from pin, because its `Config` is already deployed with a
+/// standalone digest field and absent-field-means-`Bytes` is what keeps that
+/// state readable; a consumer without that constraint should prefer this type
+/// directly.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum VkeyTrust {
     /// Accept only this exact key material, identified by SHA-256 over the
     /// registry's stored bytes.
