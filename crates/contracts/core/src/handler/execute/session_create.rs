@@ -82,7 +82,11 @@ mod tests {
 
         // The original session (nonce 7) is untouched by the rejected create.
         let session = SESSION.load(&deps.storage).unwrap();
-        assert_eq!(session.nonce(), [7u8; 32], "session must not be overwritten");
+        assert_eq!(
+            session.nonce(),
+            [7u8; 32],
+            "session must not be overwritten"
+        );
     }
 
     /// A contract-address mismatch on the first create still fails closed and

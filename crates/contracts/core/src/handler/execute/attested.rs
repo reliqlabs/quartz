@@ -1,5 +1,7 @@
 use cosmwasm_std::{DepsMut, Env, MessageInfo, Response};
 
+#[cfg(not(feature = "mock"))]
+use crate::state::TCB_FLOORS;
 use crate::{
     error::Error,
     handler::Handler,
@@ -9,8 +11,6 @@ use crate::{
     },
     state::CONFIG,
 };
-#[cfg(not(feature = "mock"))]
-use crate::state::TCB_FLOORS;
 
 // ── DstackZkAttestation binding check (Round D Critical 4 production hook) ─────
 //
@@ -239,23 +239,17 @@ impl Handler for DstackZkAttestation {
                     .to_string(),
             ));
         };
-        let Some(expected_vkey_sha256) = config.expected_zkdcap_vkey_sha256() else {
-            return Err(Error::ZkdcapVerificationFailed(
-                "no expected_zkdcap_vkey_sha256 configured: refusing mutable-name-only verification"
-                    .to_string(),
-            ));
-        };
-        let expected_vkey_sha256: [u8; 32] = expected_vkey_sha256.try_into().map_err(|_| {
-            Error::ZkdcapVerificationFailed(
-                "expected_zkdcap_vkey_sha256 must be exactly 32 bytes".to_string(),
-            )
-        })?;
+        // The identity model is the deployment's call, not this handler's. A
+        // mode whose pin is missing is a configuration error and fails closed
+        // here rather than degrading to a weaker check the operator did not ask
+        // for. `NameOnly` checks nothing by design: it is only sound when the
+        // registry authority for that key is known and trusted, which is a
+        // deploy-time judgement recorded in config.
+        let trust = config
+            .vkey_trust()
+            .map_err(|e| Error::ZkdcapVerificationFailed(e.to_string()))?;
 
-        let backend = XionUltraHonkBackend::by_name(
-            deps.querier,
-            vkey_name.to_string(),
-            expected_vkey_sha256,
-        );
+        let backend = XionUltraHonkBackend::by_name(deps.querier, vkey_name.to_string(), trust);
         let now_packed = unix_to_packed_datetime(env.block.time.seconds());
 
         // O3: select the TCB-Info floor by the proof-bound FMSPC. A per-FMSPC
@@ -420,8 +414,9 @@ impl<T> Handler for Noop<T> {
 #[cfg(all(test, not(feature = "mock")))]
 mod tests {
     #![allow(clippy::unwrap_used)]
-    use super::*;
     use quartz_zkdcap::{DecodedQuote, MEASUREMENT_REGS};
+
+    use super::*;
 
     fn decoded_with(report_data: [u8; 64], rtmr3: [u8; 48]) -> DecodedQuote {
         let mut measurements = [[0u8; 48]; MEASUREMENT_REGS];
@@ -635,8 +630,9 @@ mod tests {
     // fields).
     #[test]
     fn zk_handler_no_vkey_fails_closed() {
-        use crate::state::{Config, LightClientOpts, RawConfig, CONFIG};
         use cosmwasm_std::testing::{message_info, mock_dependencies, mock_env};
+
+        use crate::state::{Config, LightClientOpts, RawConfig, CONFIG};
 
         let mut deps = mock_dependencies();
         let env = mock_env();

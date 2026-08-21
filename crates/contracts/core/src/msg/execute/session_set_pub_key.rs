@@ -110,8 +110,7 @@ mod verification {
         let pub_key = vec![0x04u8; 33];
         let original = SessionSetPubKey::new(nonce, pub_key.clone());
         let raw: RawSessionSetPubKey = original.clone().into();
-        let back = SessionSetPubKey::try_from(raw)
-            .expect("32-byte nonce roundtrips");
+        let back = SessionSetPubKey::try_from(raw).expect("32-byte nonce roundtrips");
         let (n, p) = back.into_tuple();
         assert_eq!(n, nonce, "nonce must survive roundtrip");
         assert_eq!(p, pub_key, "pub_key bytes must survive roundtrip");

@@ -54,7 +54,7 @@ const F_QE_EVAL: usize = 18;
 const F_VALID_FROM: usize = 19;
 const F_VALID_UNTIL: usize = 20;
 
-fn sha256(bytes: &[u8]) -> Hash32 {
+pub(crate) fn sha256(bytes: &[u8]) -> Hash32 {
     let mut h = Sha256::new();
     h.update(bytes);
     h.finalize().into()

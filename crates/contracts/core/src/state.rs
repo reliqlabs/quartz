@@ -1,6 +1,7 @@
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Addr, HexBinary, StdError, Uint64};
 use cw_storage_plus::{Item, Map};
+use quartz_zkdcap::VkeyTrust;
 use serde::{Deserialize, Serialize};
 
 pub type MrEnclave = [u8; 32];
@@ -57,6 +58,30 @@ pub const SEQUENCE_NUM: Item<Uint64> = Item::new(SEQUENCE_NUM_KEY);
 pub const TCB_FLOORS_KEY: &str = "quartz_tcb_floors";
 pub const TCB_FLOORS: Map<&[u8], u64> = Map::new(TCB_FLOORS_KEY);
 
+/// Which identity claim a deployment requires about the verification key that
+/// answered, selected at instantiate time.
+///
+/// Separate from [`quartz_zkdcap::VkeyTrust`] because the pins themselves live
+/// in dedicated `Config` fields: keeping the digest in
+/// `expected_zkdcap_vkey_sha256` means state written before this enum existed
+/// still deserializes, with `Bytes` as the default, preserving the earlier
+/// hard-coded behaviour byte for byte.
+#[cw_serde]
+#[derive(Copy, Default, Eq)]
+pub enum VkeyTrustMode {
+    /// Require the exact reviewed key material. Needs
+    /// `expected_zkdcap_vkey_sha256`.
+    #[default]
+    Bytes,
+    /// Require the registry record's authority to equal
+    /// `expected_vkey_authority`. Suits a governance-owned key, and survives
+    /// legitimate rotations without a config change.
+    Authority,
+    /// Require nothing beyond name or id resolution. Sound only to the degree
+    /// the registry authority is trusted; that trust is not checked here.
+    NameOnly,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Config {
     mr_enclave: MrEnclave,
@@ -73,10 +98,30 @@ pub struct Config {
     /// `/xion.zk.v1.Query/ProofVerifyUltraHonk` directly.
     zkdcap_vkey: Option<String>,
     /// SHA-256 digest of the exact Xion-stored verification-key bytes named by
-    /// `zkdcap_vkey`. Required at verification time whenever `zkdcap_vkey` is
-    /// set; legacy configs deserialize as `None` but attestations fail closed.
+    /// `zkdcap_vkey`. Carries the pin for `VkeyTrust::Bytes`, which is the
+    /// default and the strongest model. Legacy configs deserialize as `None`.
     #[serde(default)]
     expected_zkdcap_vkey_sha256: Option<[u8; 32]>,
+    /// What this deployment requires about the IDENTITY of the key that
+    /// answered, as opposed to the validity of the proof.
+    ///
+    /// Secure-by-default: absent state deserializes to `Bytes`, which needs
+    /// `expected_zkdcap_vkey_sha256` set and fails closed without it, matching
+    /// the previous hard-coded behaviour exactly. Relaxing it is a conscious
+    /// deployment act, in the same spirit as `allow_any_image`.
+    ///
+    /// Choose deliberately. `AddVKey` is permissionless and stores the caller
+    /// as the key's authority, so whether a name or id is trustworthy depends
+    /// on that specific key's registration: a governance-owned key changes only
+    /// by proposal, while an owner-registered one changes at its owner's whim.
+    #[serde(default)]
+    vkey_trust: VkeyTrustMode,
+    /// Expected `authority` on the x/zk registry record, for
+    /// `VkeyTrustMode::Authority`. Typically the governance module address, in
+    /// which case a key change requires a passed proposal. Unused by the other
+    /// modes.
+    #[serde(default)]
+    expected_vkey_authority: Option<String>,
     /// Per-register TDX measurement pins for the image binding. Each register
     /// that is `Some` is ENFORCED (the proof's decoded value must equal it);
     /// `None` is SKIPPED. dstack mapping (see attestation.md): MRTD = virtual
@@ -147,6 +192,8 @@ impl Config {
             light_client_opts,
             zkdcap_vkey,
             expected_zkdcap_vkey_sha256: None,
+            vkey_trust: VkeyTrustMode::default(),
+            expected_vkey_authority: None,
             expected_mrtd: None,
             expected_rtmr0: None,
             expected_rtmr1: None,
@@ -156,7 +203,7 @@ impl Config {
             allow_any_image: false,
             min_tcb_eval_num: 0,
             min_qe_eval_num: 0,
-            max_tcb_status: 0, // UP_TO_DATE only (secure-by-default)
+            max_tcb_status: 0,               // UP_TO_DATE only (secure-by-default)
             require_registered_fmspc: false, // legacy global-default policy
             admin: None,
         }
@@ -276,6 +323,54 @@ impl Config {
         self.expected_zkdcap_vkey_sha256.as_ref()
     }
 
+    pub fn vkey_trust_mode(&self) -> VkeyTrustMode {
+        self.vkey_trust
+    }
+
+    pub fn expected_vkey_authority(&self) -> Option<&str> {
+        self.expected_vkey_authority.as_deref()
+    }
+
+    /// Assemble the trust model the backend should enforce, or `Err` naming the
+    /// missing pin.
+    ///
+    /// The error case is the one that matters: a mode whose pin is absent must
+    /// NOT silently degrade to a weaker check, because the deployment asked for
+    /// something the contract would then not be doing. Callers surface this as
+    /// a verification failure.
+    pub fn vkey_trust(&self) -> Result<VkeyTrust, &'static str> {
+        match self.vkey_trust {
+            VkeyTrustMode::Bytes => self
+                .expected_zkdcap_vkey_sha256
+                .map(VkeyTrust::Bytes)
+                .ok_or("vkey_trust is `bytes` but expected_zkdcap_vkey_sha256 is unset"),
+            VkeyTrustMode::Authority => self
+                .expected_vkey_authority
+                .clone()
+                .map(VkeyTrust::Authority)
+                .ok_or("vkey_trust is `authority` but expected_vkey_authority is unset"),
+            VkeyTrustMode::NameOnly => Ok(VkeyTrust::NameOnly),
+        }
+    }
+
+    /// Builder: require the registry record's authority rather than exact key
+    /// bytes. Sets the mode and its pin together so they cannot disagree.
+    pub fn with_expected_vkey_authority(mut self, authority: String) -> Self {
+        self.vkey_trust = VkeyTrustMode::Authority;
+        self.expected_vkey_authority = Some(authority);
+        self
+    }
+
+    /// Builder: accept whatever the configured name or id resolves to.
+    ///
+    /// This checks NOTHING about key identity. Only appropriate when the
+    /// registry authority for that key is known and trusted, e.g. a
+    /// governance-owned key. Named verbosely on purpose.
+    pub fn with_unchecked_vkey_name_only(mut self) -> Self {
+        self.vkey_trust = VkeyTrustMode::NameOnly;
+        self
+    }
+
     pub fn expected_mrtd(&self) -> Option<&[u8; 48]> {
         self.expected_mrtd.as_ref()
     }
@@ -329,6 +424,14 @@ pub struct RawConfig {
     /// attestation when `zkdcap_vkey` is configured.
     #[serde(default)]
     expected_zkdcap_vkey_sha256: Option<HexBinary>,
+    /// Identity model for the verification key. Omitted means `bytes`, which
+    /// preserves the earlier hard-coded behaviour.
+    #[serde(default)]
+    vkey_trust: VkeyTrustMode,
+    /// Expected registry `authority`, required when `vkey_trust` is
+    /// `authority`.
+    #[serde(default)]
+    expected_vkey_authority: Option<String>,
     /// Hex-encoded 48-byte expected TDX measurement registers. See `Config`.
     #[serde(default)]
     expected_mrtd: Option<HexBinary>,
@@ -393,6 +496,41 @@ impl RawConfig {
         self.expected_zkdcap_vkey_sha256
             .as_ref()
             .map(HexBinary::as_slice)
+    }
+
+    pub fn vkey_trust_mode(&self) -> VkeyTrustMode {
+        self.vkey_trust
+    }
+
+    pub fn expected_vkey_authority(&self) -> Option<&str> {
+        self.expected_vkey_authority.as_deref()
+    }
+
+    /// Assemble the trust model to enforce, or `Err` naming what is missing or
+    /// malformed. See [`Config::vkey_trust`]: a mode without its pin must fail
+    /// closed rather than degrade to a weaker check.
+    pub fn vkey_trust(&self) -> Result<VkeyTrust, String> {
+        match self.vkey_trust {
+            VkeyTrustMode::Bytes => {
+                let raw = self
+                    .expected_zkdcap_vkey_sha256
+                    .as_ref()
+                    .ok_or("vkey_trust is `bytes` but expected_zkdcap_vkey_sha256 is unset")?;
+                let digest: [u8; 32] = raw
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| "expected_zkdcap_vkey_sha256 must be exactly 32 bytes")?;
+                Ok(VkeyTrust::Bytes(digest))
+            }
+            VkeyTrustMode::Authority => self
+                .expected_vkey_authority
+                .clone()
+                .map(VkeyTrust::Authority)
+                .ok_or_else(|| {
+                    "vkey_trust is `authority` but expected_vkey_authority is unset".to_string()
+                }),
+            VkeyTrustMode::NameOnly => Ok(VkeyTrust::NameOnly),
+        }
     }
 
     pub fn expected_mrtd(&self) -> Option<&[u8]> {
@@ -497,6 +635,8 @@ impl TryFrom<RawConfig> for Config {
             zkdcap_vkey: value.zkdcap_vkey,
             admin: value.admin.map(Addr::unchecked),
             expected_zkdcap_vkey_sha256,
+            vkey_trust: value.vkey_trust,
+            expected_vkey_authority: value.expected_vkey_authority,
             expected_mrtd: reg(value.expected_mrtd, "expected_mrtd")?,
             expected_rtmr0: reg(value.expected_rtmr0, "expected_rtmr0")?,
             expected_rtmr1: reg(value.expected_rtmr1, "expected_rtmr1")?,
@@ -520,6 +660,8 @@ impl From<Config> for RawConfig {
             zkdcap_vkey: value.zkdcap_vkey,
             admin: value.admin.map(String::from),
             expected_zkdcap_vkey_sha256: value.expected_zkdcap_vkey_sha256.map(HexBinary::from),
+            vkey_trust: value.vkey_trust,
+            expected_vkey_authority: value.expected_vkey_authority,
             expected_mrtd: value.expected_mrtd.map(HexBinary::from),
             expected_rtmr0: value.expected_rtmr0.map(HexBinary::from),
             expected_rtmr1: value.expected_rtmr1.map(HexBinary::from),
@@ -959,5 +1101,101 @@ mod verification {
         } else {
             assert!(result.is_ok(), "valid height must succeed");
         }
+    }
+}
+
+#[cfg(test)]
+mod vkey_trust_tests {
+    use super::*;
+
+    fn cfg() -> Config {
+        let lco = LightClientOpts::new(
+            "testing".to_string(),
+            1,
+            [0u8; 32],
+            (2, 3),
+            1_209_600,
+            300,
+            600,
+        )
+        .unwrap();
+        Config::new([0u8; 32], lco, None)
+    }
+
+    // Absent state must land on the strictest model, so an upgrade cannot
+    // silently loosen a deployment that never opted in.
+    #[test]
+    fn default_mode_is_bytes() {
+        assert_eq!(VkeyTrustMode::default(), VkeyTrustMode::Bytes);
+        assert_eq!(cfg().vkey_trust_mode(), VkeyTrustMode::Bytes);
+    }
+
+    // The whole point of the resolver: a mode without its pin is a refusal, not
+    // a downgrade to whatever weaker check happens to be available.
+    #[test]
+    fn bytes_without_a_digest_refuses() {
+        let err = cfg().vkey_trust().expect_err("must not resolve");
+        assert!(err.contains("expected_zkdcap_vkey_sha256"), "{err}");
+    }
+
+    #[test]
+    fn authority_without_an_address_refuses() {
+        let mut c = cfg();
+        c.vkey_trust = VkeyTrustMode::Authority;
+        let err = c.vkey_trust().expect_err("must not resolve");
+        assert!(err.contains("expected_vkey_authority"), "{err}");
+    }
+
+    #[test]
+    fn each_mode_resolves_once_its_pin_is_set() {
+        let digest = [0x11u8; 32];
+        let bytes = cfg()
+            .with_expected_zkdcap_vkey_sha256(digest)
+            .vkey_trust()
+            .unwrap();
+        assert_eq!(bytes, VkeyTrust::Bytes(digest));
+
+        let gov = "xion10d07y265gmmuvt4z0w9aw880jnsr700jctf8qc".to_string();
+        let authority = cfg()
+            .with_expected_vkey_authority(gov.clone())
+            .vkey_trust()
+            .unwrap();
+        assert_eq!(authority, VkeyTrust::Authority(gov));
+
+        // NameOnly needs no pin, and says so by resolving from a bare config.
+        let name_only = cfg().with_unchecked_vkey_name_only().vkey_trust().unwrap();
+        assert_eq!(name_only, VkeyTrust::NameOnly);
+        assert!(name_only.is_unchecked());
+    }
+
+    // Builders set mode and pin together so the two cannot disagree.
+    #[test]
+    fn builders_keep_mode_and_pin_consistent() {
+        let c = cfg().with_expected_vkey_authority("xion1gov".to_string());
+        assert_eq!(c.vkey_trust_mode(), VkeyTrustMode::Authority);
+        assert_eq!(c.expected_vkey_authority(), Some("xion1gov"));
+
+        let c = cfg().with_unchecked_vkey_name_only();
+        assert_eq!(c.vkey_trust_mode(), VkeyTrustMode::NameOnly);
+    }
+
+    // Legacy stored state carries a digest and no mode; it must keep behaving
+    // exactly as it did before the enum existed.
+    #[test]
+    fn legacy_state_without_the_mode_field_stays_on_bytes() {
+        let digest = [0xabu8; 32];
+        let mut c = cfg().with_expected_zkdcap_vkey_sha256(digest);
+        let json = serde_json::to_string(&c).unwrap();
+        let stripped = json.replace(r#""vkey_trust":"bytes","#, "");
+        assert!(
+            !stripped.contains("vkey_trust"),
+            "field removed for the test"
+        );
+
+        let revived: Config = serde_json::from_str(&stripped).unwrap();
+        assert_eq!(revived.vkey_trust_mode(), VkeyTrustMode::Bytes);
+        assert_eq!(revived.vkey_trust().unwrap(), VkeyTrust::Bytes(digest));
+        c.vkey_trust = VkeyTrustMode::Bytes;
+        assert_eq!(revived, c);
     }
 }

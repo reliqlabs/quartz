@@ -259,17 +259,31 @@ Three ways out. Option 1 is no longer hypothetical:
    canonical `(id, name, proof_system, key_bytes)` tuple, and whether to also
    echo the vendored Aztec tag. Either would change the consumer contract, so
    watch that PR before re-pinning.
-2. **Decouple the check.** Keep the mandatory config field, drop the echo from
-   the accept condition, and re-derive the digest with a separate
-   `vkey-by-name` or `vkey` query. Works against today's chain. Costs one extra
-   query moving 3,680 bytes. **It is not the race it first appears to be:** a
-   CosmWasm execution is a single atomic state transition and every query
-   inside it reads one consistent state view, so no transaction can land
-   between the readback and the verify. Equivalent in strength for a contract
-   consumer, weaker only for an off-chain caller making two independent
-   queries. Under evaluation.
-3. **Accept name-or-id trust,** with the digest enforced out of band at deploy
-   time. See the decision below, which takes this option for mainnet.
+2. **Decouple the check.** Keep the config field, drop the echo from the accept
+   condition, and re-derive the digest with a separate `VKey` or `VKeyByName`
+   query. **Correction, 2026-08-21: this does NOT work against today's chain
+   from a contract, and an earlier revision of this section wrongly said it
+   did.** Xion gates contract-originated queries through a whitelist
+   (`wasmbindings/stargate_whitelist.go`), and on the deployed `v30.0.0` tag
+   only `/xion.zk.v1.Query/ProofVerify`, `ProofVerifyUltraHonk` and
+   `ProofVerifyGnark` are whitelisted for `xion.zk.v1`. `Query/VKey` and
+   `Query/VKeyByName` are absent, so a contract calling either gets "path is
+   not allowed from the contract". Enabling this needs one
+   `setWhitelistedQuery` line upstream, which is trivially bundleable into
+   PR #597.
+
+   The atomicity reasoning stands and is worth keeping separate from the
+   availability problem: a CosmWasm execution is a single atomic state
+   transition and every query inside it reads one consistent state view, so
+   there is no repoint window between a readback and the verify. The readback
+   is equivalent in strength to the echo for a contract, once it is reachable
+   at all. An off-chain caller issuing two independent queries gets no such
+   guarantee.
+3. **Accept name-or-id trust,** with key identity enforced out of band at
+   deploy time. See the decision below, which takes this option for mainnet.
+   Against today's chain this is the ONLY model a contract can enforce, which
+   is worth stating plainly rather than presenting it as the weakest of three
+   live options.
 
 **Decision, 2026-08-21: pin by name or id on mainnet, with the readback held in
 reserve.** Recorded because it rests on a fact about one key rather than a

@@ -52,10 +52,12 @@ impl Handler for SetQeEvalFloor {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
-    use super::*;
-    use cosmwasm_std::testing::{message_info, mock_dependencies, mock_env};
-    use cosmwasm_std::Addr;
+    use cosmwasm_std::{
+        testing::{message_info, mock_dependencies, mock_env},
+        Addr,
+    };
 
+    use super::*;
     use crate::state::{Config, LightClientOpts, RawConfig, TCB_FLOORS};
 
     const FMSPC: [u8; 6] = [0x00, 0x90, 0x6e, 0xa1, 0x00, 0x00];

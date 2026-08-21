@@ -4,7 +4,7 @@
 use cosmwasm_std::QuerierWrapper;
 use prost::Message;
 
-use crate::ProofBackend;
+use crate::{ProofBackend, VkeyTrust};
 
 #[derive(Clone, PartialEq, prost::Message)]
 struct QueryVerifyUltraHonkRequest {
@@ -28,50 +28,143 @@ struct ProofVerifyUltraHonkResponse {
     vkey_sha256: Vec<u8>,
 }
 
+/// `/xion.zk.v1.Query/VKey`. Only reachable when the chain whitelists that path
+/// for contract queries, which no release through `v30.0.0` did.
+#[derive(Clone, PartialEq, prost::Message)]
+struct QueryVKeyRequest {
+    #[prost(uint64, tag = "1")]
+    id: u64,
+}
+
+/// `/xion.zk.v1.Query/VKeyByName`, same availability caveat.
+#[derive(Clone, PartialEq, prost::Message)]
+struct QueryVKeyByNameRequest {
+    #[prost(string, tag = "1")]
+    name: String,
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+struct VKey {
+    #[prost(bytes = "vec", tag = "1")]
+    key_bytes: Vec<u8>,
+    #[prost(string, tag = "2")]
+    name: String,
+    #[prost(string, tag = "3")]
+    description: String,
+    #[prost(string, tag = "4")]
+    circuit_hash: String,
+    #[prost(string, tag = "5")]
+    authority: String,
+    #[prost(int32, tag = "6")]
+    proof_system: i32,
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+struct QueryVKeyResponse {
+    #[prost(message, optional, tag = "1")]
+    vkey: Option<VKey>,
+    #[prost(uint64, tag = "2")]
+    id: u64,
+}
+
 /// [`ProofBackend`] that resolves a vkey from the x/zk store and verifies the
-/// proof on-chain. Every supported constructor requires the SHA-256 digest of
-/// the exact stored verification-key bytes. The request sends that pin and the
-/// response must echo it, so an older Xion server that ignores request tag 5
-/// and omits response tag 2 fails closed.
+/// proof on-chain, enforcing the caller's [`VkeyTrust`] on the key's identity.
+///
+/// Every path fails closed. When the configured trust model cannot be checked
+/// against the chain in front of it, this refuses rather than silently
+/// downgrading to a weaker claim: a consumer that asked for byte identity and
+/// got name-only resolution has been told something false.
 pub struct XionUltraHonkBackend<'a> {
     querier: QuerierWrapper<'a>,
     vkey_name: String,
     vkey_id: u64,
-    expected_vkey_sha256: [u8; 32],
+    trust: VkeyTrust,
 }
 
 impl<'a> XionUltraHonkBackend<'a> {
     /// Resolve the vkey by name (`vkey_id` 0).
-    pub fn by_name(
-        querier: QuerierWrapper<'a>,
-        vkey_name: String,
-        expected_vkey_sha256: [u8; 32],
-    ) -> Self {
+    pub fn by_name(querier: QuerierWrapper<'a>, vkey_name: String, trust: VkeyTrust) -> Self {
         Self {
             querier,
             vkey_name,
             vkey_id: 0,
-            expected_vkey_sha256,
+            trust,
         }
     }
 
     /// Resolve the vkey by numeric ID.
-    pub fn by_id(
-        querier: QuerierWrapper<'a>,
-        vkey_id: u64,
-        expected_vkey_sha256: [u8; 32],
-    ) -> Self {
+    pub fn by_id(querier: QuerierWrapper<'a>, vkey_id: u64, trust: VkeyTrust) -> Self {
         Self {
             querier,
             vkey_name: String::new(),
             vkey_id,
-            expected_vkey_sha256,
+            trust,
         }
+    }
+
+    /// Fetch the registry record. `Err(())` covers both a chain that does not
+    /// whitelist the path for contracts and a malformed or absent record; the
+    /// caller treats either as a refusal.
+    fn fetch_vkey(&self) -> Result<VKey, ()> {
+        let (path, body) = if self.vkey_name.is_empty() {
+            (
+                "/xion.zk.v1.Query/VKey",
+                QueryVKeyRequest { id: self.vkey_id }.encode_to_vec(),
+            )
+        } else {
+            (
+                "/xion.zk.v1.Query/VKeyByName",
+                QueryVKeyByNameRequest {
+                    name: self.vkey_name.clone(),
+                }
+                .encode_to_vec(),
+            )
+        };
+        let resp = self
+            .querier
+            .query_grpc(path.to_string(), cosmwasm_std::Binary::new(body))
+            .map_err(|_| ())?;
+        QueryVKeyResponse::decode(resp.as_slice())
+            .map_err(|_| ())?
+            .vkey
+            .ok_or(())
     }
 }
 
 impl ProofBackend for XionUltraHonkBackend<'_> {
     fn verify(&self, proof: &[u8], public_inputs: &[u8]) -> bool {
+        // Establish key identity BEFORE spending a verify, and refuse outright
+        // if the configured model cannot be established. `Bytes` has two routes:
+        // the response echo (cheap, atomic, needs a chain that carries it) and a
+        // registry readback (needs the VKey query whitelisted for contracts).
+        // `readback_digest` is Some only when the readback route succeeded.
+        let readback_digest = match &self.trust {
+            VkeyTrust::NameOnly => None,
+            VkeyTrust::Bytes(expected) => match self.fetch_vkey() {
+                Ok(record) => {
+                    let got = crate::sha256(&record.key_bytes);
+                    if got != *expected {
+                        return false;
+                    }
+                    Some(got)
+                }
+                // Unreachable readback is not a failure yet: the echo below may
+                // still establish the same fact.
+                Err(()) => None,
+            },
+            VkeyTrust::Authority(expected) => match self.fetch_vkey() {
+                Ok(record) => {
+                    if record.authority.as_str() != expected.as_str() {
+                        return false;
+                    }
+                    None
+                }
+                // Nothing but the registry carries the authority, so an
+                // unreachable query means this model cannot be enforced.
+                Err(()) => return false,
+            },
+        };
+
         // UltraHonk public_inputs go on the wire as raw concatenated 32-byte
         // big-endian field elements (what `bb prove` emits) — NO gnark
         // nbPublic/nbSecret/vec_len witness header.
@@ -80,7 +173,12 @@ impl ProofBackend for XionUltraHonkBackend<'_> {
             public_inputs: public_inputs.to_vec(),
             vkey_name: self.vkey_name.clone(),
             vkey_id: self.vkey_id,
-            expected_vkey_sha256: self.expected_vkey_sha256.to_vec(),
+            // Sent whenever we have one. A server without request tag 5 ignores
+            // it; one with tag 5 enforces it atomically with the verdict.
+            expected_vkey_sha256: match &self.trust {
+                VkeyTrust::Bytes(expected) => expected.to_vec(),
+                _ => Vec::new(),
+            },
         };
         let mut req_bytes = Vec::new();
         if req.encode(&mut req_bytes).is_err() {
@@ -88,16 +186,35 @@ impl ProofBackend for XionUltraHonkBackend<'_> {
         }
         // query_grpc (raw bytes): a JSON-decoding querier path would choke on
         // the proto response bytes.
-        match self.querier.query_grpc(
+        let resp = match self.querier.query_grpc(
             "/xion.zk.v1.Query/ProofVerifyUltraHonk".to_string(),
             cosmwasm_std::Binary::new(req_bytes),
         ) {
-            Ok(resp) => ProofVerifyUltraHonkResponse::decode(resp.as_slice())
-                .map(|r| {
-                    r.verified && r.vkey_sha256.as_slice() == self.expected_vkey_sha256.as_slice()
-                })
-                .unwrap_or(false),
-            Err(_) => false,
+            Ok(resp) => resp,
+            Err(_) => return false,
+        };
+        let Ok(decoded) = ProofVerifyUltraHonkResponse::decode(resp.as_slice()) else {
+            return false;
+        };
+        if !decoded.verified {
+            return false;
+        }
+
+        match &self.trust {
+            VkeyTrust::Bytes(expected) => {
+                if decoded.vkey_sha256.is_empty() {
+                    // No echo. Accept only if the readback already proved the
+                    // same fact; otherwise this chain cannot enforce byte
+                    // identity and we must not pretend otherwise.
+                    readback_digest.is_some()
+                } else {
+                    // Echo present: it is the authoritative statement of which
+                    // key answered, so it decides even if a readback agreed.
+                    decoded.vkey_sha256.as_slice() == expected.as_slice()
+                }
+            }
+            // Already established above, or deliberately unchecked.
+            VkeyTrust::Authority(_) | VkeyTrust::NameOnly => true,
         }
     }
 }
@@ -166,22 +283,77 @@ mod tests {
         verified: bool,
         returned_hash: Vec<u8>,
     ) -> (bool, QueryVerifyUltraHonkRequest) {
+        let (accepted, request) =
+            verify_with_trust(VkeyTrust::Bytes(expected), verified, returned_hash);
+        (accepted, request.expect("backend issued a verify query"))
+    }
+
+    /// The mock answers every gRPC path with the same payload, so a `VKey`
+    /// readback would decode as garbage. That models the chain we actually
+    /// have: no release through v30.0.0 whitelists that path for contracts, so
+    /// the readback route is unavailable and the echo decides.
+    fn verify_with_trust(
+        trust: VkeyTrust,
+        verified: bool,
+        returned_hash: Vec<u8>,
+    ) -> (bool, Option<QueryVerifyUltraHonkRequest>) {
         let captured_request = Rc::new(RefCell::new(None));
         let querier = GrpcMock {
             response: encoded_response(verified, returned_hash),
             captured_request: Rc::clone(&captured_request),
         };
-        let backend = XionUltraHonkBackend::by_name(
-            QuerierWrapper::new(&querier),
-            "dcap-v1".into(),
-            expected,
-        );
+        let backend =
+            XionUltraHonkBackend::by_name(QuerierWrapper::new(&querier), "dcap-v1".into(), trust);
         let accepted = backend.verify(&[1, 2, 3], &[4, 5, 6]);
-        let request = captured_request
-            .borrow_mut()
-            .take()
-            .expect("backend issued query");
+        let request = captured_request.borrow_mut().take();
         (accepted, request)
+    }
+
+    // NameOnly is the only model a contract can enforce against a chain with
+    // neither the digest echo nor a whitelisted VKey query, which describes
+    // every Xion release through v30.0.0. It must accept a bare verified=true.
+    #[test]
+    fn name_only_accepts_a_bare_verdict() {
+        let (accepted, request) = verify_with_trust(VkeyTrust::NameOnly, true, Vec::new());
+        assert!(accepted, "NameOnly checks nothing beyond resolution");
+        let request = request.expect("backend issued a verify query");
+        assert!(
+            request.expected_vkey_sha256.is_empty(),
+            "NameOnly must not claim a pin it is not enforcing"
+        );
+    }
+
+    #[test]
+    fn name_only_still_respects_the_verdict() {
+        let (accepted, _) = verify_with_trust(VkeyTrust::NameOnly, false, Vec::new());
+        assert!(!accepted);
+    }
+
+    // Bytes without an echo and without a reachable readback cannot be
+    // enforced, so it must refuse rather than degrade to NameOnly.
+    #[test]
+    fn bytes_refuses_when_the_chain_can_prove_nothing() {
+        let (accepted, _) = verify_with_trust(VkeyTrust::Bytes([0x42; 32]), true, Vec::new());
+        assert!(
+            !accepted,
+            "a consumer that asked for byte identity must not be told yes on resolution alone"
+        );
+    }
+
+    // Authority needs the registry record, which the mock cannot supply, so it
+    // refuses too. Same reasoning: no silent downgrade.
+    #[test]
+    fn authority_refuses_without_a_reachable_registry() {
+        let (accepted, request) = verify_with_trust(
+            VkeyTrust::Authority("xion10d07y265gmmuvt4z0w9aw880jnsr700jctf8qc".into()),
+            true,
+            Vec::new(),
+        );
+        assert!(!accepted);
+        assert!(
+            request.is_none(),
+            "must refuse before spending a verify it cannot trust the answer to"
+        );
     }
 
     #[test]

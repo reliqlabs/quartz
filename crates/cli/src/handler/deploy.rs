@@ -20,8 +20,7 @@ use crate::{
     handler::{utils::helpers::wasmaddr_to_id, Handler},
     request::{
         contract_build::ContractBuildRequest, contract_deploy::ContractDeployRequest,
-        deploy::DeployRequest, enclave_build::EnclaveBuildRequest,
-        handshake::HandshakeRequest,
+        deploy::DeployRequest, enclave_build::EnclaveBuildRequest, handshake::HandshakeRequest,
     },
     response::{deploy::DeployResponse, Response},
 };
@@ -34,7 +33,10 @@ impl Handler for DeployRequest {
         let config = config.as_ref();
 
         info!("{}", "\nQuartz Deploy".blue().bold());
-        info!("{}", "Building, deploying, and establishing session...\n".blue());
+        info!(
+            "{}",
+            "Building, deploying, and establishing session...\n".blue()
+        );
 
         // Step 1: Build contract
         if self.wasm_bin_path.is_none() {
@@ -121,15 +123,9 @@ impl Handler for DeployRequest {
         info!("Chain ID:    {}", config.chain_id);
         info!("");
         info!("Frontend env vars:");
-        info!(
-            "  NEXT_PUBLIC_CONTRACT_ADDRESS={}",
-            contract_addr
-        );
+        info!("  NEXT_PUBLIC_CONTRACT_ADDRESS={}", contract_addr);
         info!("  NEXT_PUBLIC_CHAIN_ID={}", config.chain_id);
-        info!(
-            "  NEXT_PUBLIC_RPC_URL={}",
-            config.node_url
-        );
+        info!("  NEXT_PUBLIC_RPC_URL={}", config.node_url);
 
         Ok(DeployResponse {
             contract_addr,

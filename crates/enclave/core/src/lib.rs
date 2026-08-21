@@ -182,8 +182,8 @@ impl<C: Send + Sync + 'static> DefaultSharedEnclave<C> {
     ) -> (DefaultSharedEnclave<C>, mpsc::Receiver<Notification>) {
         let (notifier_tx, notifier_rx) = mpsc::channel(10);
 
-        let key_manager = DstackKeyManager::new("quartz/session")
-            .expect("failed to initialize key manager");
+        let key_manager =
+            DstackKeyManager::new("quartz/session").expect("failed to initialize key manager");
 
         (
             DefaultSharedEnclave {

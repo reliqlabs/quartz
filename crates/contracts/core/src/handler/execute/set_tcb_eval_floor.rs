@@ -61,22 +61,32 @@ impl Handler for SetTcbEvalFloor {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
-    use super::*;
-    use cosmwasm_std::testing::{message_info, mock_dependencies, mock_env};
-    use cosmwasm_std::Addr;
+    use cosmwasm_std::{
+        testing::{message_info, mock_dependencies, mock_env},
+        Addr,
+    };
 
+    use super::*;
     use crate::state::{Config, LightClientOpts, RawConfig};
 
     const FMSPC: [u8; 6] = [0x00, 0x90, 0x6e, 0xa1, 0x00, 0x00];
 
     fn light_client_opts() -> LightClientOpts {
-        LightClientOpts::new("testing".to_string(), 1, [0u8; 32], (2, 3), 1_209_600, 300, 600)
-            .unwrap()
+        LightClientOpts::new(
+            "testing".to_string(),
+            1,
+            [0u8; 32],
+            (2, 3),
+            1_209_600,
+            300,
+            600,
+        )
+        .unwrap()
     }
 
     fn save_config(deps: DepsMut<'_>, admin: Option<Addr>, global_default: u64) {
-        let mut config = Config::new([0u8; 32], light_client_opts(), None)
-            .with_min_tcb_eval_num(global_default);
+        let mut config =
+            Config::new([0u8; 32], light_client_opts(), None).with_min_tcb_eval_num(global_default);
         if let Some(admin) = admin {
             config = config.with_admin(admin);
         }
@@ -97,11 +107,16 @@ mod tests {
         let sender = deps.api.addr_make("anyone");
         save_config(deps.as_mut(), None, 0);
         let info = message_info(&sender, &[]);
-        let err = msg(10).handle(deps.as_mut(), &mock_env(), &info).unwrap_err();
+        let err = msg(10)
+            .handle(deps.as_mut(), &mock_env(), &info)
+            .unwrap_err();
         assert!(matches!(err, Error::Std(_)));
         assert!(format!("{err}").contains("no admin configured"));
         // nothing stored
-        assert_eq!(TCB_FLOORS.may_load(deps.as_ref().storage, &FMSPC).unwrap(), None);
+        assert_eq!(
+            TCB_FLOORS.may_load(deps.as_ref().storage, &FMSPC).unwrap(),
+            None
+        );
     }
 
     #[test]
@@ -111,9 +126,14 @@ mod tests {
         let attacker = deps.api.addr_make("attacker");
         save_config(deps.as_mut(), Some(admin), 0);
         let info = message_info(&attacker, &[]);
-        let err = msg(10).handle(deps.as_mut(), &mock_env(), &info).unwrap_err();
+        let err = msg(10)
+            .handle(deps.as_mut(), &mock_env(), &info)
+            .unwrap_err();
         assert!(format!("{err}").contains("only the configured admin"));
-        assert_eq!(TCB_FLOORS.may_load(deps.as_ref().storage, &FMSPC).unwrap(), None);
+        assert_eq!(
+            TCB_FLOORS.may_load(deps.as_ref().storage, &FMSPC).unwrap(),
+            None
+        );
     }
 
     #[test]
@@ -142,7 +162,9 @@ mod tests {
         save_config(deps.as_mut(), Some(admin.clone()), 0);
         let info = message_info(&admin, &[]);
         msg(20).handle(deps.as_mut(), &mock_env(), &info).unwrap();
-        let err = msg(19).handle(deps.as_mut(), &mock_env(), &info).unwrap_err();
+        let err = msg(19)
+            .handle(deps.as_mut(), &mock_env(), &info)
+            .unwrap_err();
         assert!(format!("{err}").contains("raise-only violation"));
         // unchanged
         assert_eq!(
@@ -159,7 +181,9 @@ mod tests {
         // effective floor and must be rejected.
         save_config(deps.as_mut(), Some(admin.clone()), 15);
         let info = message_info(&admin, &[]);
-        let err = msg(10).handle(deps.as_mut(), &mock_env(), &info).unwrap_err();
+        let err = msg(10)
+            .handle(deps.as_mut(), &mock_env(), &info)
+            .unwrap_err();
         assert!(format!("{err}").contains("raise-only violation"));
         // setting at the default is allowed (not a lowering)
         msg(15).handle(deps.as_mut(), &mock_env(), &info).unwrap();

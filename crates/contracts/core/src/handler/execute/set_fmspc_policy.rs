@@ -91,7 +91,10 @@ mod tests {
     }
 
     fn stored(deps: &DepsMut<'_>) -> bool {
-        CONFIG.load(deps.storage).unwrap().require_registered_fmspc()
+        CONFIG
+            .load(deps.storage)
+            .unwrap()
+            .require_registered_fmspc()
     }
 
     fn msg(require: bool) -> SetFmspcPolicy {

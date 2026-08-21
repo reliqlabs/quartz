@@ -107,7 +107,11 @@ mod verification {
         let raw: RawSessionCreate = original.clone().into();
         let back = SessionCreate::try_from(raw).expect("32-byte nonce roundtrips");
         assert_eq!(back.nonce(), nonce, "nonce must survive roundtrip");
-        assert_eq!(back.contract(), contract.as_str(), "contract must survive roundtrip");
+        assert_eq!(
+            back.contract(),
+            contract.as_str(),
+            "contract must survive roundtrip"
+        );
     }
 
     // **Round E 2026-05-20 attempted addition (Kimi #5), withdrawn**:

@@ -25,7 +25,9 @@ fn hex(b: &[u8]) -> String {
 }
 
 fn main() {
-    let path = std::env::args().nth(1).expect("pass the public_inputs path");
+    let path = std::env::args()
+        .nth(1)
+        .expect("pass the public_inputs path");
     let pi = std::fs::read(&path).expect("read public_inputs");
     assert_eq!(
         pi.len(),
@@ -48,7 +50,10 @@ fn main() {
     let until = extract_valid_until(&pi).expect("valid_until");
 
     println!("  report_data   {}", hex(&rd));
-    for (i, name) in ["MRTD", "RTMR0", "RTMR1", "RTMR2", "RTMR3"].iter().enumerate() {
+    for (i, name) in ["MRTD", "RTMR0", "RTMR1", "RTMR2", "RTMR3"]
+        .iter()
+        .enumerate()
+    {
         println!("  {name:<13} {}", hex(&m[i]));
     }
     println!("  meas_digest   {}", hex(&measurement_digest(&pi).unwrap()));
@@ -80,11 +85,36 @@ fn main() {
     // rehearsal already exercised separately against vkey id 26.
     println!("\npolicy gate (verify_quote_parts):");
     let cases: [(&str, EvalNumberPolicy, u8, bool); 5] = [
-        ("floors at 0, ceiling UpToDate", EvalNumberPolicy::new(0, 0), tcb_status::UP_TO_DATE, true),
-        ("floors at the proven values", EvalNumberPolicy::new(tcb_eval, qe_eval), tcb_status::UP_TO_DATE, true),
-        ("TCB floor one above proven", EvalNumberPolicy::new(tcb_eval + 1, qe_eval), tcb_status::UP_TO_DATE, false),
-        ("QE floor one above proven", EvalNumberPolicy::new(tcb_eval, qe_eval + 1), tcb_status::UP_TO_DATE, false),
-        ("ceiling below proven status", EvalNumberPolicy::new(0, 0), status.saturating_sub(1), status == 0),
+        (
+            "floors at 0, ceiling UpToDate",
+            EvalNumberPolicy::new(0, 0),
+            tcb_status::UP_TO_DATE,
+            true,
+        ),
+        (
+            "floors at the proven values",
+            EvalNumberPolicy::new(tcb_eval, qe_eval),
+            tcb_status::UP_TO_DATE,
+            true,
+        ),
+        (
+            "TCB floor one above proven",
+            EvalNumberPolicy::new(tcb_eval + 1, qe_eval),
+            tcb_status::UP_TO_DATE,
+            false,
+        ),
+        (
+            "QE floor one above proven",
+            EvalNumberPolicy::new(tcb_eval, qe_eval + 1),
+            tcb_status::UP_TO_DATE,
+            false,
+        ),
+        (
+            "ceiling below proven status",
+            EvalNumberPolicy::new(0, 0),
+            status.saturating_sub(1),
+            status == 0,
+        ),
     ];
     let mut failures = 0;
     for (label, policy, ceiling, want_ok) in cases {
@@ -96,7 +126,11 @@ fn main() {
             Err(QuoteError::TcbStatusUnacceptable) => "reject TcbStatusUnacceptable".to_string(),
             Err(e) => format!("reject {e:?}"),
         };
-        let mark = if got_ok == want_ok { "ok" } else { "UNEXPECTED" };
+        let mark = if got_ok == want_ok {
+            "ok"
+        } else {
+            "UNEXPECTED"
+        };
         if got_ok != want_ok {
             failures += 1;
         }
@@ -119,7 +153,10 @@ fn main() {
             EvalNumberPolicy::default(),
             tcb_status::UP_TO_DATE,
         );
-        println!("  {label:<24} now={now:<16} -> {}", if r.is_ok() { "accept" } else { "reject" });
+        println!(
+            "  {label:<24} now={now:<16} -> {}",
+            if r.is_ok() { "accept" } else { "reject" }
+        );
     }
 
     if failures > 0 {

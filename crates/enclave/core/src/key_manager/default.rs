@@ -1,10 +1,7 @@
 use k256::ecdsa::{Error, SigningKey, VerifyingKey};
 use log::{debug, info};
 
-use crate::{
-    backup_restore::Export,
-    key_manager::KeyManager,
-};
+use crate::{backup_restore::Export, key_manager::KeyManager};
 
 /// A default secp256k1 key-manager.
 #[derive(Clone)]

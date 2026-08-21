@@ -19,10 +19,11 @@
 //!
 //! In mock mode, this is a no-op.
 
+use std::io::{Read, Write};
+
 use base64ct::{Base64, Encoding};
 use color_eyre::{eyre::eyre, Result};
 use serde_json::Value;
-use std::io::{Read, Write};
 use tracing::{debug, info, warn};
 
 /// Decode a base64 JSON string field from the prover and re-encode it as hex
@@ -46,18 +47,17 @@ pub fn inject_zkdcap_proof(mut response: Value, mock: bool) -> Result<Value> {
     }
 
     // Prefer the new var; fall back to the legacy GNARK_SOCKET name.
-    let socket_path = match std::env::var("ZKDCAP_PROVER_SOCKET")
-        .or_else(|_| std::env::var("GNARK_SOCKET"))
-    {
-        Ok(path) => path,
-        Err(_) => {
-            warn!(
-                "ZKDCAP_PROVER_SOCKET not set, submitting raw DstackAttestation; \
+    let socket_path =
+        match std::env::var("ZKDCAP_PROVER_SOCKET").or_else(|_| std::env::var("GNARK_SOCKET")) {
+            Ok(path) => path,
+            Err(_) => {
+                warn!(
+                    "ZKDCAP_PROVER_SOCKET not set, submitting raw DstackAttestation; \
                  a secure contract will REJECT this (raw DCAP verification fails closed)"
-            );
-            return Ok(response);
-        }
-    };
+                );
+                return Ok(response);
+            }
+        };
 
     // Navigate to the attestation field in the response JSON.
     let attestation = match response.get_mut("attestation") {
@@ -112,7 +112,10 @@ pub fn inject_zkdcap_proof(mut response: Value, mock: bool) -> Result<Value> {
     // fields. The contract uses event_log only when it pins expected_compose_hash
     // (RTMR3 event-log replay); carrying it through keeps that path available.
     let user_data = attestation.get("user_data").cloned().unwrap_or(Value::Null);
-    let compose_hash = attestation.get("compose_hash").cloned().unwrap_or(Value::Null);
+    let compose_hash = attestation
+        .get("compose_hash")
+        .cloned()
+        .unwrap_or(Value::Null);
     let event_log = attestation.get("event_log").cloned().unwrap_or(Value::Null);
 
     let zk_attestation = serde_json::json!({

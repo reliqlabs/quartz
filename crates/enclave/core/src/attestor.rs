@@ -66,9 +66,7 @@ pub struct DstackAttestor {
 
 impl DstackAttestor {
     pub fn new() -> Self {
-        Self {
-            compose_hash: None,
-        }
+        Self { compose_hash: None }
     }
 
     fn client() -> reqwest::blocking::Client {
@@ -164,8 +162,8 @@ impl DstackAttestor {
             .json()
             .map_err(|e| format!("Failed to parse Info response: {e}"))?;
 
-        let hash_bytes =
-            hex::decode(&info.compose_hash).map_err(|e| format!("Invalid compose_hash hex: {e}"))?;
+        let hash_bytes = hex::decode(&info.compose_hash)
+            .map_err(|e| format!("Invalid compose_hash hex: {e}"))?;
 
         if hash_bytes.len() != 32 {
             return Err(format!(
@@ -243,8 +241,8 @@ impl Import for DstackAttestor {
     type Error = String;
 
     async fn import(&mut self, data: Vec<u8>) -> Result<(), Self::Error> {
-        *self =
-            serde_json::from_slice(&data).map_err(|e| format!("deserialize DstackAttestor: {e}"))?;
+        *self = serde_json::from_slice(&data)
+            .map_err(|e| format!("deserialize DstackAttestor: {e}"))?;
         Ok(())
     }
 }

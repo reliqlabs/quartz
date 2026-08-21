@@ -38,9 +38,11 @@ mod tests {
     #![allow(clippy::unwrap_used)]
     use cosmwasm_std::testing::{message_info, mock_dependencies, mock_env};
 
-    use crate::handler::RawHandler;
-    use crate::msg::execute::{attested::RawDefaultAttestation, RawExecute};
-    use crate::state::{Config, LightClientOpts, RawConfig, CONFIG};
+    use crate::{
+        handler::RawHandler,
+        msg::execute::{attested::RawDefaultAttestation, RawExecute},
+        state::{Config, LightClientOpts, RawConfig, CONFIG},
+    };
 
     /// Wire-level path the deployed contract actually takes: JSON body ->
     /// `RawExecute` -> `Execute` -> dispatch -> handler. The per-handler tests

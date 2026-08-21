@@ -102,9 +102,11 @@ pub type Hash32 = [u8; 32];
 
 pub mod eventlog;
 mod layout;
+mod trust;
 mod verifier;
 
 pub use layout::*;
+pub use trust::VkeyTrust;
 pub use verifier::*;
 
 #[cfg(feature = "xion-backend")]

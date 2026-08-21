@@ -145,7 +145,13 @@ mod tests {
             rt("app-id", b"app-123"),
             rt("key-provider", b"kms"),
             // a non-RTMR3 entry (must be ignored by the RTMR3 replay)
-            TdxEvent { imr: 1, event_type: 0, digest: vec![9u8; 48], event: "kernel".into(), event_payload: vec![] },
+            TdxEvent {
+                imr: 1,
+                event_type: 0,
+                digest: vec![9u8; 48],
+                event: "kernel".into(),
+                event_payload: vec![],
+            },
         ]
     }
 
@@ -229,7 +235,13 @@ mod tests {
         let compose = [0x55u8; 32];
         let mut log = sample_log(&compose);
         let rtmr3_a = replay_rtmr3(&log);
-        log.push(TdxEvent { imr: 0, event_type: 0, digest: vec![7u8; 48], event: "fw".into(), event_payload: vec![] });
+        log.push(TdxEvent {
+            imr: 0,
+            event_type: 0,
+            digest: vec![7u8; 48],
+            event: "fw".into(),
+            event_payload: vec![],
+        });
         let rtmr3_b = replay_rtmr3(&log);
         assert_eq!(rtmr3_a, rtmr3_b);
     }

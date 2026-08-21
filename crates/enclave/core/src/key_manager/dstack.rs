@@ -54,7 +54,10 @@ impl DstackKeyManager {
                 })
             }
             Err(e) => {
-                debug!("dstack KMS not available ({}), falling back to random key", e);
+                debug!(
+                    "dstack KMS not available ({}), falling back to random key",
+                    e
+                );
                 Ok(Self {
                     sk: SigningKey::random(&mut rand::thread_rng()),
                     key_path: key_path.to_string(),
@@ -110,8 +113,7 @@ impl DstackKeyManager {
             .json()
             .map_err(|e| format!("Failed to parse DeriveKey response: {e}"))?;
 
-        let key_bytes =
-            hex::decode(&resp.key).map_err(|e| format!("Invalid key hex: {e}"))?;
+        let key_bytes = hex::decode(&resp.key).map_err(|e| format!("Invalid key hex: {e}"))?;
 
         // dstack returns a raw 32-byte private key
         SigningKey::from_slice(&key_bytes)

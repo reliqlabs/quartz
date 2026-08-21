@@ -4,13 +4,15 @@
 //! decoded fields and leaves the `report_data` / measurement comparison to the
 //! caller's domain logic.
 
-use crate::layout::{
-    extract_cert_serial, extract_fmspc, extract_measurements, extract_qe_eval_num,
-    extract_report_data, extract_tcb_eval_num, extract_tcb_status, extract_timestamp,
-    extract_valid_from, extract_valid_until, measurement_digest, split_attestation,
-    MEASUREMENT_REGS,
+use crate::{
+    layout::{
+        extract_cert_serial, extract_fmspc, extract_measurements, extract_qe_eval_num,
+        extract_report_data, extract_tcb_eval_num, extract_tcb_status, extract_timestamp,
+        extract_valid_from, extract_valid_until, measurement_digest, split_attestation,
+        MEASUREMENT_REGS,
+    },
+    Hash32,
 };
-use crate::Hash32;
 
 /// TCB status severity codes carried in packed `public_inputs` field 13 (lower is
 /// better), mirroring the dcap-noir circuit (`crates/dcap/src/tcb.nr`,
