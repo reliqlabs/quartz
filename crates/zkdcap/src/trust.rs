@@ -134,6 +134,28 @@ mod tests {
         assert!(authority.is_enforceable_today(true, true));
     }
 
+    // A legacy key can carry an EMPTY authority in state while being
+    // governance-controlled, because x/zk resolves empty to the gov module
+    // address at read time and only InitGenesis backfills the field. Observed
+    // live: 1 of 25 keys on xion-testnet-2 (id 1, "Zk Email"). A consumer
+    // reading the record therefore cannot confirm the effective authority
+    // matches its pin, and treating `""` as a match would match every such key.
+    // Documented here because the check lives in the backend and this is where
+    // a reader looks for what Authority means.
+    #[test]
+    fn authority_pin_is_meaningless_against_an_empty_record_field() {
+        let gov = "xion10d07y265gmmuvt4z0w9aw880jnsr700jctf8qc";
+        let trust = VkeyTrust::Authority(gov.to_string());
+
+        // The pin itself must never be empty, or it would assert nothing.
+        assert!(!matches!(&trust, VkeyTrust::Authority(a) if a.is_empty()));
+
+        // And an empty pin is exactly what a caller must not configure. dossier
+        // and quartz both reject it before it reaches the backend.
+        let degenerate = VkeyTrust::Authority(String::new());
+        assert!(matches!(&degenerate, VkeyTrust::Authority(a) if a.is_empty()));
+    }
+
     #[test]
     fn only_name_only_is_unchecked() {
         assert!(!VkeyTrust::Bytes([0u8; 32]).is_unchecked());

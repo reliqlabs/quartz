@@ -154,6 +154,18 @@ impl ProofBackend for XionUltraHonkBackend<'_> {
             },
             VkeyTrust::Authority(expected) => match self.fetch_vkey() {
                 Ok(record) => {
+                    // An EMPTY stored authority does not mean "no authority": the
+                    // keeper resolves empty to the gov module address at read
+                    // time, so such a key is governance-controlled while its
+                    // record says nothing. The query returns the raw field, so a
+                    // consumer cannot confirm from it that the effective
+                    // authority equals its pin, and matching on `""` would match
+                    // every legacy key indiscriminately. Refuse, and let the
+                    // deployment either use `Bytes` or get the field populated
+                    // (one gov-signed UpdateVKey writes the resolved value).
+                    if record.authority.is_empty() {
+                        return false;
+                    }
                     if record.authority.as_str() != expected.as_str() {
                         return false;
                     }
