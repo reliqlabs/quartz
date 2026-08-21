@@ -31,7 +31,7 @@ transition around it. zkdcap (supplier) owns the relation and the key.
 | Release scope id | `zkdcap-tdx-v4-tdreport10-21` | `zkdcap/README.md:98`, `main.nr:3` |
 | Canonical claim text | upstream README scope section + circuit header | `1280a96`; its gap list is now empty, see section 3 |
 | Consumer requirements | nine, upstream README "Consumer requirements" | mapped in `crates/contracts/core/README.md` |
-| Verification key | **none registrable yet** | see section 4 |
+| Verification key | rehearsal only: id 26 `zkdcap-tdx-v4-tdreport10-21-rehearsal-e7002e4` | see section 4; still not a production pin |
 
 ## 2. What the chosen architecture means for Quartz
 
@@ -167,16 +167,40 @@ Quartz keeps the digest mandatory. The handler fails closed when `zkdcap_vkey`
 is configured and `expected_zkdcap_vkey_sha256` is absent, and the Xion backend
 rejects a missing or mismatched digest echo.
 
-**A scratch key now exists, and it still is not Quartz's pin.** `e7002e4`
-records vkey `a9a9b7c7f4bf555623adeeabb1ace8c0becc1715a50ee53ed78fb710ddb8dbc6`
-registered as scratch on `xion-testnet-2` and verified through live `x/zk` with
-`{"verified":true}`. That is real evidence for one thing only: the chain's
-verifier accepts this proof format, this vkey encoding, and 672-byte public
-inputs. It is a scratch name, not the versioned production registration, and the
-machine-checked record for that build
-(`circuits/dcap-noir/target/release-2026-08-18T10-05-06Z/release-record.json`)
-still says `"chain_verified": "not-attempted"`, so the verify was a side channel
-the record did not capture. Prefer the record over the prose when they disagree.
+**A rehearsal key now exists with a machine-checked chain verify, and it still
+is not Quartz's pin.** `e7002e4` reported vkey
+`a9a9b7c7f4bf555623adeeabb1ace8c0becc1715a50ee53ed78fb710ddb8dbc6` registered as
+scratch on `xion-testnet-2`, but its release record said
+`"chain_verified": "not-attempted"`, so the verify was prose only. That gap is
+now closed from the other direction. A reproducible run at `e7002e4` under the
+pinned pair rebuilt the identical digest, it was registered under the fresh name
+`zkdcap-tdx-v4-tdreport10-21-rehearsal-e7002e4` (id **26**, tx
+`28E4611BAD73F7EE9A16EC5AD5AEE79362C1F06D674E835AF64430A03D7520DF`, height
+17667261), and `release_build.sh --chain-verify` recorded
+`"chain_verified": true` in
+`circuits/dcap-noir/target/release-2026-08-20T22-03-26Z/release-record.json`.
+The digest read back from chain state matches the local build byte for byte.
+
+Negative controls from the same session, all `{"verified":false}`: the legacy
+`dcap-ultrahonk-v1` (id 15, different ACIR), a one-byte flip in the proof, and a
+one-byte flip in the public inputs. So the chain's acceptance is discriminating,
+not vacuous.
+
+What that buys is bounded: the chain's verifier accepts this proof format, this
+vkey encoding, and 672-byte public inputs, and the digest is reproducible from
+source. It is a rehearsal name chosen to be unmistakable, not the versioned
+production registration, and it does not touch the release evidence still owed
+(rejection corpus, content-addressed bundle, Gate B record).
+
+Registration itself turned out to need no authority at all. `x/zk`'s
+`MsgAddVKey` has no authority check in the msg server, and `AddVKey` simply
+stores the caller as the key's owner; only `UpdateParams` checks. `xiond tx zk
+add-vkey --help` states it outright: "Any account can add verification keys."
+The proto comment calling `authority` "the address that controls the module
+(governance)" is misleading. This is the strongest argument for pinning bytes
+rather than names: anyone can claim any unused name, so a name carries no
+authority whatsoever, and section 4's insistence on the digest is doing the
+entire job.
 
 **Do not pin from a commit message or a build artifact.** As of `e7002e4` this
 tree offers five different 32-byte values that all look like the pin:
@@ -192,19 +216,41 @@ stale); and `5ebac8eb1c6a486bff7de5270f6e4677bc6e00b37a3e6e38e1558c6c759e34a4`
 admissible pin is the digest of the bytes registered under the production name,
 read back from the chain.
 
-**The chain-side prerequisite is unmerged, so Quartz cannot use any pin yet.**
-Quartz sends `expected_vkey_sha256` and requires the response to echo
-`vkey_sha256`, failing closed otherwise. In the local `xion` checkout that
-binding exists only on branch `zk-ultrahonk-vkey-hash` (`e14a4ba`, 2026-07-17),
-contained in no tag and no other branch; the newest tag is `v30.0.0`, and
-`xiond` 29.0.0's `query zk verify-ultrahonk` has no digest flag at all. The
-upstream scratch verify used `--vkey-name` only, so it does not exercise or
-demonstrate the digest path. Until that branch merges, releases, and the target
-network upgrades, a Quartz non-mock attestation cannot succeed live no matter
-which digest is configured. The alternative, relaxing the pin to name-only
-resolution, is a downgrade the boundary does not permit: an Xion server that
-ignores the request field must fail closed, which is exactly what
-`XionUltraHonkBackend` enforces.
+**The chain-side prerequisite does not exist in any release, so Quartz cannot
+use any pin yet.** Quartz sends `expected_vkey_sha256` at request tag 5 and
+requires the response to echo `vkey_sha256` at tag 2, failing closed otherwise.
+Confirmed empirically 2026-08-20 rather than inferred: `xion-testnet-2` reports
+`app_version: 30.0.0`, and the released `xiond-30.0.0.tar.gz` source has
+`QueryVerifyUltraHonkRequest` stopping at tag 4 (`vkey_id`) with
+`ProofVerifyResponse` carrying only `verified`. Neither field exists. In the
+local `xion` checkout the binding lives only on branch `zk-ultrahonk-vkey-hash`
+(`e14a4ba`, 2026-07-17), contained in no tag.
+
+So tag 5 leaves as an unknown field a conformant server discards, tag 2 comes
+back absent, prost decodes it as an empty `Vec`, and
+`r.vkey_sha256 == expected_vkey_sha256` can never hold. With a vkey configured,
+the non-mock path rejects every proof the chain accepts. Fail-closed, so not
+exploitable, but a total liveness failure rather than a compatibility caveat.
+The pre-existing unit test passes only because its mock echoes the digest, which
+is the one behaviour no deployed server exhibits; two regression tests in
+`crates/zkdcap/src/xion.rs` now pin the real shape and flip to failing the day
+Xion ships verify-by-hash.
+
+Three ways out, and the choice is Quartz's to make with Burnt:
+
+1. **Ship verify-by-hash in `x/zk`** (request tag 5, response tag 2 echoing
+   SHA-256 of the stored bytes). The only option that delivers the atomic
+   guarantee this section claims, and it makes the consumer correct as written.
+   Chain-side work, upstream of Quartz.
+2. **Decouple the check.** Keep the mandatory config field, drop the echo from
+   the accept condition, and re-derive the digest with a separate
+   `vkey-by-name` query. Works today, costs a second query, and is no longer
+   atomic with verification, so a name repoint between the two queries is a live
+   window. Interim only, and the window must be written down where it is
+   enforced.
+3. **Accept name-only trust,** with the digest enforced out of band at deploy
+   time. Weakest, and given that `AddVKey` is permissionless it means trusting
+   that nobody repoints a name nobody owns exclusively.
 
 ## 5. Obligations by side
 
