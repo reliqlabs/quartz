@@ -222,9 +222,19 @@ requires the response to echo `vkey_sha256` at tag 2, failing closed otherwise.
 Confirmed empirically 2026-08-20 rather than inferred: `xion-testnet-2` reports
 `app_version: 30.0.0`, and the released `xiond-30.0.0.tar.gz` source has
 `QueryVerifyUltraHonkRequest` stopping at tag 4 (`vkey_id`) with
-`ProofVerifyResponse` carrying only `verified`. Neither field exists. In the
-local `xion` checkout the binding lives only on branch `zk-ultrahonk-vkey-hash`
-(`e14a4ba`, 2026-07-17), contained in no tag.
+`ProofVerifyResponse` carrying only `verified`. Neither field exists, and
+`release/v31` does not add them either.
+
+**Correction, 2026-08-21.** An earlier revision of this section said the
+binding "lives only on branch `zk-ultrahonk-vkey-hash` (`e14a4ba`,
+2026-07-17), contained in no tag." That branch does not exist. After fetching
+all three xion remotes (`burnt-labs/xion`, `01builders/xion`,
+`burnt-labs/xion-commonware`): no ref matches `vkey`/`ultrahonk`/`verify-by-hash`,
+`e14a4ba` is not a valid object, `git log --all -S expected_vkey_sha256` and
+`-S vkey_sha256` return nothing, and a code search finds zero hits in all three
+repos and zero across every `.proto` on GitHub. The work was never pushed
+anywhere, so Quartz was written against an interface that had never existed in
+any repository. Cite PR #597 below, not a branch.
 
 So tag 5 leaves as an unknown field a conformant server discards, tag 2 comes
 back absent, prost decodes it as an empty `Vec`, and
@@ -236,21 +246,61 @@ is the one behaviour no deployed server exhibits; two regression tests in
 `crates/zkdcap/src/xion.rs` now pin the real shape and flip to failing the day
 Xion ships verify-by-hash.
 
-Three ways out, and the choice is Quartz's to make with Burnt:
+Three ways out. Option 1 is no longer hypothetical:
 
-1. **Ship verify-by-hash in `x/zk`** (request tag 5, response tag 2 echoing
-   SHA-256 of the stored bytes). The only option that delivers the atomic
+1. **Ship verify-by-hash in `x/zk`.** Request tag 5, response tag 2 echoing
+   SHA-256 of the stored bytes. The only option that delivers the atomic
    guarantee this section claims, and it makes the consumer correct as written.
-   Chain-side work, upstream of Quartz.
+   **Now proposed: `burnt-labs/xion` PR #597** (draft, `release/v31`, branch
+   `zk/ultrahonk-vkey-digest-echo`), implemented with tests, CI green. It
+   deliberately implements exactly the two fields Quartz already expects, so
+   landing it requires no Quartz change beyond deleting the workaround. Two
+   reviewer decisions are open there: whether to digest the bare blob or a
+   canonical `(id, name, proof_system, key_bytes)` tuple, and whether to also
+   echo the vendored Aztec tag. Either would change the consumer contract, so
+   watch that PR before re-pinning.
 2. **Decouple the check.** Keep the mandatory config field, drop the echo from
    the accept condition, and re-derive the digest with a separate
-   `vkey-by-name` query. Works today, costs a second query, and is no longer
-   atomic with verification, so a name repoint between the two queries is a live
-   window. Interim only, and the window must be written down where it is
-   enforced.
-3. **Accept name-only trust,** with the digest enforced out of band at deploy
-   time. Weakest, and given that `AddVKey` is permissionless it means trusting
-   that nobody repoints a name nobody owns exclusively.
+   `vkey-by-name` or `vkey` query. Works against today's chain. Costs one extra
+   query moving 3,680 bytes. **It is not the race it first appears to be:** a
+   CosmWasm execution is a single atomic state transition and every query
+   inside it reads one consistent state view, so no transaction can land
+   between the readback and the verify. Equivalent in strength for a contract
+   consumer, weaker only for an off-chain caller making two independent
+   queries. Under evaluation.
+3. **Accept name-or-id trust,** with the digest enforced out of band at deploy
+   time. See the decision below, which takes this option for mainnet.
+
+**Decision, 2026-08-21: pin by name or id on mainnet, with the readback held in
+reserve.** Recorded because it rests on a fact about one key rather than a
+property of the chain, and the distinction is load-bearing.
+
+`UpdateVKey` and `RemoveVKey` gate on the key's STORED authority
+(`x/zk/keeper/keeper.go:346` and `:406`), falling back to the gov module
+address only when that field is empty. Mainnet's single registered vkey (id 1,
+`Zk Email`, Groth16) has authority `xion10d07y265gmmuvt4z0w9aw880jnsr700jctf8qc`,
+which is exactly the gov module account as returned by
+`query auth module-account gov`. So changing that key does require a passed
+proposal, and a name or id pin against it is sound.
+
+**The condition:** that is a property of how that key was registered, not of
+mainnet. `AddVKey` is permissionless on mainnet too and stores the CALLER as
+the key's authority. A zkdcap production key registered from an ordinary
+account would be owner-mutable, and the pin would buy nothing. To inherit
+governance control the production key must itself be added via a governance
+proposal, so that the message signer, and therefore the stored authority, is
+the gov module account. `xiond tx zk add-vkey --from <key>` does NOT give this.
+Treat it as a deployment requirement, not a default.
+
+**Testnet does not transfer.** Rehearsal key id 26's authority is
+`xion1uk6g4hjtf477zf8arl6qrq4v29k89xkjuftql3`, an ordinary account, so on
+testnet the bytes under that name and id are owner-mutable at will. Rehearsal
+results say nothing about the strength of a mainnet name pin.
+
+**This is not a no-op in code.** The backend today fails closed on the absent
+echo, so taking option 3 still means removing the echo comparison from the
+accept condition. Until that lands or #597 does, the non-mock path verifies
+nothing.
 
 ## 5. Obligations by side
 
