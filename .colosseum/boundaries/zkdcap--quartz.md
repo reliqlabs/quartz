@@ -285,6 +285,36 @@ Three ways out. Option 1 is no longer hypothetical:
    is worth stating plainly rather than presenting it as the weakest of three
    live options.
 
+**All three are now selectable in config, and the choice is no longer this
+section's to make.** `quartz_zkdcap::VkeyTrust` names them and
+`Config::vkey_trust` selects one, replacing what had been a single hard-coded
+policy: the digest was an `Option` field that the handler nonetheless required,
+refusing with "refusing mutable-name-only verification" when it was absent.
+
+Three properties worth citing when reading the code rather than rediscovering:
+
+- **Secure by default, including for state that predates the enum.** Absent
+  `vkey_trust` deserializes to `Bytes` and keeps the existing digest, so an
+  upgrade cannot silently loosen a deployment that never opted in.
+  `legacy_state_without_the_mode_field_stays_on_bytes` pins it.
+- **No silent downgrade.** A mode whose pin is missing is a refusal, not a
+  fallback to whatever weaker check happens to be reachable. Likewise in the
+  backend: `Bytes` accepts either the response echo or a registry readback and
+  refuses when neither is available, and `Authority` refuses outright without
+  the registry query.
+- **The capability matrix is executable.** `VkeyTrust::is_enforceable_today`
+  is parameterised on whether the chain echoes the digest and whether
+  `Query/VKey` is whitelisted for contracts, so the availability facts in this
+  section cannot rot into stale prose.
+
+`NameOnly`'s builder is `with_unchecked_vkey_name_only`, named so the decision
+is visible at each call site, matching the `allow_any_image` hatch beside it.
+
+PR #597 carries both halves of what the other two modes need: the digest echo,
+and a `wasmbindings` entry whitelisting `Query/VKey` and `Query/VKeyByName` for
+contract queries. Until it lands and the network upgrades, `NameOnly` is the
+only variant a deployed contract can actually enforce.
+
 **Decision, 2026-08-21: pin by name or id on mainnet, with the readback held in
 reserve.** Recorded because it rests on a fact about one key rather than a
 property of the chain, and the distinction is load-bearing.
